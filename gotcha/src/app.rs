@@ -7,10 +7,12 @@ use hyper::rt::Future;
 use tokio::runtime::Runtime;
 
 use crate::data::DateContainer;
+use crate::middleware::Middleware;
 
 
 pub struct App {
-    data_container:  DateContainer
+    data_container: DateContainer,
+    middlewares: Vec<Box<dyn Middleware + 'static>>,
 }
 
 async fn hello(_: Request<Body>) -> Result<Response<Body>, hyper::Error> {
@@ -18,10 +20,10 @@ async fn hello(_: Request<Body>) -> Result<Response<Body>, hyper::Error> {
 }
 
 impl App {
-
     pub fn new() -> Self {
         Self {
-            data_container : DateContainer::new()
+            data_container: DateContainer::new(),
+            middlewares: Vec::new(),
         }
     }
 
@@ -29,9 +31,13 @@ impl App {
         self.data_container.insert(data);
         self
     }
+    pub fn middleware(mut self, middleware: impl Middleware + 'static) -> Self {
+        self.middlewares.push(Box::new(middleware));
+        self
+    }
 
     pub fn run(self, addr: impl std::net::ToSocketAddrs) -> Result<(), std::io::Error> {
-        let new_svc = make_service_fn(|socket: &AddrStream|{
+        let new_svc = make_service_fn(|socket: &AddrStream| {
             async {
                 Ok::<_, hyper::Error>(service_fn(hello))
             }
@@ -45,7 +51,6 @@ impl App {
         runtime.block_on(async {
             println!("Gotcha is listening on {}", socket_addr);
             server.await
-
         });
         Ok(())
     }
