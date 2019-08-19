@@ -9,4 +9,6 @@ license = "MIT"
 
 [dependencies]
 http = "0.1.18"
-hyper = "0.12.33"
+hyper = {git="https://github.com/hyperium/hyper"}
+tokio = {version="0.2.0-alpha.1"}
+futures-util = "0.2.1"
