@@ -1,4 +1,3 @@
-
-pub trait Middleware {
+pub trait Middleware: Send {
 
 }

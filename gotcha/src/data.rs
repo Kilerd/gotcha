@@ -21,7 +21,7 @@ impl<T> Deref for Data<T> {
 
 
 pub(crate) struct DateContainer {
-    map: HashMap<TypeId, Box<dyn Any>>,
+    map: HashMap<TypeId, Box<dyn Any + Send + Sync>>,
 }
 
 impl DateContainer {
@@ -32,11 +32,11 @@ impl DateContainer {
         }
     }
 
-    pub fn insert<T: 'static>(&mut self, data: T) {
+    pub fn insert<T: 'static + Send + Sync>(&mut self, data: T) {
         self.map.insert(TypeId::of::<T>(), Box::new(data));
     }
 
-    pub fn contains<T: 'static>(&self) -> bool {
+    pub fn contains<T: 'static + Send + Sync>(&self) -> bool {
         self.map.contains_key(&TypeId::of::<T>())
     }
 

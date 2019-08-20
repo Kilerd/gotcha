@@ -12,3 +12,6 @@ http = "0.1.18"
 hyper = {git="https://github.com/hyperium/hyper"}
 tokio = {version="0.2.0-alpha.1"}
 futures-util = "0.2.1"
+futures-preview = "0.3.0-alpha.18"
+http-service-hyper = "0.4.0"
+http-service = "0.3.0"
