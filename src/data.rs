@@ -19,8 +19,8 @@ impl<T> Deref for Data<T> {
     }
 }
 
-
-pub(crate) struct DateContainer {
+#[derive(Debug)]
+pub struct DateContainer {
     map: HashMap<TypeId, Box<dyn Any + Send + Sync>>,
 }
 
@@ -28,7 +28,7 @@ impl DateContainer {
     #[inline]
     pub fn new() -> Self {
         Self {
-            map: HashMap::new()
+            map: HashMap::new(),
         }
     }
 
@@ -40,7 +40,7 @@ impl DateContainer {
         self.map.contains_key(&TypeId::of::<T>())
     }
 
-    pub fn get<T: 'static>(&mut self) -> Option<&T> {
+    pub fn get<T: 'static>(&self) -> Option<&T> {
         self.map
             .get(&TypeId::of::<T>())
             .and_then(|boxed| (&**boxed as &(dyn Any + 'static)).downcast_ref())
@@ -55,4 +55,3 @@ impl DateContainer {
         })
     }
 }
-
