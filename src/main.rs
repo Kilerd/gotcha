@@ -10,7 +10,6 @@ use std::task::{Context, Poll};
 
 use crate::app::App;
 use futures_util::future;
-use http_service::HttpService;
 use hyper::service::Service;
 use hyper::{Body, Request, Response, Server};
 use std::future::Future;
