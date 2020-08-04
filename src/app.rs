@@ -28,6 +28,8 @@ pub trait Responder {}
 
 impl Responder for HttpResponse {}
 
+impl Responder for () {}
+
 async fn hello_world(req: HttpRequest) -> impl Responder {
     HttpResponse(String::from("hello world"))
 }

@@ -8,16 +8,24 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 use std::task::{Context, Poll};
 
-use crate::app::App;
+use crate::app::{App, Responder};
 use futures_util::future;
 use hyper::service::Service;
 use hyper::{Body, Request, Response, Server};
+use route_recognizer::Router;
 use std::future::Future;
 use std::pin::Pin;
+use std::process::Output;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 const ROOT: &str = "/";
+
+async fn handler() -> impl Responder {}
+
+async fn handler2() -> impl Responder {}
+
+async fn handler3() -> impl Responder {}
 
 #[derive(Debug)]
 pub struct GotchaConnection {
@@ -72,8 +80,19 @@ impl<T> Service<T> for GotchaHttpService {
     }
 }
 
+fn handle<T>(route: T)
+where
+    T: Fn() -> F,
+    F: ,
+{
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut router: Router<Box<dyn Fn() -> dyn Future<Output = dyn Responder>>> = Router::new();
+    router.add("1", Box::new(handler));
+    router.add("2", Box::new(handler2));
+
     let addr = "127.0.0.1:1337".parse().unwrap();
 
     let mut app = App::new();
