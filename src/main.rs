@@ -1,31 +1,37 @@
+use std::future::Future;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::pin::Pin;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::task::{Context, Poll};
+
+use futures_util::future;
+use hyper::{Body, Request, Response, Server};
+use hyper::service::Service;
+
+use crate::app::{App};
+use crate::controller::{Responder, HandlerController};
+
 mod app;
 mod controller;
 mod data;
 mod middleware;
 mod router;
 
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-
-use std::task::{Context, Poll};
-
-use crate::app::{App, Responder};
-use futures_util::future;
-use hyper::service::Service;
-use hyper::{Body, Request, Response, Server};
-use route_recognizer::Router;
-use std::future::Future;
-use std::pin::Pin;
-use std::process::Output;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
-
 const ROOT: &str = "/";
 
-async fn handler() -> impl Responder {}
 
-async fn handler2() -> impl Responder {}
+struct Route(Box<dyn Fn(Request<Body>) -> dyn Future<Output=String>>);
 
-async fn handler3() -> impl Responder {}
+
+async fn hello_world(req: Request<Body>) -> String {
+    String::from("hello world")
+}
+
+async fn resp() -> impl Responder {
+    String::from("hello world")
+}
+
 
 #[derive(Debug)]
 pub struct GotchaConnection {
@@ -36,7 +42,7 @@ impl Service<Request<Body>> for GotchaConnection {
     type Response = Response<Body>;
     type Error = hyper::Error;
     type Future =
-        Pin<Box<dyn Future<Output = Result<Response<Body>, Self::Error>> + Send + 'static>>;
+    Pin<Box<dyn Future<Output=Result<Response<Body>, Self::Error>> + Send + 'static>>;
 
     fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         Ok(()).into()
@@ -49,7 +55,10 @@ impl Service<Request<Body>> for GotchaConnection {
             let mut rsp = Response::builder();
             let option: &AtomicUsize = app.data_container.get().unwrap();
             let original = option.fetch_add(1, Ordering::SeqCst);
-            let string = format!("{} click count {}", app.msg, original);
+
+            let string1 = hello_world(req).await;
+
+            let string = format!("{} , click count {}", string1, original);
             let vec = Vec::from(string.as_bytes());
             let body = Body::from(vec);
             let rsp = rsp.status(200).body(body).unwrap();
@@ -80,20 +89,15 @@ impl<T> Service<T> for GotchaHttpService {
     }
 }
 
-fn handle<T>(route: T)
-where
-    T: Fn() -> F,
-    F: ,
-{
-}
-
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut router: Router<Box<dyn Fn() -> dyn Future<Output = dyn Responder>>> = Router::new();
-    router.add("1", Box::new(handler));
-    router.add("2", Box::new(handler2));
-
     let addr = "127.0.0.1:1337".parse().unwrap();
+
+    let controller = HandlerController::new(resp);
+
+    let x = (controller.hnd)().await;
+    let response = x.to_response();
+
 
     let mut app = App::new();
     app.data_container.insert(AtomicUsize::new(0));

@@ -20,19 +20,8 @@ use tokio::runtime::Runtime;
 
 const ROOT: &'static str = "/";
 
-pub struct HttpRequest;
-
-pub struct HttpResponse(pub String);
-
-pub trait Responder {}
-
-impl Responder for HttpResponse {}
-
-impl Responder for () {}
-
-async fn hello_world(req: HttpRequest) -> impl Responder {
-    HttpResponse(String::from("hello world"))
-}
+//
+// pub trait Responder {}
 
 //pub struct ControllerHolder {
 //    func: Pin<Box<dyn FnMut(HttpRequest) -> Box<dyn Future<Output = HttpResponse> + Send> + Send>>,
