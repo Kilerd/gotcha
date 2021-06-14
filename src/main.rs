@@ -24,6 +24,7 @@ const ROOT: &str = "/";
 struct Route(Box<dyn Fn(Request<Body>) -> dyn Future<Output=String>>);
 
 
+<<<<<<< HEAD
 async fn hello_world(req: Request<Body>) -> String {
     String::from("hello world")
 }
@@ -34,6 +35,9 @@ async fn resp() -> impl Responder {
 
 
 #[derive(Debug)]
+=======
+
+>>>>>>> 461e5a5 (draft)
 pub struct GotchaConnection {
     app: Arc<App>,
 }
@@ -49,9 +53,13 @@ impl Service<Request<Body>> for GotchaConnection {
     }
 
     fn call(&mut self, req: Request<Body>) -> Self::Future {
-        //        Box::pin(future::ok(rsp))
         let app = self.app.clone();
+
+        let result = app.router.recognize(req.uri().path())
+            .map(|m| ((*m.handler()).clone(), m.params().clone()));
+
         let fut = async move {
+<<<<<<< HEAD
             let mut rsp = Response::builder();
             let option: &AtomicUsize = app.data_container.get().unwrap();
             let original = option.fetch_add(1, Ordering::SeqCst);
@@ -63,6 +71,25 @@ impl Service<Request<Body>> for GotchaConnection {
             let body = Body::from(vec);
             let rsp = rsp.status(200).body(body).unwrap();
             Ok(rsp)
+=======
+            let res = match result {
+                Ok(mat) => {
+                    // let x = mat.handler();
+                    let arc = mat.0;
+                    let response = arc.call().await;
+                    let response1 = response.into_response();
+                    response1
+                }
+                Err(msg) => {
+                    Response::builder()
+                        .status(404)
+                        .body(Body::from(Vec::from(msg.clone().as_bytes())))
+                        .unwrap()
+                }
+            };
+
+            Ok(res)
+>>>>>>> 461e5a5 (draft)
         };
 
         Box::pin(fut)
@@ -100,6 +127,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 
     let mut app = App::new();
+    app.route("/", Box::new(controller::async_handler1));
+    app.route("/hello", Box::new(controller::async_handler2));
     app.data_container.insert(AtomicUsize::new(0));
     let service = GotchaHttpService { app: Arc::new(app) };
     let server = Server::bind(&addr).serve(service);

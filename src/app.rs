@@ -17,11 +17,34 @@ use http::StatusCode;
 use hyper::service::Service;
 use hyper::{Body, Request, Response, Server as HyperServer};
 use tokio::runtime::Runtime;
+use route_recognizer::Router;
+use std::sync::Arc;
+use crate::controller::{GotchaResponse, FromRequest};
 
 const ROOT: &'static str = "/";
 
+<<<<<<< HEAD
 //
 // pub trait Responder {}
+=======
+
+pub trait Responder {
+    fn into_response(self) -> GotchaResponse;
+}
+
+impl Responder for String {
+    fn into_response(self) -> GotchaResponse {
+        GotchaResponse(self)
+    }
+}
+
+
+impl Responder for () {
+    fn into_response(self) -> GotchaResponse {
+        GotchaResponse("empty tuple".to_owned())
+    }
+}
+>>>>>>> 461e5a5 (draft)
 
 //pub struct ControllerHolder {
 //    func: Pin<Box<dyn FnMut(HttpRequest) -> Box<dyn Future<Output = HttpResponse> + Send> + Send>>,
@@ -59,12 +82,11 @@ const ROOT: &'static str = "/";
 //        Box::pin(fut)
 //    }
 //}
-
-#[derive(Debug)]
 pub struct App {
     pub data_container: DateContainer,
     //    middlewares: Vec<Box<dyn Middleware + 'static + Send + Sync>>,
     //    router: Arc<Router<P>>
+    pub router: Router<Arc<dyn crate::controller::Handler>>,
     pub msg: String,
 }
 
@@ -81,8 +103,13 @@ impl App {
             data_container: DateContainer::new(),
             //            middlewares: Vec::new(),
             //            router: Arc::new(Router::new())
+            router: Router::new(),
             msg: "hello world".into(),
         }
+    }
+
+    pub fn route<H: crate::controller::Handler>(&mut self, mut route: &str, dest: H) {
+        self.router.add(route, Arc::new(dest));
     }
     //
     //    pub fn data<T: 'static + Send + Sync>(mut self, data: T) -> Self {

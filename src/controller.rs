@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 use std::future::Future;
 use async_trait::async_trait;
 use std::marker::PhantomData;
@@ -160,12 +161,65 @@ impl<RES, OUT> Future for HandlerServiceResponse<RES, OUT>
 
 
 
+=======
+// use std::future::Future;
+// use futures_util::try_future::IntoFuture;
+// use futures_util::FutureExt;
+//
+// pub struct GotchaResponse {}
+//
+// pub trait Responder {
+//     fn to_response(&self) -> GotchaResponse
+//         where
+//             Self: Sized;
+// }
+//
+// impl Responder for String {
+//     fn to_response(&self) -> GotchaResponse
+//         where
+//             Self: Sized,
+//     {
+//         GotchaResponse {}
+//     }
+// }
+//
+// pub trait FromRequest {
+//     fn from_request() -> Self
+//         where
+//             Self: Sized;
+// }
+>>>>>>> 461e5a5 (draft)
 //
 //
+// pub trait HandlerFactory<P, R>
+//     where
+//         R: Future<Output=GotchaResponse>,
+// {
+//     fn build_params(&self) -> P;
+//     fn call(&self, _: P) -> R;
+// }
 //
 //
+// impl<F, RES> HandlerFactory<(), R> for F
+//     where
+//         F: Fn() -> RES,
+//         RES: Future, RES::Output: Responder,
+//         R: Future<Output=GotchaResponse>,
+// {
+//     fn build_params(&self) -> () {
+//         ()
+//     }
 //
+<<<<<<< HEAD
 
+=======
+//     fn call(&self, _: ()) -> R {
+//         (self)().map(|x| x.to_response())
+//     }
+// }
+//
+//
+>>>>>>> 461e5a5 (draft)
 // macro_rules! factory_tuple ({ $(($n:tt, $T:ident)),+} => {
 //     impl<F, RES, $($T,)+> HandlerFactory<($($T,)+), RES> for F
 //     where F: Fn($($T,)+) -> RES,
@@ -184,6 +238,7 @@ impl<RES, OUT> Future for HandlerServiceResponse<RES, OUT>
 //
 // factory_tuple!((0, P0));
 // factory_tuple!((0, P0), (1, P1));
+<<<<<<< HEAD
 ////factory_tuple!((0, P0), (1, P1), (2, P2));
 ////factory_tuple!((0, P0), (1, P1), (2, P2), (3, P3));
 ////factory_tuple!((0, P0), (1, P1), (2, P2), (3, P3), (4, P4));
@@ -193,3 +248,89 @@ impl<RES, OUT> Future for HandlerServiceResponse<RES, OUT>
 ////factory_tuple!((0, P0), (1, P1), (2, P2), (3, P3), (4, P4), (5, P5), (6, P6), (7, P7), (8, P8));
 ////factory_tuple!((0, P0), (1, P1), (2, P2), (3, P3), (4, P4), (5, P5), (6, P6), (7, P7), (8, P8), (9, P9));
 ////factory_tuple!((0, P0), (1, P1), (2, P2), (3, P3), (4, P4), (5, P5), (6, P6), (7, P7), (8, P8), (9, P9), (10, P10));
+=======
+// factory_tuple!((0, P0), (1, P1), (2, P2));
+// factory_tuple!((0, P0), (1, P1), (2, P2), (3, P3));
+// factory_tuple!((0, P0), (1, P1), (2, P2), (3, P3), (4, P4));
+// factory_tuple!((0, P0), (1, P1), (2, P2), (3, P3), (4, P4), (5, P5));
+// factory_tuple!((0, P0), (1, P1), (2, P2), (3, P3), (4, P4), (5, P5), (6, P6));
+// factory_tuple!((0, P0), (1, P1), (2, P2), (3, P3), (4, P4), (5, P5), (6, P6), (7, P7));
+// factory_tuple!((0, P0), (1, P1), (2, P2), (3, P3), (4, P4), (5, P5), (6, P6), (7, P7), (8, P8));
+// factory_tuple!((0, P0), (1, P1), (2, P2), (3, P3), (4, P4), (5, P5), (6, P6), (7, P7), (8, P8), (9, P9));
+// factory_tuple!((0, P0), (1, P1), (2, P2), (3, P3), (4, P4), (5, P5), (6, P6), (7, P7), (8, P8), (9, P9), (10, P10));
+
+use async_trait::async_trait;
+use std::future::Future;
+use crate::app::Responder;
+
+use hyper::{Body, Request, Response, Server};
+use std::pin::Pin;
+
+pub struct GotchaResponse(pub String);
+
+impl GotchaResponse {
+    pub fn into_response(self) -> Response<Body> {
+        Response::builder()
+            .status(200)
+            .body(Body::from(Vec::from(self.0.as_bytes())))
+            .unwrap()
+    }
+}
+
+#[async_trait]
+pub trait Handler: Send + Sync + 'static {
+    async fn call(&self) -> GotchaResponse;
+}
+
+
+#[async_trait]
+impl<F, RES, > Handler for F
+    where F: (Fn() -> RES) + Sync + Send + 'static,
+          RES: Future + Send, RES::Output: Responder,
+{
+    async fn call(&self) -> GotchaResponse {
+        self().await.into_response()
+    }
+}
+
+#[async_trait]
+impl<F, RES, P> Handler for F
+    where F: (Fn(P) -> RES) + Sync + Send + 'static,
+          RES: Future + Send,
+          RES::Output: Responder,
+          P: FromRequest,
+{
+    async fn call(&self) -> GotchaResponse {
+        let p0 = P::from_request().await;
+        self(p0).await.into_response()
+    }
+}
+
+#[async_trait]
+pub trait FromRequest {
+    async fn from_request() -> Self;
+}
+
+#[async_trait]
+impl FromRequest for () {
+    async fn from_request() -> Self {
+        ()
+    }
+}
+
+#[async_trait]
+impl FromRequest for String {
+    async fn from_request() -> Self {
+        "hello string".to_owned()
+    }
+}
+
+
+pub async fn async_handler1() -> String {
+    "hello world".to_owned()
+}
+
+pub async fn async_handler2(input: String) -> String {
+    input
+}
+>>>>>>> 461e5a5 (draft)
