@@ -1,5 +1,6 @@
 [package]
 name = "gotcha"
+description = "enhanced web framework based on actix-web"
 version = "0.1.0"
 edition = "2021"
 
