@@ -1,10 +1,5 @@
-[package]
-name = "gotcha"
-version = "0.1.0"
-description = "aim to be the fastest web framework"
-authors = ["Kilerd Chan <blove694@gmail.com>"]
-edition = "2018"
-license = "MIT"
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
-[dependencies]
+[workspace]
+members = [
+    "gotcha",
+    "gotcha_macro",
+]
