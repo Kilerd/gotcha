@@ -1,5 +1,6 @@
 [workspace]
 members = [
     "gotcha",
+    "gotcha_lib",
     "gotcha_macro",
 ]
