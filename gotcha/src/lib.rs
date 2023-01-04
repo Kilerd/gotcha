@@ -5,7 +5,7 @@ use actix_web::{
 
 use gotcha_lib::{GotchaOperationObject, Operation};
 pub use gotcha_macro::get;
-use std::{collections::HashMap};
+use std::{collections::HashMap, sync::Arc};
 
 pub use actix_web::App;
 pub use actix_web::HttpServer;
@@ -129,15 +129,18 @@ pub struct Messager {
 pub type MessagerWrapper = web::Data<Messager>;
 
 impl Messager {
-    pub async fn send<T: Message> (&self, msg: T) -> T::Output {
-        msg.handle().await
+    pub async fn send<T: Message> (self: Arc<Self>, msg: T) -> T::Output {
+        msg.handle(self).await
+    }
+    pub async fn spawn<T> (self: Arc<Self>, msg: T) -> () where T: Message + 'static, T::Output: Send {
+        tokio::spawn(msg.handle(self));
     }
 }
 
 #[async_trait]
 pub trait Message {
     type Output;
-    async fn handle(self) -> Self::Output;
+    async fn handle(self, messager: Arc<Messager>) -> Self::Output;
 }
 
 

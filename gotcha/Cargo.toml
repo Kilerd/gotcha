@@ -11,3 +11,4 @@ actix-web = "4"
 gotcha_macro = { path = "../gotcha_macro" }
 gotcha_lib = { path = "../gotcha_lib" }
 async-trait = "0.1.60"
+tokio = "1"
