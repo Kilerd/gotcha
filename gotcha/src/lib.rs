@@ -1,6 +1,6 @@
 use actix_web::{
     dev::{ServiceFactory, ServiceRequest},
-    http,
+    http, web,
 };
 
 use gotcha_lib::{GotchaOperationObject, Operation};
@@ -11,6 +11,7 @@ pub use actix_web::App;
 pub use actix_web::HttpServer;
 pub use actix_web::Responder;
 
+pub use async_trait::async_trait;
 
 pub mod wrapper {
     pub use gotcha_lib;
@@ -115,8 +116,28 @@ where
 
     pub fn done(self) -> App<T> {
         // todo add swagger api
+        let messager = web::Data::new(Messager{});
         self.inner
+        .app_data(messager)
+
     }
+}
+
+pub struct Messager {
+}
+
+pub type MessagerWrapper = web::Data<Messager>;
+
+impl Messager {
+    pub async fn send<T: Message> (&self, msg: T) -> T::Output {
+        msg.handle().await
+    }
+}
+
+#[async_trait]
+pub trait Message {
+    type Output;
+    async fn handle(self) -> Self::Output;
 }
 
 
