@@ -1,10 +1,20 @@
 use actix_web::{
     dev::{ServiceFactory, ServiceRequest},
-    Responder, http,
+    http,
 };
+
 use gotcha_lib::{GotchaOperationObject, Operation};
-use gotcha_macro::get;
-use std::{collections::HashMap, hash::Hash};
+pub use gotcha_macro::get;
+use std::{collections::HashMap};
+
+pub use actix_web::App;
+pub use actix_web::HttpServer;
+pub use actix_web::Responder;
+
+
+pub mod wrapper {
+    pub use gotcha_lib;
+}
 
 trait ApiObject {
     fn name() -> &'static str;
@@ -58,11 +68,6 @@ impl ApiObject for MyRequest {
     }
 }
 
-
-
-
-
-
 pub struct GotchaApp<T> {
     api_endpoint: Option<String>,
     paths: HashMap<String, HashMap<http::Method, GotchaOperationObject>>,
@@ -78,7 +83,11 @@ impl<T> GotchaAppWrapperExt<T> for actix_web::App<T> {
     type Wrapper = GotchaApp<T>;
 
     fn into_gotcha(self) -> Self::Wrapper {
-        GotchaApp { inner: self, paths: HashMap::new(), api_endpoint: None }
+        GotchaApp {
+            inner: self,
+            paths: HashMap::new(),
+            api_endpoint: None,
+        }
     }
 }
 
@@ -89,11 +98,11 @@ where
     pub fn service<F>(mut self, factory: F) -> Self
     where
         F: Operation + actix_web::dev::HttpServiceFactory + 'static,
-    {   
+    {
         let uri = factory.uri().to_string();
         let method = factory.method();
         let operation_object = factory.generate_gotcha_operation_object();
-        let uri_map = self.paths.entry(uri).or_insert_with(||HashMap::new());
+        let uri_map = self.paths.entry(uri).or_insert_with(|| HashMap::new());
         uri_map.insert(method, operation_object);
         self.inner = self.inner.service(factory);
         self
@@ -103,26 +112,15 @@ where
         self.api_endpoint = Some(path.into());
         self
     }
+
+    pub fn done(self) -> App<T> {
+        // todo add swagger api
+        self.inner
+    }
 }
 
-/// test
-#[get("/", group="pest")]
-pub async fn hello_world() -> impl Responder {
-    "hello world"
-}
 
 #[cfg(test)]
 mod tests {
-    use actix_web::App;
 
-    use super::*;
-
-
-
-    #[test]
-    fn should_add_to_app() {
-        let app = App::new().into_gotcha().service(hello_world);
-        assert_eq!(1, app.paths.len());
-    
-    }
 }

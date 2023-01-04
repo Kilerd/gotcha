@@ -25,9 +25,9 @@ pub fn get(args: TokenStream, input_stream: TokenStream) -> TokenStream {
         #[::actix_web::get( "/" )]
         #input
 
-        impl ::gotcha_lib::Operation for  #fn_ident {
-            fn method(&self) -> http::Method {
-                http::Method::GET
+        impl ::gotcha::wrapper::gotcha_lib::Operation for  #fn_ident {
+            fn method(&self) -> ::actix_web::http::Method {
+                ::actix_web::http::Method::GET
             }
             fn uri(&self) -> &'static str {
                 #path
