@@ -1,14 +1,16 @@
 [package]
-name = "gotcha"
 description = "enhanced web framework based on actix-web"
-version = "0.1.0"
 edition = "2021"
+name = "gotcha"
+version = "0.1.0"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
 actix-web = "4"
-gotcha_macro = { path = "../gotcha_macro" }
-gotcha_lib = { path = "../gotcha_lib" }
 async-trait = "0.1.60"
+config = {version = "0.13", default-feature = false, features = ["toml"]}
+gotcha_lib = {path = "../gotcha_lib"}
+gotcha_macro = {path = "../gotcha_macro"}
+serde = "1"
 tokio = "1"

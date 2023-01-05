@@ -9,4 +9,3 @@ provide a featured web framework
  - logging system
  - opt-in prometheus integration
  - sqlx based magic ORM
- 

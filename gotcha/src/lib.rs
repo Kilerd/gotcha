@@ -5,6 +5,7 @@ use actix_web::{
 
 use gotcha_lib::{GotchaOperationObject, Operation};
 pub use gotcha_macro::get;
+use serde::de::DeserializeOwned;
 use std::{collections::HashMap, sync::Arc};
 
 pub use actix_web::App;
@@ -116,23 +117,25 @@ where
 
     pub fn done(self) -> App<T> {
         // todo add swagger api
-        let messager = web::Data::new(Messager{});
-        self.inner
-        .app_data(messager)
-
+        // init messager
+        let messager = web::Data::new(Messager {});
+        self.inner.app_data(messager)
     }
 }
 
-pub struct Messager {
-}
+pub struct Messager {}
 
 pub type MessagerWrapper = web::Data<Messager>;
 
 impl Messager {
-    pub async fn send<T: Message> (self: Arc<Self>, msg: T) -> T::Output {
+    pub async fn send<T: Message>(self: Arc<Self>, msg: T) -> T::Output {
         msg.handle(self).await
     }
-    pub async fn spawn<T> (self: Arc<Self>, msg: T) -> () where T: Message + 'static, T::Output: Send {
+    pub async fn spawn<T>(self: Arc<Self>, msg: T) -> ()
+    where
+        T: Message + 'static,
+        T::Output: Send,
+    {
         tokio::spawn(msg.handle(self));
     }
 }
@@ -143,8 +146,31 @@ pub trait Message {
     async fn handle(self, messager: Arc<Messager>) -> Self::Output;
 }
 
+pub struct GotchaConfig<T> {
+    data: T,
+}
+impl<T: DeserializeOwned> GotchaConfig<T> {
+    pub fn new() -> GotchaConfig<T> {
+        let run_mode = std::env::var("RUN_MODE").ok();
+
+        let mut s = config::Config::builder()
+            // Start off by merging in the "default" configuration file
+            .add_source(config::File::with_name("configurations/application"));
+
+        if let Some(environment) = run_mode {
+            s = s.add_source(
+                config::File::with_name(&format!("configurations/application_{}", environment))
+                    .required(false),
+            )
+        }
+
+        s = s.add_source(config::Environment::with_prefix("APP"));
+
+        let b = s.build().unwrap();
+        let ret = b.try_deserialize().unwrap();
+        GotchaConfig { data: ret }
+    }
+}
 
 #[cfg(test)]
-mod tests {
-
-}
+mod tests {}
