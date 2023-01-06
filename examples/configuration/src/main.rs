@@ -1,25 +1,31 @@
-use gotcha::{get, App, GotchaAppWrapperExt, GotchaCli, HttpServer, Responder};
+use gotcha::{get, App, Data, GotchaAppWrapperExt, GotchaCli, HttpServer, Responder};
 use serde::Deserialize;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 struct Config {
     welcome: String,
 }
 
 #[get("/")]
-pub async fn hello_world() -> impl Responder {
-    "hello world"
+pub async fn hello_world(config: Data<Config>) -> impl Responder {
+    config.welcome.clone()
 }
 
 #[tokio::main]
 async fn main() {
-    GotchaCli::new()
-        .server(|| async move {
-            HttpServer::new(|| App::new().into_gotcha().service(hello_world).done())
-                .bind(("127.0.0.1", 8080))
-                .unwrap()
-                .run()
-                .await;
+    GotchaCli::<_, Config>::new()
+        .server(|config| async move {
+            HttpServer::new(move || {
+                App::new()
+                    .into_gotcha()
+                    .service(hello_world)
+                    .data(config.clone())
+                    .done()
+            })
+            .bind(("127.0.0.1", 8080))
+            .unwrap()
+            .run()
+            .await;
         })
         .run()
         .await

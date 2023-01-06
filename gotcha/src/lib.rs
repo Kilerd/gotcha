@@ -13,12 +13,14 @@ pub use actix_web::HttpServer;
 pub use actix_web::Responder;
 
 pub use async_trait::async_trait;
+pub use actix_web::web::Data;
 
 pub mod wrapper {
     pub use gotcha_lib;
 }
 
 pub mod cli;
+mod config;
 pub use cli::GotchaCli;
 
 trait ApiObject {
@@ -117,12 +119,17 @@ where
         self.api_endpoint = Some(path.into());
         self
     }
-
+    pub fn data<U: 'static>(self, ext: U) -> Self {
+        let ext_data = web::Data::new(ext);
+        Self {
+            inner: self.inner.app_data(ext_data),
+            ..self
+        }
+    }
     pub fn done(self) -> App<T> {
         // todo add swagger api
         // init messager
-        let messager = web::Data::new(Messager {});
-        self.inner.app_data(messager)
+        self.data(Messager {}).inner
     }
 }
 
@@ -147,32 +154,6 @@ impl Messager {
 pub trait Message {
     type Output;
     async fn handle(self, messager: Arc<Messager>) -> Self::Output;
-}
-
-pub struct GotchaConfig<T> {
-    data: T,
-}
-impl<T: DeserializeOwned> GotchaConfig<T> {
-    pub fn new() -> GotchaConfig<T> {
-        let run_mode = std::env::var("RUN_MODE").ok();
-
-        let mut s = config::Config::builder()
-            // Start off by merging in the "default" configuration file
-            .add_source(config::File::with_name("configurations/application"));
-
-        if let Some(environment) = run_mode {
-            s = s.add_source(
-                config::File::with_name(&format!("configurations/application_{}", environment))
-                    .required(false),
-            )
-        }
-
-        s = s.add_source(config::Environment::with_prefix("APP"));
-
-        let b = s.build().unwrap();
-        let ret = b.try_deserialize().unwrap();
-        GotchaConfig { data: ret }
-    }
 }
 
 #[cfg(test)]
