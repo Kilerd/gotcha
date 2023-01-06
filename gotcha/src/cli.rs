@@ -23,7 +23,7 @@ pub struct RunOpts {
 }
 
 
-pub struct GotchaCli<F, const HAS_SERVER_FN: bool> {
+pub struct GotchaCli<F, const HAS_SERVER_FN: bool=false> {
     server_fn: Option<F>,
 }
 
