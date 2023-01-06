@@ -9,6 +9,7 @@ version = "0.1.0"
 [dependencies]
 actix-web = "4"
 async-trait = "0.1.60"
+clap = { version = "4.0.32", features = ["derive"] }
 config = {version = "0.13", default-feature = false, features = ["toml"]}
 gotcha_lib = {path = "../gotcha_lib"}
 gotcha_macro = {path = "../gotcha_macro"}

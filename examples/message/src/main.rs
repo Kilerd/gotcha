@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use gotcha::{
-    async_trait, get, App, GotchaAppWrapperExt, HttpServer, Message, Messager, MessagerWrapper,
-    Responder,
+    async_trait, get, App, GotchaAppWrapperExt, GotchaCli, HttpServer, Message, Messager,
+    MessagerWrapper, Responder,
 };
 
 struct HelloWorldMessage;
@@ -34,9 +34,14 @@ pub async fn hello_world(messager: MessagerWrapper) -> impl Responder {
 
 #[tokio::main]
 async fn main() {
-    HttpServer::new(|| App::new().into_gotcha().service(hello_world).done())
-        .bind(("127.0.0.1", 8080))
-        .unwrap()
+    GotchaCli::new()
+        .server(|| async move {
+            HttpServer::new(|| App::new().into_gotcha().service(hello_world).done())
+                .bind(("127.0.0.1", 8080))
+                .unwrap()
+                .run()
+                .await;
+        })
         .run()
-        .await;
+        .await
 }

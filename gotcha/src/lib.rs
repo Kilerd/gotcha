@@ -18,6 +18,9 @@ pub mod wrapper {
     pub use gotcha_lib;
 }
 
+pub mod cli;
+pub use cli::GotchaCli;
+
 trait ApiObject {
     fn name() -> &'static str;
     fn required() -> bool;
