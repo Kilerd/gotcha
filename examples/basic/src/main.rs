@@ -7,18 +7,23 @@ pub async fn hello_world() -> impl Responder {
 }
 
 #[derive(Debug, Deserialize, Clone)]
-struct Config {
-}
+struct Config {}
 
 #[tokio::main]
 async fn main() {
     GotchaCli::<_, Config>::new()
-        .server(|_| async move {
-            HttpServer::new(|| App::new().into_gotcha().service(hello_world).done())
-                .bind(("127.0.0.1", 8080))
-                .unwrap()
-                .run()
-                .await;
+        .server(|config| async move {
+            HttpServer::new(|| {
+                App::new()
+                    .into_gotcha()
+                    .service(hello_world)
+                    .data(config)
+                    .done()
+            })
+            .bind(("127.0.0.1", 8080))
+            .unwrap()
+            .run()
+            .await;
         })
         .run()
         .await
