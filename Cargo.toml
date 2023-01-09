@@ -3,5 +3,7 @@ members = [
     "gotcha",
     "gotcha_lib",
     "gotcha_macro",
-    "examples/*"
+    "examples/basic",
+    "examples/message",
+    "examples/configuration"
 ]

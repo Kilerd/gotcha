@@ -19,7 +19,8 @@ pub enum MigrationOpts {}
 
 #[derive(Args, Debug)]
 pub struct RunOpts {
-    pub mode: String,
+    #[clap(long, short)]
+    pub profile: Option<String>,
 }
 
 pub struct GotchaCli<F, CONFIG: DeserializeOwned = (), const HAS_SERVER_FN: bool = false> {
@@ -59,7 +60,7 @@ where
         
         match opts {
             GotchaOpts::Run(opts) => {
-                let config: CONFIG = GotchaConfigLoader::load(opts.mode);
+                let config: CONFIG = GotchaConfigLoader::load(opts.profile);
                 let server_fn = self.server_fn.unwrap();
                 server_fn(config).await;
             }
