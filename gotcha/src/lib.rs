@@ -1,3 +1,7 @@
+use actix_service::IntoServiceFactory;
+use actix_web::body::MessageBody;
+use actix_web::dev::ServiceResponse;
+use actix_web::dev::Transform;
 pub use actix_web::web::Data;
 pub use actix_web::App;
 pub use actix_web::HttpServer;
@@ -109,6 +113,55 @@ where
         uri_map.insert(method, operation_object);
         self.inner = self.inner.service(factory);
         self
+    }
+    pub fn wrap<M, B>(
+        self,
+        mw: M,
+    ) -> GotchaApp<
+        impl ServiceFactory<
+            ServiceRequest,
+            Config = (),
+            Response = ServiceResponse<B>,
+            Error = actix_web::Error,
+            InitError = (),
+        >,
+    >
+    where
+        M: Transform<
+                T::Service,
+                ServiceRequest,
+                Response = ServiceResponse<B>,
+                Error = actix_web::Error,
+                InitError = (),
+            > + 'static,
+        B: MessageBody,
+    {
+        let inner = self.inner.wrap(mw);
+        GotchaApp {
+            inner,
+            api_endpoint: self.api_endpoint,
+            paths: self.paths,
+        }
+    }
+
+    pub fn default_service<F, U>(self, svc: F) -> Self
+    where
+        F: IntoServiceFactory<U, ServiceRequest>,
+        U: ServiceFactory<
+                ServiceRequest,
+                Config = (),
+                Response = ServiceResponse,
+                Error = actix_web::Error,
+            > + 'static,
+        U::InitError: std::fmt::Debug,
+    {
+        let inner = self.inner.default_service(svc);
+
+        GotchaApp {
+            inner,
+            api_endpoint: self.api_endpoint,
+            paths: self.paths,
+        }
     }
 
     pub fn api_endpoint(mut self, path: impl Into<String>) -> Self {
