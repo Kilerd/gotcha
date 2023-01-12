@@ -15,3 +15,5 @@ gotcha_lib = {path = "../gotcha_lib"}
 gotcha_macro = {path = "../gotcha_macro"}
 serde = "1"
 tokio = "1"
+tracing = "0.1"
+tracing-subscriber = "0.3"

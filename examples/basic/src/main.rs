@@ -1,4 +1,4 @@
-use gotcha::{get, App, GotchaAppWrapperExt, GotchaCli, HttpServer, Responder};
+use gotcha::{get, App, GotchaAppWrapperExt, GotchaCli, HttpServer, Responder, tracing::{info}};
 use serde::Deserialize;
 
 #[get("/")]
@@ -13,11 +13,13 @@ struct Config {}
 async fn main() {
     GotchaCli::<_, Config>::new()
         .server(|config| async move {
-            HttpServer::new(|| {
+            info!("starting application");
+            
+            HttpServer::new(move || {
                 App::new()
                     .into_gotcha()
                     .service(hello_world)
-                    .data(config)
+                    .data(config.clone())
                     .done()
             })
             .bind(("127.0.0.1", 8080))

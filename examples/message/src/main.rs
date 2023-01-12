@@ -8,8 +8,7 @@ use gotcha::{
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize, Clone)]
-struct Config {
-}
+struct Config {}
 
 struct HelloWorldMessage;
 

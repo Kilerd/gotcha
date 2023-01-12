@@ -1,27 +1,23 @@
+pub use actix_web::web::Data;
+pub use actix_web::App;
+pub use actix_web::HttpServer;
+pub use actix_web::Responder;
 use actix_web::{
     dev::{ServiceFactory, ServiceRequest},
     http, web,
 };
-
+pub use async_trait::async_trait;
 use gotcha_lib::{GotchaOperationObject, Operation};
 pub use gotcha_macro::get;
-use serde::de::DeserializeOwned;
 use std::{collections::HashMap, sync::Arc};
-
-pub use actix_web::App;
-pub use actix_web::HttpServer;
-pub use actix_web::Responder;
-
-pub use async_trait::async_trait;
-pub use actix_web::web::Data;
 
 pub mod wrapper {
     pub use gotcha_lib;
 }
-
 pub mod cli;
 mod config;
 pub use cli::GotchaCli;
+pub use tracing;
 
 trait ApiObject {
     fn name() -> &'static str;

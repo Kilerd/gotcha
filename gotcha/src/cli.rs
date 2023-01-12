@@ -56,6 +56,7 @@ where
     CONFIG: DeserializeOwned,
 {
     pub async fn run(self) -> () {
+        tracing_subscriber::fmt::init();
         let opts = GotchaOpts::parse();
         
         match opts {
