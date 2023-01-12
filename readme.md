@@ -2,14 +2,14 @@
 provide a featured web framework
 
 ## aim to
- - [x]everything of actix-web
- - [ ]automatically swagger api generation
- - [ ]built-in message mechanism
- - [x]environment based configuration system
- - [x]logging system
- - [ ]opt-in prometheus integration
- - [ ]sqlx based magic ORM
- - [ ]cron-based task system
+ - [x] everything of actix-web
+ - [ ] automatically swagger api generation
+ - [ ] built-in message mechanism
+ - [x] environment based configuration system
+ - [x] logging system
+ - [ ] opt-in prometheus integration
+ - [ ] sqlx based magic ORM
+ - [ ] cron-based task system
 
 ## get started
 add dependency into `Cargo.toml`
