@@ -31,7 +31,7 @@ pub struct GotchaCli<F, CONFIG: DeserializeOwned = (), const HAS_SERVER_FN: bool
 impl<F, FR, CONFIG> GotchaCli<F, CONFIG, false>
 where
     F: (Fn(CONFIG) -> FR) + Sync + 'static,
-    FR: std::future::Future<Output = ()> + 'static,
+    FR: std::future::Future<Output = Result<(), std::io::Error>> + 'static,
     CONFIG: DeserializeOwned,
 {
     pub fn new() -> Self {
@@ -52,13 +52,13 @@ where
 impl<F, FR, CONFIG> GotchaCli<F, CONFIG, true>
 where
     F: (Fn(CONFIG) -> FR) + Sync + 'static,
-    FR: std::future::Future<Output = ()> + 'static,
+    FR: std::future::Future<Output = Result<(), std::io::Error>> + 'static,
     CONFIG: DeserializeOwned,
 {
     pub async fn run(self) -> () {
         tracing_subscriber::fmt::init();
         let opts = GotchaOpts::parse();
-        
+
         match opts {
             GotchaOpts::Run(opts) => {
                 let config: CONFIG = GotchaConfigLoader::load(opts.profile);

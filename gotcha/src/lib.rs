@@ -20,6 +20,7 @@ pub mod wrapper {
 }
 pub mod cli;
 mod config;
+pub mod task;
 pub use cli::GotchaCli;
 pub use tracing;
 
@@ -79,6 +80,7 @@ pub struct GotchaApp<T> {
     api_endpoint: Option<String>,
     paths: HashMap<String, HashMap<http::Method, GotchaOperationObject>>,
     inner: actix_web::App<T>,
+    tasks: Vec<Box<dyn Fn()>>,
 }
 
 pub trait GotchaAppWrapperExt<T> {
@@ -94,6 +96,7 @@ impl<T> GotchaAppWrapperExt<T> for actix_web::App<T> {
             inner: self,
             paths: HashMap::new(),
             api_endpoint: None,
+            tasks: vec![],
         }
     }
 }
@@ -141,6 +144,7 @@ where
             inner,
             api_endpoint: self.api_endpoint,
             paths: self.paths,
+            tasks: vec![],
         }
     }
 
@@ -161,6 +165,7 @@ where
             inner,
             api_endpoint: self.api_endpoint,
             paths: self.paths,
+            tasks: self.tasks,
         }
     }
 
@@ -175,11 +180,32 @@ where
             ..self
         }
     }
+
+    pub fn task<TASK, TASK_RET>(mut self, t: TASK) -> Self
+    where
+        TASK: (Fn() -> TASK_RET) + 'static,
+        TASK_RET: std::future::Future<Output = ()> + Send + 'static,
+    {
+        self.tasks.push(
+            Box::new(move|| {tokio::spawn(t());})
+
+    );
+
+        self
+    }
     pub fn done(self) -> App<T> {
         // todo add swagger api
         // init messager
-        self.data(Messager {}).inner
+        let app = self.data(Messager {});
+    
+
+        // start task
+        for task in app.tasks {
+            task();
+        }
+        app.inner
     }
+
 }
 
 pub struct Messager {}

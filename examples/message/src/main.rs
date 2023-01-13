@@ -45,7 +45,7 @@ async fn main() {
                 .bind(("127.0.0.1", 8080))
                 .unwrap()
                 .run()
-                .await;
+                .await
         })
         .run()
         .await
