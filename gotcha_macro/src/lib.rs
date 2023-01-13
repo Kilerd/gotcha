@@ -9,13 +9,12 @@ pub fn get(args: TokenStream, input_stream: TokenStream) -> TokenStream {
     let attr_args = parse_macro_input!(args as AttributeArgs);
 
     let _args = match RouteMeta::from_list(&attr_args) {
-        Ok(v) => dbg!(v),
+        Ok(v) => v,
         Err(e) => {
             return TokenStream::from(e.write_errors());
         }
     };
     let input = parse_macro_input!(input_stream as ItemFn);
-    dbg!(&input);
 
     let fn_ident = input.sig.ident.clone();
     let fn_ident_string = fn_ident.to_string();

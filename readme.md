@@ -51,3 +51,64 @@ async fn main() {
         .await
 }
 ```
+
+
+## Magic ORM
+Magic ORM is based on sqlx, currently it only support postgres
+
+```rust
+#[derive(Debug, Deserialize, Serialize, Crud, FromRow)]
+#[crud(table = "users")]
+pub struct UserEntity {
+    pub id: Uuid,
+    pub username: String,
+    pub email: String,
+    pub password: String,
+    pub role: UserRole,
+    pub create_at: DateTime<Utc>,
+    pub last_login_at: DateTime<Utc>,
+}
+```
+the struct derived `Crud` would auto generate methods like:
+- `find_by_id` return optional entity
+- `fetch_one_by_id` return entity or raise
+- `fetch_all` return all entities
+- `create` passing the `Createable` to insert into table
+
+```rust 
+#[derive(Debug, Deserialize, Serialize, Creatable)]
+pub struct NewUser {
+    pub username: String,
+    pub email: String,
+    pub password: String,
+}
+```
+`Createable` means it can be executed by magic ORM, using `UserEntity::create(NewUser{...})` to create a new user into user table.
+
+Magic ORM aslo provide the `#[magic]` proc macro for those customized sql query.
+```rust
+#[magic]
+impl UserEntity {
+    pub async fn find_by__email__is<E>(email: &str, executor: E) -> Result<Option<UserEntity>, Error> {
+        todo!()
+    }
+
+    pub async fn exists_by_email_is<E>(_email: &str, executor: E) -> Result<bool, Error> {
+        todo!()
+    }
+}
+```
+code above will generate two sql query statement automatically:
+ - `select * from users where email = $1`
+ - `select exists(select 1 from users where email = $1)`
+
+and `#[magic]` aslo provide some convinent way to write customized sql query
+```rust
+#[magic]
+impl UserEntity {
+    pub async fn find_user<E>(email: &str, executor: E) -> Result<Option<UserEntity>, Error> {
+        sql!("select * from users where email = :email")
+    }
+}
+```
+notice that, rather than sqlx's `$1`, we use param `:email` in sql, it can be used in native sql execution tools as well without any modification, like IDEA.

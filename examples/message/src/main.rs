@@ -1,8 +1,9 @@
 use std::sync::Arc;
 
 use gotcha::{
-    async_trait, get, App, GotchaAppWrapperExt, GotchaCli, HttpServer, Message, Messager,
-    MessagerWrapper, Responder,
+    async_trait, get,
+    message::{Message, Messager, MessagerWrapper},
+    App, GotchaAppWrapperExt, GotchaCli, HttpServer, Responder,
 };
 
 use serde::Deserialize;
