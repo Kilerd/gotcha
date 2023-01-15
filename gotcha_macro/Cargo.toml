@@ -1,7 +1,9 @@
 [package]
 name = "gotcha_macro"
+description = "gotcha web framework macro"
 version = "0.1.0"
 edition = "2021"
+license = "MIT"
 
 [lib]
 proc-macro = true
