@@ -1,6 +1,7 @@
 use darling::FromDeriveInput;
 use itertools::Itertools;
 
+use proc_macro_error::abort;
 use quote::quote;
 use syn::{parse2, Data, DeriveInput};
 
@@ -67,6 +68,17 @@ pub(crate) fn handle_creatable(input: proc_macro2::TokenStream) -> proc_macro2::
             }
         }
     } else {
-        quote! {}
+        abort! { x1,
+            "enum does not support"
+        }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    #[test]
+    fn compile_fail() {
+        let t = trybuild::TestCases::new();
+        t.compile_fail("tests/fail/*.rs");
     }
 }

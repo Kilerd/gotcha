@@ -18,3 +18,7 @@ quote = "1.0.10"
 regex = "1.5.4"
 strum = { version = "0.23", features = ["derive"] }
 syn = "1.0.82"
+proc-macro-error = { version = "1", default-features = false }
+
+[dev-dependencies]
+trybuild = "1.0"

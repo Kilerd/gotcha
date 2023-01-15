@@ -1,4 +1,5 @@
 use proc_macro::TokenStream;
+use proc_macro_error::proc_macro_error;
 use syn::AttributeArgs;
 use syn::{parse_macro_input, ItemFn};
 
@@ -15,6 +16,7 @@ pub fn derive_crud_fn(input: TokenStream) -> TokenStream {
 }
 
 #[proc_macro_derive(Creatable)]
+#[proc_macro_error]
 pub fn derive_creatable_fn(input: TokenStream) -> TokenStream {
     let stream2 = proc_macro2::TokenStream::from(input);
     let stream1 = proc_macro::TokenStream::from(creatable::handle_creatable(stream2));
