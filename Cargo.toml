@@ -3,8 +3,8 @@ members = [
     "gotcha",
     "gotcha_lib",
     "gotcha_macro",
-    "magic_orm", 
-    "magic_orm_macro",
+    "conservator",
+    "conservator_macro",
     "examples/basic",
     "examples/message",
     "examples/configuration"

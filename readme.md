@@ -43,18 +43,18 @@ async fn main() {
                     .done()
             })
             .bind(("127.0.0.1", 8080))
-            .unwrap()
-            .run()
-            .await;
+                .unwrap()
+                .run()
+                .await;
         })
         .run()
         .await
 }
 ```
 
+## Conservator ORM
 
-## Magic ORM
-Magic ORM is based on sqlx, currently it only support postgres
+Conservator ORM is based on sqlx, currently it only support postgres
 
 ```rust
 #[derive(Debug, Deserialize, Serialize, Crud, FromRow)]
@@ -83,9 +83,11 @@ pub struct NewUser {
     pub password: String,
 }
 ```
-`Createable` means it can be executed by magic ORM, using `UserEntity::create(NewUser{...})` to create a new user into user table.
 
-Magic ORM aslo provide the `#[magic]` proc macro for those customized sql query.
+`Createable` means it can be executed by magic ORM, using `UserEntity::create(NewUser{...})` to create a new user into
+user table.
+
+Conservator ORM aslo provide the `#[magic]` proc macro for those customized sql query.
 ```rust
 #[magic]
 impl UserEntity {

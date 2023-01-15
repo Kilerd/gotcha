@@ -29,7 +29,7 @@ pub(crate) fn handler(input: proc_macro2::TokenStream) -> proc_macro2::TokenStre
 
     quote! {
         #[async_trait::async_trait]
-        impl ::magic_orm::Crud for #ident {
+        impl ::conservator::Crud for #ident {
             type PrimaryKey = Uuid;
 
             fn table_name() -> &'static str {
@@ -55,7 +55,7 @@ pub(crate) fn handler(input: proc_macro2::TokenStream) -> proc_macro2::TokenStre
                 .fetch_all(executor)
                 .await
             }
-            async fn create<'e, 'c: 'e, E: 'e + ::sqlx::Executor<'c, Database = ::sqlx::Postgres>, C: ::magic_orm::Creatable>(
+            async fn create<'e, 'c: 'e, E: 'e + ::sqlx::Executor<'c, Database = ::sqlx::Postgres>, C: ::conservator::Creatable>(
                 data: C, executor: E,
             ) -> Result<Self, ::sqlx::Error> {
                 let sql = format!("INSERT INTO {} {} returning *", #table_name, data.get_insert_sql());

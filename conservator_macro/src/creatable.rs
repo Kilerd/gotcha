@@ -43,7 +43,7 @@ pub(crate) fn handle_creatable(input: proc_macro2::TokenStream) -> proc_macro2::
         });
 
         quote! {
-            impl ::magic_orm::Creatable for #ident {
+            impl ::conservator::Creatable for #ident {
                 fn get_insert_sql(&self) -> &str {
                     #insert_sql
                 }
@@ -67,6 +67,6 @@ pub(crate) fn handle_creatable(input: proc_macro2::TokenStream) -> proc_macro2::
             }
         }
     } else {
-        quote!{}
+        quote! {}
     }
 }

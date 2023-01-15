@@ -1,5 +1,5 @@
 [package]
-name = "magic_orm"
+name = "conservator"
 version = "0.1.0"
 edition = "2021"
 
@@ -8,4 +8,4 @@ edition = "2021"
 [dependencies]
 async-trait = "0.1"
 sqlx = { version = "0.6", features = ["runtime-tokio-native-tls", "postgres", "chrono", "bigdecimal"] }
-magic_orm_macro = {path="../magic_orm_macro"}
+conservator_macro = {path="../conservator_macro"}

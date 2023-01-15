@@ -1,12 +1,9 @@
-
-
 use async_trait::async_trait;
 
-
-pub use magic_orm_macro::Creatable;
-pub use magic_orm_macro::Crud;
-pub use magic_orm_macro::magic;
-// pub use magic_orm_macro::authorization;
+pub use conservator_macro::magic;
+pub use conservator_macro::Creatable;
+pub use conservator_macro::Crud;
+// pub use conservator_macro::authorization;
 
 #[async_trait]
 pub trait Crud: Sized {

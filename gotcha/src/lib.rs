@@ -20,8 +20,9 @@ pub mod wrapper {
 }
 pub mod cli;
 mod config;
-pub mod task;
 pub mod message;
+pub mod task;
+use crate::message::Messager;
 pub use cli::GotchaCli;
 pub use tracing;
 
@@ -187,10 +188,9 @@ where
         TASK: (Fn() -> TASK_RET) + 'static,
         TASK_RET: std::future::Future<Output = ()> + Send + 'static,
     {
-        self.tasks.push(
-            Box::new(move|| {tokio::spawn(t());})
-
-    );
+        self.tasks.push(Box::new(move || {
+            tokio::spawn(t());
+        }));
 
         self
     }
@@ -198,7 +198,6 @@ where
         // todo add swagger api
         // init messager
         let app = self.data(Messager {});
-    
 
         // start task
         for task in app.tasks {
@@ -206,9 +205,7 @@ where
         }
         app.inner
     }
-
 }
-
 
 #[cfg(test)]
 mod tests {}
