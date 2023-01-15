@@ -11,17 +11,16 @@ use actix_web::{
     http, web,
 };
 pub use async_trait::async_trait;
-use gotcha_lib::{GotchaOperationObject, Operation};
 pub use gotcha_macro::get;
+use openapi::{GotchaOperationObject, Operation};
 use std::{collections::HashMap, sync::Arc};
 
-pub mod wrapper {
-    pub use gotcha_lib;
-}
 pub mod cli;
 mod config;
 pub mod message;
+pub mod openapi;
 pub mod task;
+
 use crate::message::Messager;
 pub use cli::GotchaCli;
 pub use tracing;

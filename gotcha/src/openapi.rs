@@ -2,7 +2,7 @@ use http::Method;
 
 #[derive(Debug)]
 pub struct GotchaOperationObject {
-    summary:String
+    summary: String,
 }
 
 pub trait Operation {
@@ -10,8 +10,9 @@ pub trait Operation {
     fn uri(&self) -> &'static str;
     fn summary(&self) -> &'static str;
     // todo description
-    fn generate_gotcha_operation_object(&self) -> GotchaOperationObject{
-        GotchaOperationObject { summary: self.summary().to_string() }
+    fn generate_gotcha_operation_object(&self) -> GotchaOperationObject {
+        GotchaOperationObject {
+            summary: self.summary().to_string(),
+        }
     }
 }
-

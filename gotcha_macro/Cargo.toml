@@ -10,5 +10,4 @@ proc-macro = true
 syn = "1.0"
 quote = "1.0"
 proc-macro2 = "1.0.47"
-gotcha_lib = { path = "../gotcha_lib" }
 darling = "0.14.2"
