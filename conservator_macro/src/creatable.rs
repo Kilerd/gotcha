@@ -50,18 +50,8 @@ pub(crate) fn handle_creatable(input: proc_macro2::TokenStream) -> proc_macro2::
                 }
                 fn build<'q, O>(
                     self,
-                    e: ::sqlx::query::QueryAs<
-                        'q,
-                        ::sqlx::Postgres,
-                        O,
-                        <::sqlx::Postgres as ::sqlx::database::HasArguments<'q>>::Arguments,
-                    >,
-                ) -> ::sqlx::query::QueryAs<
-                    'q,
-                    ::sqlx::Postgres,
-                    O,
-                    <::sqlx::Postgres as ::sqlx::database::HasArguments<'q>>::Arguments,
-                > {
+                    e: ::sqlx::query::QueryAs<'q, ::sqlx::Postgres, O, <::sqlx::Postgres as ::sqlx::database::HasArguments<'q>>::Arguments,>,
+                ) -> ::sqlx::query::QueryAs<'q, ::sqlx::Postgres, O, <::sqlx::Postgres as ::sqlx::database::HasArguments<'q>>::Arguments,> {
                     e
                     #(#bind_list)*
                 }
