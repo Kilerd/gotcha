@@ -5,6 +5,13 @@ pub use conservator_macro::Creatable;
 pub use conservator_macro::Crud;
 // pub use conservator_macro::authorization;
 
+#[macro_export]
+macro_rules! auto {
+    () => {
+        todo!()
+    };
+}
+
 #[async_trait]
 pub trait Crud: Sized {
     type PrimaryKey;
