@@ -90,14 +90,15 @@ user table.
 Conservator ORM aslo provide the `#[magic]` proc macro for those customized sql query.
 ```rust
 use conservator::auto;
-#[magic]
 impl UserEntity {
+    #[auto]
     pub async fn find_by__email__is<E>(email: &str, executor: E) -> Result<Option<UserEntity>, Error> {
-        auto!()
+        todo!()
     }
 
+    #[auto]
     pub async fn exists_by_email_is<E>(_email: &str, executor: E) -> Result<bool, Error> {
-        auto!()
+        todo!()
     }
 }
 ```
@@ -105,14 +106,17 @@ code above will generate two sql query statement automatically:
  - `select * from users where email = $1`
  - `select exists(select 1 from users where email = $1)`
 
-and `#[magic]` aslo provide some convinent way to write customized sql query
+and `#[sql]` aslo provide some convinent way to write customized sql query
 ```rust
 use conservator::sql;
-#[magic]
+
 impl UserEntity {
+    
+    #[sql(find)]
     pub async fn find_user<E>(email: &str, executor: E) -> Result<Option<UserEntity>, Error> {
-        sql!("select * from users where email = :email")
+        "select * from users where email = :email"
     }
 }
 ```
 notice that, rather than sqlx's `$1`, we use param `:email` in sql, it can be used in native sql execution tools as well without any modification, like IDEA.
+
