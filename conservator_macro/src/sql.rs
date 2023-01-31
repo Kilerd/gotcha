@@ -6,7 +6,7 @@ use proc_macro2::Span;
 use quote::format_ident;
 use std::str::FromStr;
 use strum::EnumString;
-use syn::{parse2, spanned::Spanned, Expr, ExprLit, FnArg, ItemFn, Lit, LitStr, Pat, Stmt};
+use syn::{parse2, spanned::Spanned, Expr, FnArg, ItemFn, Lit, Pat, Stmt};
 
 #[derive(Debug, EnumString)]
 #[strum(serialize_all = "snake_case")]
@@ -15,6 +15,7 @@ enum Action {
     Exists,
     Find,
     FetchAll,
+    Execute
 }
 
 impl Action {
@@ -57,6 +58,12 @@ impl Action {
                     .await
                 }
             }
+            Action::Execute => quote! {
+                ::sqlx::query_as(#sql)
+                #(.bind(#fields))*
+                .execute(executor)
+                .await
+            },
         }
     }
 }
