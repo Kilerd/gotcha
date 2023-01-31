@@ -8,7 +8,14 @@ pub use conservator_macro::Crud;
 #[macro_export]
 macro_rules! auto {
     () => {
-        todo!()
+        todo!("macro can not be used outside magic proc macro")
+    };
+}
+
+#[macro_export]
+macro_rules! sql {
+    ($value: expr) => {
+        todo!("macro can not be used outside magic proc macro")
     };
 }
 
