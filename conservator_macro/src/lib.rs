@@ -5,15 +5,15 @@ use syn::{parse_macro_input, ItemFn};
 
 mod authorization;
 mod creatable;
-mod crud;
+mod domain;
 mod magic;
 mod sql;
 mod auto;
 
-#[proc_macro_derive(Crud, attributes(crud))]
-pub fn derive_crud_fn(input: TokenStream) -> TokenStream {
+#[proc_macro_derive(Domain, attributes(domain))]
+pub fn derive_domain_fn(input: TokenStream) -> TokenStream {
     let stream2 = proc_macro2::TokenStream::from(input);
-    match crud::handler(stream2) {
+    match domain::handler(stream2) {
         Ok(stream) => proc_macro::TokenStream::from(stream),
         Err((span, msg)) => abort!{span, msg}
     }

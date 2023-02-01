@@ -2,25 +2,26 @@ use async_trait::async_trait;
 
 pub use conservator_macro::magic;
 pub use conservator_macro::Creatable;
-pub use conservator_macro::Crud;
+pub use conservator_macro::Domain;
+pub use conservator_macro::sql;
 // pub use conservator_macro::authorization;
 
-#[macro_export]
-macro_rules! auto {
-    () => {
-        todo!("macro can not be used outside magic proc macro")
-    };
-}
+// #[macro_export]
+// macro_rules! auto {
+//     () => {
+//         todo!("macro can not be used outside magic proc macro")
+//     };
+// }
 
-#[macro_export]
-macro_rules! sql {
-    ($value: expr) => {
-        todo!("macro can not be used outside magic proc macro")
-    };
-}
+// #[macro_export]
+// macro_rules! sql {
+//     ($value: expr) => {
+//         todo!("macro can not be used outside magic proc macro")
+//     };
+// }
 
 #[async_trait]
-pub trait Crud: Sized {
+pub trait Domain: Sized {
     const PK_FIELD_NAME: &'static str;
     const TABLE_NAME: &'static str;
     
