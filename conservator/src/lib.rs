@@ -21,16 +21,17 @@ macro_rules! sql {
 
 #[async_trait]
 pub trait Crud: Sized {
+    const PK_FIELD_NAME: &'static str;
+    const TABLE_NAME: &'static str;
+    
     type PrimaryKey;
 
-    fn table_name() -> &'static str;
-
-    async fn find_by_id<'e, 'c: 'e, E: 'e + sqlx::Executor<'c, Database = sqlx::Postgres>>(
+    async fn find_by_pk<'e, 'c: 'e, E: 'e + sqlx::Executor<'c, Database = sqlx::Postgres>>(
         pk: &Self::PrimaryKey,
         executor: E,
     ) -> Result<Option<Self>, sqlx::Error>;
 
-    async fn fetch_one_by_id<
+    async fn fetch_one_by_pk<
         'e,
         'c: 'e,
         E: 'e + ::sqlx::Executor<'c, Database = ::sqlx::Postgres>,

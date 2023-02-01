@@ -13,8 +13,10 @@ mod auto;
 #[proc_macro_derive(Crud, attributes(crud))]
 pub fn derive_crud_fn(input: TokenStream) -> TokenStream {
     let stream2 = proc_macro2::TokenStream::from(input);
-    let stream1 = proc_macro::TokenStream::from(crud::handler(stream2));
-    stream1
+    match crud::handler(stream2) {
+        Ok(stream) => proc_macro::TokenStream::from(stream),
+        Err((span, msg)) => abort!{span, msg}
+    }
 }
 
 #[proc_macro_derive(Creatable)]
@@ -23,6 +25,7 @@ pub fn derive_creatable_fn(input: TokenStream) -> TokenStream {
     let stream2 = proc_macro2::TokenStream::from(input);
     let stream1 = proc_macro::TokenStream::from(creatable::handle_creatable(stream2));
     stream1
+    
 }
 
 #[proc_macro_attribute]

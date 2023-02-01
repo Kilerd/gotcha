@@ -1,13 +1,25 @@
-use darling::FromDeriveInput;
+use darling::{FromDeriveInput, FromVariant,FromField};
 
+use itertools::Itertools;
+use proc_macro2::Span;
 use quote::quote;
-use syn::{parse2, DeriveInput};
+use syn::{parse2, DeriveInput, spanned::Spanned};
 
 #[derive(Debug, FromDeriveInput)]
 #[darling(attributes(crud))]
 struct CrudOpts {
     ident: syn::Ident,
     table: String,
+    data: darling::ast::Data<darling::util::Ignored, CrudFieldOpt>,
+}
+
+#[derive(Debug, FromField)]
+#[darling(attributes(crud))]
+struct CrudFieldOpt {
+    ident: Option<syn::Ident>,
+    ty: syn::Type,
+    #[darling(default)]
+    primary_key: Option<bool>
 }
 
 fn find_by_id(table_name: &str) -> String {
@@ -17,9 +29,22 @@ fn fetch_all(table_name: &str) -> String {
     format!("select * from {}", table_name)
 }
 
-pub(crate) fn handler(input: proc_macro2::TokenStream) -> proc_macro2::TokenStream {
+pub(crate) fn handler(input: proc_macro2::TokenStream) -> Result<proc_macro2::TokenStream, (Span, &'static str)> {
     let x1 = parse2::<DeriveInput>(input).unwrap();
     let crud_opts: CrudOpts = CrudOpts::from_derive_input(&x1).unwrap();
+
+    dbg!(&crud_opts);
+
+    let fields = crud_opts.data.take_struct().unwrap();
+    let mut pk_count = fields.fields.into_iter().filter(|field| field.primary_key == Some(true)).collect_vec();
+
+    let pk_field = match pk_count.len() {
+        0 => { return Err((x1.span(), "missing primary key, using #[domain(primary_key)] to identify"));},
+        1 => { pk_count.pop().unwrap()},
+        _ => {return Err((x1.span(), "mutliple primary key detect"));}
+    };
+    let pk_field_name = pk_field.ident.unwrap().to_string();
+    let pk_field_type = pk_field.ty;
 
     let table_name = &crud_opts.table;
     let ident = crud_opts.ident;
@@ -27,23 +52,22 @@ pub(crate) fn handler(input: proc_macro2::TokenStream) -> proc_macro2::TokenStre
     let find_by_id_sql = find_by_id(&crud_opts.table);
     let fetch_all_sql = fetch_all(&crud_opts.table);
 
-    quote! {
+    Ok(quote! {
         #[async_trait::async_trait]
         impl ::conservator::Crud for #ident {
-            type PrimaryKey = Uuid;
+            const PK_FIELD_NAME: &'static str = #pk_field_name;
+            const TABLE_NAME: &'static str = #table_name;
+    
+            type PrimaryKey = #pk_field_type;
 
-            fn table_name() -> &'static str {
-                #table_name
-            }
-
-            async fn find_by_id<'e, 'c: 'e, E: 'e + ::sqlx::Executor<'c, Database=::sqlx::Postgres>>(pk: &Uuid, executor: E) -> Result<Option<Self>, ::sqlx::Error> {
+            async fn find_by_pk<'e, 'c: 'e, E: 'e + ::sqlx::Executor<'c, Database=::sqlx::Postgres>>(pk: &Uuid, executor: E) -> Result<Option<Self>, ::sqlx::Error> {
                 sqlx::query_as(#find_by_id_sql)
                 .bind(pk)
                 .fetch_optional(executor)
                 .await
             }
 
-            async fn fetch_one_by_id<'e, 'c: 'e, E: 'e + ::sqlx::Executor<'c, Database=::sqlx::Postgres>>(pk: &Uuid, executor: E) -> Result<Self, ::sqlx::Error> {
+            async fn fetch_one_by_pk<'e, 'c: 'e, E: 'e + ::sqlx::Executor<'c, Database=::sqlx::Postgres>>(pk: &Uuid, executor: E) -> Result<Self, ::sqlx::Error> {
                 sqlx::query_as(#find_by_id_sql)
                 .bind(pk)
                 .fetch_one(executor)
@@ -56,7 +80,7 @@ pub(crate) fn handler(input: proc_macro2::TokenStream) -> proc_macro2::TokenStre
                 .await
             }
             async fn create<'e, 'c: 'e, E: 'e + ::sqlx::Executor<'c, Database = ::sqlx::Postgres>, C: ::conservator::Creatable>(
-                data: C, executor: E,
+                data: C, executor: E
             ) -> Result<Self, ::sqlx::Error> {
                 let sql = format!("INSERT INTO {} {} returning *", #table_name, data.get_insert_sql());
                 let mut ex = sqlx::query_as(&sql);
@@ -67,5 +91,88 @@ pub(crate) fn handler(input: proc_macro2::TokenStream) -> proc_macro2::TokenStre
 
         }
 
+    })
+}
+
+
+#[cfg(test)]
+mod test {
+    use quote::quote;
+
+    use crate::crud::handler;
+
+    #[test]
+    fn should_render() {
+        let input = quote! {
+            #[derive(Debug, Deserialize, Serialize, Crud, FromRow)]
+            #[crud(table = "users")]
+            pub struct UserEntity {
+                #[crud(primary_key)]
+                pub id: Uuid,
+                pub username: String,
+                pub email: String,
+                pub password: String,
+                pub role: UserRole,
+                pub create_at: DateTime<Utc>,
+                pub last_login_at: DateTime<Utc>,
+            }
+        };
+        let expected_output = quote! {
+            #[async_trait::async_trait]
+            impl ::conservator::Crud for UserEntity {
+                const PK_FIELD_NAME: &'static str = "id";
+                const TABLE_NAME: &'static str = "users";
+                type PrimaryKey = Uuid;
+                async fn find_by_pk<'e, 'c: 'e, E: 'e + ::sqlx::Executor<'c, Database = ::sqlx::Postgres>>(
+                    pk: &Uuid,
+                    executor: E
+                ) -> Result<Option<Self>, ::sqlx::Error> {
+                    sqlx::query_as("select * from users where id = $1")
+                        .bind(pk)
+                        .fetch_optional(executor)
+                        .await
+                }
+                async fn fetch_one_by_pk<
+                    'e,
+                    'c: 'e,
+                    E: 'e + ::sqlx::Executor<'c, Database = ::sqlx::Postgres>>(
+                    pk: &Uuid,
+                    executor: E
+                ) -> Result<Self, ::sqlx::Error> {
+                    sqlx::query_as("select * from users where id = $1")
+                        .bind(pk)
+                        .fetch_one(executor)
+                        .await
+                }
+                async fn fetch_all<'e, 'c: 'e, E: 'e + ::sqlx::Executor<'c, Database = ::sqlx::Postgres>>(
+                    executor: E
+                ) -> Result<Vec<Self>, ::sqlx::Error> {
+                    sqlx::query_as("select * from users")
+                        .fetch_all(executor)
+                        .await
+                }
+                async fn create<
+                    'e,
+                    'c: 'e,
+                    E: 'e + ::sqlx::Executor<'c, Database = ::sqlx::Postgres>,
+                    C: ::conservator::Creatable
+                >(
+                    data: C,
+                    executor: E
+                ) -> Result<Self, ::sqlx::Error> {
+                    let sql = format!(
+                        "INSERT INTO {} {} returning *",
+                        "users",
+                        data.get_insert_sql()
+                    );
+                    let mut ex = sqlx::query_as(&sql);
+                    data.build(ex).fetch_one(executor).await
+                }
+            }
+        };
+
+        let stream = handler(input).unwrap();
+        assert_eq!(expected_output.to_string(), stream.to_string());
     }
+
 }
