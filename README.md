@@ -57,9 +57,10 @@ async fn main() {
 Conservator ORM is based on sqlx, currently it only support postgres
 
 ```rust
-#[derive(Debug, Deserialize, Serialize, Crud, FromRow)]
-#[crud(table = "users")]
-pub struct UserEntity {
+#[derive(Debug, Deserialize, Serialize, Domain, FromRow)]
+#[domain(table = "users")]
+pub struct UserDomain {
+    #[domain(primary_key)]
     pub id: Uuid,
     pub username: String,
     pub email: String,
@@ -69,7 +70,7 @@ pub struct UserEntity {
     pub last_login_at: DateTime<Utc>,
 }
 ```
-the struct derived `Crud` would auto generate methods like:
+the struct derived `Domain` would auto generate methods like:
 - `find_by_id` return optional entity
 - `fetch_one_by_id` return entity or raise
 - `fetch_all` return all entities
@@ -84,19 +85,19 @@ pub struct NewUser {
 }
 ```
 
-`Createable` means it can be executed by magic ORM, using `UserEntity::create(NewUser{...})` to create a new user into
+`Createable` means it can be executed by magic ORM, using `UserDomain::create(NewUser{...})` to create a new user into
 user table.
 
 Conservator ORM aslo provide the `#[magic]` proc macro for those customized sql query.
 ```rust
 use conservator::auto;
-impl UserEntity {
-    #[auto]
+impl UserDomain {
+    #[magic]
     pub async fn find_by__email__is<E>(email: &str, executor: E) -> Result<Option<UserEntity>, Error> {
         todo!()
     }
 
-    #[auto]
+    #[magic]
     pub async fn exists_by_email_is<E>(_email: &str, executor: E) -> Result<bool, Error> {
         todo!()
     }
@@ -110,7 +111,7 @@ and `#[sql]` aslo provide some convinent way to write customized sql query
 ```rust
 use conservator::sql;
 
-impl UserEntity {
+impl UserService {
     
     #[sql(find)]
     pub async fn find_user<E>(email: &str, executor: E) -> Result<Option<UserEntity>, Error> {
