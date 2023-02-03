@@ -4,7 +4,7 @@ provide a featured web framework
 ## aim to
  - [x] everything of actix-web
  - [ ] automatically swagger api generation
- - [ ] built-in message mechanism
+ - [x] built-in message mechanism
  - [x] environment based configuration system
  - [x] logging system
  - [ ] opt-in prometheus integration
