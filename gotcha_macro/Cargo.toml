@@ -13,3 +13,9 @@ syn = "1.0"
 quote = "1.0"
 proc-macro2 = "1.0.47"
 darling = "0.14.2"
+gotcha_core = { version = "0.1.0", path = "../gotcha_core" }
+
+
+[dev-dependencies]
+trybuild = "1.0"
+actix-web = "4"

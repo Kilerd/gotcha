@@ -1,44 +1,122 @@
 use darling::FromMeta;
 use proc_macro::TokenStream;
-use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 use syn::{parse_macro_input, AttributeArgs, ItemFn, LitStr};
 
+enum HttpMethod {
+    Get,
+    Post,
+    Put,
+    Patch,
+    Delete,
+    Options,
+    Head,
+    Connect,
+    Trace,
+}
+
+impl HttpMethod {
+    fn to_token_stream(&self) -> proc_macro2::TokenStream {
+        match self {
+            HttpMethod::Get => { quote! { ::actix_web::http::Method::GET } }
+            HttpMethod::Post => { quote! { ::actix_web::http::Method::POST } }
+            HttpMethod::Put => { quote! { ::actix_web::http::Method::PUT } }
+            HttpMethod::Patch => { quote! { ::actix_web::http::Method::PATCH } }
+            HttpMethod::Delete => { quote! { ::actix_web::http::Method::DELETE } }
+            HttpMethod::Options => { quote! { ::actix_web::http::Method::OPTIONS } }
+            HttpMethod::Head => { quote! { ::actix_web::http::Method::HEAD } }
+            HttpMethod::Connect => { quote! { ::actix_web::http::Method::CONNECT } }
+            HttpMethod::Trace => { quote! { ::actix_web::http::Method::Trace } }
+        }
+    }
+}
+
 #[proc_macro_attribute]
 pub fn get(args: TokenStream, input_stream: TokenStream) -> TokenStream {
+    request_handler(HttpMethod::Get, args, input_stream)
+}
+#[proc_macro_attribute]
+pub fn post(args: TokenStream, input_stream: TokenStream) -> TokenStream {
+    request_handler(HttpMethod::Post, args, input_stream)
+}
+#[proc_macro_attribute]
+pub fn put(args: TokenStream, input_stream: TokenStream) -> TokenStream {
+    request_handler(HttpMethod::Put, args, input_stream)
+}
+#[proc_macro_attribute]
+pub fn patch(args: TokenStream, input_stream: TokenStream) -> TokenStream {
+    request_handler(HttpMethod::Patch, args, input_stream)
+}
+#[proc_macro_attribute]
+pub fn delete(args: TokenStream, input_stream: TokenStream) -> TokenStream {
+    request_handler(HttpMethod::Delete, args, input_stream)
+}
+#[proc_macro_attribute]
+pub fn options(args: TokenStream, input_stream: TokenStream) -> TokenStream {
+    request_handler(HttpMethod::Options, args, input_stream)
+}
+#[proc_macro_attribute]
+pub fn connect(args: TokenStream, input_stream: TokenStream) -> TokenStream {
+    request_handler(HttpMethod::Connect, args, input_stream)
+}
+#[proc_macro_attribute]
+pub fn head(args: TokenStream, input_stream: TokenStream) -> TokenStream {
+    request_handler(HttpMethod::Head, args, input_stream)
+}
+#[proc_macro_attribute]
+pub fn trace(args: TokenStream, input_stream: TokenStream) -> TokenStream {
+    request_handler(HttpMethod::Trace, args, input_stream)
+}
+
+fn request_handler(method: HttpMethod, args: TokenStream, input_stream: TokenStream) -> TokenStream {
     let attr_args = parse_macro_input!(args as AttributeArgs);
 
-    let _args = match RouteMeta::from_list(&attr_args) {
+    let args = match RouteMeta::from_list(&attr_args) {
         Ok(v) => v,
         Err(e) => {
             return TokenStream::from(e.write_errors());
         }
     };
-    let input = parse_macro_input!(input_stream as ItemFn);
+    let RouteMeta { path, extra } = dbg!(args);
+    let group = if let Some(group_name) = extra.group {
+        dbg! {quote! { Some(#group_name.to_string()) }}
+    } else {
+        quote! { None }
+    };
+    let method = method.to_token_stream();
 
+    let input = parse_macro_input!(input_stream as ItemFn);
     let fn_ident = input.sig.ident.clone();
     let fn_ident_string = fn_ident.to_string();
 
-    let RouteMeta { path, extra } = _args;
     let ret = quote! {
         #[::actix_web::get( "/" )]
         #input
 
-        impl ::gotcha::openapi::Operation for  #fn_ident {
+        impl ::gotcha_core::Operable for  #fn_ident {
+            fn id(&self) -> &'static str {
+                #fn_ident_string
+            }
             fn method(&self) -> ::actix_web::http::Method {
-                ::actix_web::http::Method::GET
+                #method
             }
             fn uri(&self) -> &'static str {
                 #path
             }
-            fn summary(&self) -> &'static str {
-                #fn_ident_string
+            fn group(&self) -> Option<String> {
+                #group
+            }
+            fn description(&self) -> Option<&'static str> {
+                None
+            }
+            fn deprecated(&self) -> bool {
+                false
             }
         }
     };
-    println!("parsed: {}", ret.to_string());
     TokenStream::from(ret)
 }
+
 
 #[derive(Debug)]
 struct RouteMeta {
@@ -72,5 +150,15 @@ impl FromMeta for RouteMeta {
             path,
             extra: extra_meta,
         })
+    }
+}
+
+
+#[cfg(test)]
+mod test {
+    #[test]
+    fn pass() {
+        let t = trybuild::TestCases::new();
+        t.pass("tests/pass/*.rs");
     }
 }

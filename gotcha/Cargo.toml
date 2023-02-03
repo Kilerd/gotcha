@@ -13,7 +13,8 @@ actix-service = "2"
 async-trait = "0.1.60"
 clap = { version = "4.0.32", features = ["derive"] }
 config = { version = "0.13", default-feature = false, features = ["toml"] }
-gotcha_macro = { version = "0.1.0" }
+gotcha_macro = { version = "0.1.0", path = "../gotcha_macro" }
+gotcha_core = { version = "0.1.0", path = "../gotcha_core" }
 serde = "1"
 tokio = "1"
 tracing = "0.1"
@@ -22,3 +23,4 @@ log = "0.4"
 cron = "0.12.0"
 chrono = "0.4.23"
 http = "0.2"
+oas = "0.0.2"

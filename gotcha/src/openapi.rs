@@ -1,18 +1,50 @@
+use std::collections::BTreeMap;
 use http::Method;
+use oas::{Operation, Parameter, Responses};
 
-#[derive(Debug)]
-pub struct GotchaOperationObject {
-    summary: String,
+impl ApiObject for String {
+    fn name() -> &'static str {
+        unimplemented!()
+    }
+
+    fn required() -> bool {
+        true
+    }
+
+    fn type_() -> &'static str {
+        "string"
+    }
 }
 
-pub trait Operation {
-    fn method(&self) -> Method;
-    fn uri(&self) -> &'static str;
-    fn summary(&self) -> &'static str;
-    // todo description
-    fn generate_gotcha_operation_object(&self) -> GotchaOperationObject {
-        GotchaOperationObject {
-            summary: self.summary().to_string(),
-        }
+impl ApiObject for i32 {
+    fn name() -> &'static str {
+        "integer"
+    }
+
+    fn required() -> bool {
+        true
+    }
+
+    fn type_() -> &'static str {
+        "integer"
+    }
+}
+
+struct MyRequest {
+    name: String,
+    fav_number: i32,
+}
+impl ApiObject for MyRequest {
+
+    fn name() -> &'static str {
+        "MyRequest"
+    }
+
+    fn required() -> bool {
+        true
+    }
+
+    fn type_() -> &'static str {
+        "object"
     }
 }
