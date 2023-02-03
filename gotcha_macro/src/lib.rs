@@ -1,7 +1,8 @@
 use darling::FromMeta;
 use proc_macro::TokenStream;
+use quote::__private::ext::RepToTokensExt;
 use quote::quote;
-use syn::{parse_macro_input, AttributeArgs, ItemFn, LitStr};
+use syn::{parse_macro_input, AttributeArgs, ItemFn, LitStr, Meta, Lit};
 
 enum HttpMethod {
     Get,
@@ -35,34 +36,42 @@ impl HttpMethod {
 pub fn get(args: TokenStream, input_stream: TokenStream) -> TokenStream {
     request_handler(HttpMethod::Get, args, input_stream)
 }
+
 #[proc_macro_attribute]
 pub fn post(args: TokenStream, input_stream: TokenStream) -> TokenStream {
     request_handler(HttpMethod::Post, args, input_stream)
 }
+
 #[proc_macro_attribute]
 pub fn put(args: TokenStream, input_stream: TokenStream) -> TokenStream {
     request_handler(HttpMethod::Put, args, input_stream)
 }
+
 #[proc_macro_attribute]
 pub fn patch(args: TokenStream, input_stream: TokenStream) -> TokenStream {
     request_handler(HttpMethod::Patch, args, input_stream)
 }
+
 #[proc_macro_attribute]
 pub fn delete(args: TokenStream, input_stream: TokenStream) -> TokenStream {
     request_handler(HttpMethod::Delete, args, input_stream)
 }
+
 #[proc_macro_attribute]
 pub fn options(args: TokenStream, input_stream: TokenStream) -> TokenStream {
     request_handler(HttpMethod::Options, args, input_stream)
 }
+
 #[proc_macro_attribute]
 pub fn connect(args: TokenStream, input_stream: TokenStream) -> TokenStream {
     request_handler(HttpMethod::Connect, args, input_stream)
 }
+
 #[proc_macro_attribute]
 pub fn head(args: TokenStream, input_stream: TokenStream) -> TokenStream {
     request_handler(HttpMethod::Head, args, input_stream)
 }
+
 #[proc_macro_attribute]
 pub fn trace(args: TokenStream, input_stream: TokenStream) -> TokenStream {
     request_handler(HttpMethod::Trace, args, input_stream)
@@ -85,15 +94,31 @@ fn request_handler(method: HttpMethod, args: TokenStream, input_stream: TokenStr
     };
     let method = method.to_token_stream();
 
-    let input = parse_macro_input!(input_stream as ItemFn);
+    let input = dbg!(parse_macro_input!(input_stream as ItemFn));
     let fn_ident = input.sig.ident.clone();
     let fn_ident_string = fn_ident.to_string();
+    let docs: Vec<String> = input.attrs.iter().filter_map(|attr| {
+        match attr.parse_meta().unwrap() {
+            Meta::NameValue(doc) => { if doc.path.is_ident("doc") { Some(doc) } else { None } }
+            _ => None
+        }
+    }).filter_map(|attr| match attr.lit {
+        Lit::Str(lit_str) => Some(lit_str.value()),
+        _ => {
+            None
+        }
+    }).map(|doc| doc.trim().to_string()).collect();
+
+    let docs = if docs.is_empty() { quote!(None)} else {
+        let t = docs.join("\n");
+        quote!{ Some(#t) }
+    };
 
     let ret = quote! {
         #[::actix_web::get( "/" )]
         #input
 
-        impl ::gotcha_core::Operable for  #fn_ident {
+        impl ::gotcha::Operable for  #fn_ident {
             fn id(&self) -> &'static str {
                 #fn_ident_string
             }
@@ -107,7 +132,7 @@ fn request_handler(method: HttpMethod, args: TokenStream, input_stream: TokenStr
                 #group
             }
             fn description(&self) -> Option<&'static str> {
-                None
+                #docs
             }
             fn deprecated(&self) -> bool {
                 false

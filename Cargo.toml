@@ -7,5 +7,6 @@ members = [
     "conservator_macro",
     "examples/basic",
     "examples/message",
-    "examples/configuration"
+    "examples/configuration",
+    "examples/openapi"
 ]

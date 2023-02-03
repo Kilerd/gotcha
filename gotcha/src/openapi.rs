@@ -1,34 +1,9 @@
 use std::collections::BTreeMap;
+use actix_web::HttpResponse;
+use actix_web::web::{Data, Json};
 use http::Method;
-use oas::{Operation, Parameter, Responses};
-
-impl ApiObject for String {
-    fn name() -> &'static str {
-        unimplemented!()
-    }
-
-    fn required() -> bool {
-        true
-    }
-
-    fn type_() -> &'static str {
-        "string"
-    }
-}
-
-impl ApiObject for i32 {
-    fn name() -> &'static str {
-        "integer"
-    }
-
-    fn required() -> bool {
-        true
-    }
-
-    fn type_() -> &'static str {
-        "integer"
-    }
-}
+use oas::{OpenAPIV3, Operation, Parameter, Responses};
+use gotcha_core::ApiObject;
 
 struct MyRequest {
     name: String,
@@ -47,4 +22,13 @@ impl ApiObject for MyRequest {
     fn type_() -> &'static str {
         "object"
     }
+}
+
+
+pub(crate) async fn openapi_handler(spec: Data<OpenAPIV3>) -> Json<OpenAPIV3> {
+    Json(spec.get_ref().clone())
+}
+
+pub(crate) async fn openapi_html() -> HttpResponse {
+    HttpResponse::Ok().body( include_str!("../statics/redoc.html"))
 }
