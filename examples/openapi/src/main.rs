@@ -1,10 +1,16 @@
-use gotcha::{get,post, App, GotchaAppWrapperExt, GotchaCli, HttpServer, Responder, tracing::{info}, task::{cron_proc_macro_wrapper, interval_proc_macro_wrapper}};
+use actix_web::web::Path;
+use gotcha::{
+    get, post, put,
+    task::{cron_proc_macro_wrapper, interval_proc_macro_wrapper},
+    tracing::info,
+    App, GotchaAppWrapperExt, GotchaCli, HttpServer, Responder,
+};
 use serde::Deserialize;
 
 /// Rust has six types of attributes.
 ///
-/// - Outer attributes like #[repr(transparent)]. These appear outside or in front of the item they describe.
-/// - Inner attributes like #![feature(proc_macro)]. These appear inside of the item they describe, usually a module.
+/// - Outer attributes like `#[repr(transparent)]`. These appear outside or in front of the item they describe.
+/// - Inner attributes like `#![feature(proc_macro)]`. These appear inside of the item they describe, usually a module.
 /// - Outer doc comments like /// # Example.
 /// - Inner doc comments like //! Please file an issue.
 /// - Outer block comments /** # Example */.
@@ -23,9 +29,15 @@ pub async fn hello_world() -> impl Responder {
 }
 
 /// Add new pet to the store inventory.
-#[post("/pet", group="pet")]
+#[post("/pet", group = "pet")]
 pub async fn new_pet() -> impl Responder {
     "new pet"
+}
+
+/// Update specific pet's info
+#[put("/pets/{pet_id}/info")]
+pub async fn update_pet_info(paths: Path<(i32,)>) -> impl Responder {
+    "update pet info"
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -41,6 +53,7 @@ async fn main() {
                     .into_gotcha()
                     .service(hello_world)
                     .service(new_pet)
+                    .service(update_pet_info)
                     .data(config.clone())
                     .done()
             })

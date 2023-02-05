@@ -1,7 +1,7 @@
-use std::collections::BTreeMap;
-use oas::{Operation, Parameter, Referenceable, Response, Responses};
-use http::Method;
 use convert_case::{Case, Casing};
+use http::Method;
+use oas::{Operation, Parameter, Referenceable, Response, Responses};
+use std::collections::BTreeMap;
 
 pub trait Operable {
     fn id(&self) -> &'static str;
@@ -38,14 +38,5 @@ pub trait Operable {
             security: None,
             servers: None,
         }
-    }
-}
-
-pub trait ApiObject {
-    fn name() -> &'static str;
-    fn required() -> bool;
-    fn type_() -> &'static str;
-    fn generate() -> Option<Vec<Parameter>> {
-        todo!()
     }
 }
