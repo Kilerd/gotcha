@@ -3,7 +3,7 @@ use std::sync::Arc;
 use gotcha::{
     async_trait, get,
     message::{Message, Messager, MessagerWrapper},
-    App, GotchaAppWrapperExt, GotchaCli, HttpServer, Responder,
+    App, GotchaAppWrapperExt, GotchaCli, HttpServer, Responder,Operable
 };
 
 use serde::Deserialize;

@@ -1,4 +1,4 @@
-use gotcha::{get, App, Data, GotchaAppWrapperExt, GotchaCli, HttpServer, Responder};
+use gotcha::{get, App, Data, GotchaAppWrapperExt, GotchaCli, HttpServer, Responder, Operable};
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize, Clone)]

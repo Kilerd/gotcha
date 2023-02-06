@@ -125,7 +125,7 @@ fn request_handler(method: HttpMethod, args: TokenStream, input_stream: TokenStr
         #[::actix_web::get( "/" )]
         #input
 
-        impl ::gotcha::Operable for  #fn_ident {
+        impl Operable for  #fn_ident {
             fn id(&self) -> &'static str {
                 #fn_ident_string
             }

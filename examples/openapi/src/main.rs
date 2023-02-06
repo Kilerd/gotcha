@@ -3,7 +3,7 @@ use gotcha::{
     get, post, put,
     task::{cron_proc_macro_wrapper, interval_proc_macro_wrapper},
     tracing::info,
-    App, GotchaAppWrapperExt, GotchaCli, HttpServer, Responder,
+    App, GotchaAppWrapperExt, GotchaCli, HttpServer, Responder, Operable
 };
 use serde::Deserialize;
 
