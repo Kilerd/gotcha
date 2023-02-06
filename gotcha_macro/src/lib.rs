@@ -2,7 +2,7 @@ use darling::FromMeta;
 use proc_macro::TokenStream;
 use quote::__private::ext::RepToTokensExt;
 use quote::quote;
-use syn::{parse_macro_input, AttributeArgs, ItemFn, LitStr, Meta, Lit};
+use syn::{parse_macro_input, AttributeArgs, ItemFn, LitStr, Meta, Lit, FnArg};
 
 enum HttpMethod {
     Get,
@@ -113,6 +113,13 @@ fn request_handler(method: HttpMethod, args: TokenStream, input_stream: TokenStr
         let t = docs.join("\n");
         quote!{ Some(#t) }
     };
+    let params_token: Vec<proc_macro2::TokenStream> = input.sig.inputs.iter().flat_map(|param| match param {
+        FnArg::Receiver(_) => None,
+        FnArg::Typed(typed) => {
+            let ty = &typed.ty;
+            Some(quote!{ <#ty as ::gotcha::ParameterProvider>::generate(self.uri().to_string())})
+        }
+    }).collect();
 
     let ret = quote! {
         #[::actix_web::get( "/" )]
@@ -136,6 +143,18 @@ fn request_handler(method: HttpMethod, args: TokenStream, input_stream: TokenStr
             }
             fn deprecated(&self) -> bool {
                 false
+            }
+            fn parameters(&self) -> Vec<::gotcha::oas::Parameter> {
+                let mut ret = vec![];
+
+                #( 
+                    if let Some(mut one_params) = #params_token {
+                        ret.append(&mut one_params);
+                    }
+                    
+                )*
+                ret
+                
             }
         }
     };

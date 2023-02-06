@@ -39,6 +39,11 @@ pub async fn new_pet() -> impl Responder {
 pub async fn update_pet_info(paths: Path<(i32,)>) -> impl Responder {
     "update pet info"
 }
+/// Update specific pet's address
+#[put("/pets/{pet_id}/address/{address_id}")]
+pub async fn update_pet_address_detail(paths: Path<(i32, String)>) -> impl Responder {
+    "update pet info"
+}
 
 #[derive(Debug, Deserialize, Clone)]
 struct Config {}
@@ -54,6 +59,7 @@ async fn main() {
                     .service(hello_world)
                     .service(new_pet)
                     .service(update_pet_info)
+                    .service(update_pet_address_detail)
                     .data(config.clone())
                     .done()
             })

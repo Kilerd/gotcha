@@ -16,13 +16,14 @@ pub trait Operable {
         } else {
             None
         };
+        let params = self.parameters().into_iter().map(|param| Referenceable::Data(param)).collect();
         Operation {
             tags,
             summary: Some(self.id().to_case(Case::Title)),
             description: self.description().map(|v| v.to_string()),
             external_docs: None,
             operation_id: Some(self.id().to_string()),
-            parameters: None,
+            parameters: Some(params),
             request_body: None,
             responses: Responses {
                 default: Some(Referenceable::Data(Response {
@@ -39,4 +40,6 @@ pub trait Operable {
             servers: None,
         }
     }
+
+    fn parameters(&self) -> Vec<Parameter>;
 }
