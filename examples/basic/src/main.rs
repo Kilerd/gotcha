@@ -1,4 +1,4 @@
-use gotcha::{get, App, GotchaAppWrapperExt, GotchaCli, HttpServer, Responder, tracing::{info}, task::{cron_proc_macro_wrapper, interval_proc_macro_wrapper}};
+use gotcha::{get, App, Operable, GotchaAppWrapperExt, GotchaCli, HttpServer, Responder, tracing::{info}, task::{cron_proc_macro_wrapper, interval_proc_macro_wrapper}};
 use serde::Deserialize;
 
 #[get("/")]

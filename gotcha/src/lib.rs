@@ -18,7 +18,6 @@ pub use gotcha_core::*;
 pub use gotcha_macro::*;
 pub use oas;
 
-pub use openapi::{ApiObject, ParameterProvider};
 pub mod cli;
 mod config;
 pub mod message;
