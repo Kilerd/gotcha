@@ -161,6 +161,15 @@ impl<T: ApiObject> ParameterProvider for Path<T> {
     }
 }
 
+impl<T> ParameterProvider for Data<T> {
+    fn location() -> ParameterIn {
+        ParameterIn::Path
+    }
+    fn generate(url: String) -> Option<Vec<Parameter>> {
+        None
+    }
+}
+
 
 pub(crate) async fn openapi_handler(spec: Data<OpenAPIV3>) -> Json<OpenAPIV3> {
     Json(spec.get_ref().clone())
