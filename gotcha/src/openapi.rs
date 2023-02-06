@@ -3,7 +3,7 @@ use actix_web::web::{Data, Json, Path};
 use actix_web::{FromRequest, HttpRequest, HttpResponse};
 use http::Method;
 use oas::{OpenAPIV3, Operation, Parameter, ParameterIn, Responses, Schema};
-use std::collections::BTreeMap;
+
 
 pub trait ApiObject {
     fn name() -> &'static str;
@@ -43,35 +43,36 @@ pub trait ParameterProvider {
     fn generate(url: String) -> Option<Vec<Parameter>>;
 }
 
-impl ApiObject for i32 {
-
-    fn name() -> &'static str {
-        "i32"
-    }
-
-    fn required() -> bool {
-        true
-    }
-
-    fn type_() -> &'static str {
-        "number"
-    }
-}
-
-impl ApiObject for String {
-
-    fn name() -> &'static str {
-        "string"
-    }
-
-    fn required() -> bool {
-        true
-    }
-
-    fn type_() -> &'static str {
-        "string"
+macro_rules! impl_primitive_type {
+    ($t: ty, $name: expr, $api_type: expr) => {
+        impl ApiObject for $t {
+            fn name() -> &'static str {
+                $name
+            }
+            fn required() -> bool {
+                true
+            }
+            fn type_() -> &'static str {
+                $api_type
+            }
+        }
     }
 }
+
+impl_primitive_type!{ i8, "i32", "number"}
+impl_primitive_type!{ i16, "i16", "number"}
+impl_primitive_type!{ i32, "i32", "number"}
+impl_primitive_type!{ i64, "i64", "number"}
+impl_primitive_type!{ isize, "isize", "number"}
+impl_primitive_type!{ u8, "u8", "number"}
+impl_primitive_type!{ u16, "u16", "number"}
+impl_primitive_type!{ u32, "u32", "number"}
+impl_primitive_type!{ u64, "u64", "number"}
+impl_primitive_type!{ usize, "usize", "number"}
+impl_primitive_type!{ String, "string", "string"}
+
+
+
 
 impl<T: ApiObject> ApiObject for Option<T> {
     
