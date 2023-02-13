@@ -1,7 +1,7 @@
 use proc_macro::TokenStream;
 use crate::FromMeta;
 use quote::quote;
-use syn::{AttributeArgs, ItemFn, Lit, LitStr, Meta, parse_macro_input};
+use syn::{AttributeArgs, FnArg, ItemFn, Lit, LitStr, Meta, parse_macro_input};
 
 pub enum HttpMethod {
     Get,
@@ -113,12 +113,19 @@ pub(crate) fn request_handler(method: HttpMethod, args: TokenStream, input_strea
         let t = docs.join("\n");
         quote!{ Some(#t) }
     };
+    let params_token: Vec<proc_macro2::TokenStream> = input.sig.inputs.iter().flat_map(|param| match param {
+        FnArg::Receiver(_) => None,
+        FnArg::Typed(typed) => {
+            let ty = &typed.ty;
+            Some(quote!{ <#ty as ::gotcha::ParameterProvider>::generate(self.uri().to_string())})
+        }
+    }).collect();
 
     let ret = quote! {
         #[::actix_web::get( "/" )]
         #input
 
-        impl ::gotcha::Operable for  #fn_ident {
+        impl Operable for  #fn_ident {
             fn id(&self) -> &'static str {
                 #fn_ident_string
             }
@@ -136,6 +143,18 @@ pub(crate) fn request_handler(method: HttpMethod, args: TokenStream, input_strea
             }
             fn deprecated(&self) -> bool {
                 false
+            }
+            fn parameters(&self) -> Vec<::gotcha::oas::Parameter> {
+                let mut ret = vec![];
+
+                #(
+                    if let Some(mut one_params) = #params_token {
+                        ret.append(&mut one_params);
+                    }
+
+                )*
+                ret
+
             }
         }
     };
