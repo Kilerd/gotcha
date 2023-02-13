@@ -71,7 +71,7 @@ pub trait ApiObject {
             content:None
         }
         // Parameter {
-        //     name: 
+        //     name:
         //     _in: ParameterIn::Query,
 
         // }
@@ -115,7 +115,7 @@ impl_primitive_type!{ String, "string", "string"}
 
 
 impl<T: ApiObject> ApiObject for Option<T> {
-    
+
     fn name() -> &'static str {
         T::name()
     }
@@ -150,7 +150,7 @@ impl ApiObject for MyRequest {
 
 impl<T1:ApiObject> ParameterProvider for Path<(T1, )> {
 
-  
+
     fn location() -> ParameterIn {
         ParameterIn::Path
     }
