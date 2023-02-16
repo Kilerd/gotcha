@@ -30,7 +30,7 @@ pub async fn cron_proc_macro_wrapper() {
 pub async fn interval_proc_macro_wrapper() {
     let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
     loop {
-        let tick = interval.tick().await;
+        let _tick = interval.tick().await;
         my_task().await
     }
 }

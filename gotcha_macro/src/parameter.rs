@@ -1,8 +1,8 @@
-use darling::{FromDeriveInput, FromField, FromVariant};
+use darling::{FromDeriveInput, FromField};
 
-use proc_macro2::Span;
+use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::quote;
-use syn::{parse2, spanned::Spanned, DeriveInput};
+use syn::{parse2, DeriveInput};
 
 #[derive(Debug, FromDeriveInput)]
 #[darling(attributes(parameter))]
@@ -18,13 +18,11 @@ struct ParameterStructFieldOpt {
     ident: Option<syn::Ident>,
     ty: syn::Type,
     // add more validator
-    #[darling(default)]
-    primary_key: Option<bool>,
 }
 
 pub(crate) fn handler(
-    input: proc_macro2::TokenStream,
-) -> Result<proc_macro2::TokenStream, (Span, &'static str)> {
+    input: TokenStream2,
+) -> Result<TokenStream2, (Span, &'static str)> {
     let x1 = parse2::<DeriveInput>(input).unwrap();
     let crud_opts: ParameterOpts = ParameterOpts::from_derive_input(&x1).unwrap();
 
@@ -34,7 +32,7 @@ pub(crate) fn handler(
 
     // todo handle enum
     let fields = crud_opts.data.take_struct().unwrap();
-    let fields_stream: Vec<proc_macro2::TokenStream> = fields
+    let fields_stream: Vec<TokenStream2> = fields
         .fields
         .into_iter()
         .map(|field| {

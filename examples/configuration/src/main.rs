@@ -2,7 +2,7 @@ use gotcha::prelude::*;
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize, Clone)]
-struct Config {
+pub struct Config {
     welcome: String,
 }
 

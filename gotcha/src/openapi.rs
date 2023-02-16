@@ -1,8 +1,8 @@
-use actix_web::dev::Payload;
-use actix_web::web::{Data, Json, Path};
-use actix_web::{FromRequest, HttpRequest, HttpResponse};
-use http::Method;
-use oas::{OpenAPIV3, Operation, Parameter, ParameterIn, Responses, Schema};
+
+use actix_web::web::{Data, Json};
+use actix_web::HttpResponse;
+
+use oas::OpenAPIV3;
 
 
 pub(crate) async fn openapi_handler(spec: Data<OpenAPIV3>) -> Json<OpenAPIV3> {

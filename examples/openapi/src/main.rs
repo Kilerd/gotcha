@@ -3,7 +3,6 @@ use gotcha::{
     post,
     prelude::*,
     put,
-    task::{cron_proc_macro_wrapper, interval_proc_macro_wrapper},
     tracing::info,
 };
 use serde::Deserialize;
@@ -37,18 +36,18 @@ pub async fn new_pet() -> impl Responder {
 
 /// Update specific pet's info
 #[put("/pets/{pet_id}/info")]
-pub async fn update_pet_info(paths: Path<(i32,)>) -> impl Responder {
+pub async fn update_pet_info(_paths: Path<(i32,)>) -> impl Responder {
     "update pet info"
 }
 
 #[derive(Parameter, Deserialize)]
 pub struct UpdatePetAddressPathArgs {
-    pet_id: i32,
-    address_id: String,
+    pub pet_id: i32,
+    pub address_id: String,
 }
 /// Update specific pet's address
 #[put("/pets/{pet_id}/address/{address_id}")]
-pub async fn update_pet_address_detail(paths: Path<UpdatePetAddressPathArgs>) -> impl Responder {
+pub async fn update_pet_address_detail(_paths: Path<UpdatePetAddressPathArgs>) -> impl Responder {
     "update pet info"
 }
 

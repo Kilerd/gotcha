@@ -1,4 +1,4 @@
-use darling::{FromDeriveInput, FromField, FromVariant};
+use darling::{FromDeriveInput, FromField};
 
 use itertools::Itertools;
 use proc_macro2::Span;

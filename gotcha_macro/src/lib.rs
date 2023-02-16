@@ -1,9 +1,7 @@
 use darling::FromMeta;
 use proc_macro::TokenStream;
-use quote::__private::ext::RepToTokensExt;
-use quote::quote;
-use syn::{AttributeArgs, ItemFn, Lit, LitStr, Meta, parse_macro_input};
-use route::{HttpMethod, RouteMeta};
+
+use route::HttpMethod;
 use proc_macro_error::{proc_macro_error, abort};
 
 mod route;

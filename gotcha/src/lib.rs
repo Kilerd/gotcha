@@ -6,12 +6,9 @@ pub use actix_web::web::Data;
 pub use actix_web::App;
 pub use actix_web::HttpServer;
 pub use actix_web::Responder;
-use actix_web::{dev::{ServiceFactory, ServiceRequest}, HttpResponse, Resource, web};
+use actix_web::{dev::{ServiceFactory, ServiceRequest}, web};
 pub use async_trait::async_trait;
-use oas::{Info, OpenAPIV3, Operation, PathItem, Tag};
-use std::{collections::HashMap, sync::Arc};
-use std::collections::HashSet;
-use actix_web::web::Json;
+use oas::{Info, OpenAPIV3,  PathItem, Tag};
 use http::Method;
 
 pub use gotcha_core::*;
@@ -198,10 +195,10 @@ impl<T> GotchaApp<T>
         }
     }
 
-    pub fn task<TASK, TASK_RET>(mut self, t: TASK) -> Self
+    pub fn task<Task, TaskRet>(mut self, t: Task) -> Self
         where
-            TASK: (Fn() -> TASK_RET) + 'static,
-            TASK_RET: std::future::Future<Output=()> + Send + 'static,
+        Task: (Fn() -> TaskRet) + 'static,
+            TaskRet: std::future::Future<Output=()> + Send + 'static,
     {
         self.tasks.push(Box::new(move || {
             tokio::spawn(t());

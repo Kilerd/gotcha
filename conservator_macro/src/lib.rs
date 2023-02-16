@@ -1,21 +1,19 @@
 use proc_macro::TokenStream;
-use proc_macro_error::{proc_macro_error, abort};
-use syn::AttributeArgs;
-use syn::{parse_macro_input, ItemFn};
+use proc_macro_error::{abort, proc_macro_error};
 
 mod authorization;
+mod auto;
 mod creatable;
 mod domain;
-mod magic;
 mod sql;
-mod auto;
 
 #[proc_macro_derive(Domain, attributes(domain))]
+#[proc_macro_error]
 pub fn derive_domain_fn(input: TokenStream) -> TokenStream {
     let stream2 = proc_macro2::TokenStream::from(input);
     match domain::handler(stream2) {
         Ok(stream) => proc_macro::TokenStream::from(stream),
-        Err((span, msg)) => abort!{span, msg}
+        Err((span, msg)) => abort! {span, msg},
     }
 }
 
@@ -25,17 +23,13 @@ pub fn derive_creatable_fn(input: TokenStream) -> TokenStream {
     let stream2 = proc_macro2::TokenStream::from(input);
     let stream1 = proc_macro::TokenStream::from(creatable::handle_creatable(stream2));
     stream1
-    
 }
 
 #[proc_macro_attribute]
-pub fn magic(_args: TokenStream, input: TokenStream) -> TokenStream {
+pub fn auto(_args: TokenStream, input: TokenStream) -> TokenStream {
     let stream2 = proc_macro2::TokenStream::from(input);
-    let stream1 = proc_macro::TokenStream::from(magic::handler(stream2));
+    let stream1 = proc_macro::TokenStream::from(auto::handler(stream2));
     stream1
-    // let args = parse_macro_input!(args as Args);
-    // let mut item = parse_macro_input!(input as Item);
-    // TokenStream::from(quote!(#item))
 }
 
 #[proc_macro_attribute]
@@ -45,18 +39,6 @@ pub fn sql(args: TokenStream, input: TokenStream) -> TokenStream {
     let stream2 = proc_macro2::TokenStream::from(input);
     match sql::handler(args, stream2) {
         Ok(stream) => proc_macro::TokenStream::from(stream),
-        Err((span, msg)) => abort!{span, msg}
+        Err((span, msg)) => abort! {span, msg},
     }
-    // let mut item = parse_macro_input!(input as Item);
-    // TokenStream::from(quote!(#item))
 }
-
-// #[proc_macro_attribute]
-// pub fn authorization(args: TokenStream, input: TokenStream) -> TokenStream {
-//     let attr_args = parse_macro_input!(args as AttributeArgs);
-//     let input = parse_macro_input!(input as ItemFn);
-//     let stream1 = proc_macro::TokenStream::from(authorization::handler(attr_args, input));
-//     stream1
-// }
-
-

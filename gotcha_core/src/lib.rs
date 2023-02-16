@@ -1,8 +1,8 @@
 use convert_case::{Case, Casing};
 use http::Method;
-use oas::{Operation, Parameter, Referenceable, Response, Responses,ParameterIn,Schema, Convertible};
+use oas::{Operation, Parameter, Referenceable, Response, Responses,ParameterIn,Schema};
 use std::collections::{BTreeMap};
-use actix_web::web::{Data, Path, Json};
+use actix_web::web::{Data, Path};
 
 
 pub trait Operable {
@@ -138,39 +138,6 @@ impl<T: ApiObject> ApiObject for Option<T> {
     }
 }
 
-struct MyRequest {
-    name: String,
-    fav_number: i32,
-}
-
-impl ApiObject for MyRequest {
-    fn name() -> &'static str {
-        "MyRequest"
-    }
-
-    fn required() -> bool {
-        true
-    }
-
-    fn type_() -> &'static str {
-        "object"
-    }
-    fn generate_schema() -> Schema {
-        let mut schema = Schema{
-            _type: Some(Self::type_().to_string()),
-            format:None,
-            nullable:None,
-            extras:Default::default()
-        };
-        let mut properties = ::std::collections::HashMap::new();
-        properties.insert("name".to_string(), String::generate_schema().to_value());
-        properties.insert("fav_number".to_string(), i32::generate_schema().to_value());
-        
-        schema.extras.insert("properties".to_string(), serde_json::to_value(properties).unwrap());
-        schema
-    }
-}
-
 impl<T1:ApiObject> ParameterProvider for Path<(T1, )> {
 
 
@@ -253,7 +220,7 @@ impl<T> ParameterProvider for Data<T> {
     fn location() -> ParameterIn {
         ParameterIn::Path
     }
-    fn generate(url: String) -> Option<Vec<Parameter>> {
+    fn generate(_url: String) -> Option<Vec<Parameter>> {
         None
     }
 }

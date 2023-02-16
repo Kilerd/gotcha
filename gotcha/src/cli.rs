@@ -63,7 +63,7 @@ where
             GotchaOpts::Run(opts) => {
                 let config: CONFIG = GotchaConfigLoader::load(opts.profile);
                 let server_fn = self.server_fn.unwrap();
-                server_fn(config).await;
+                server_fn(config).await.expect("error");
             }
             GotchaOpts::Migration(_) => todo!(),
         }
