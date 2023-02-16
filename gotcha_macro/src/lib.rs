@@ -38,3 +38,12 @@ pub fn derive_parameter(input: TokenStream) -> TokenStream {
         Err((span, msg)) => abort! {span, msg}
     }
 }
+
+#[cfg(test)]
+mod test {
+    #[test]
+    fn pass() {
+        let t = trybuild::TestCases::new();
+        t.pass("tests/pass/*.rs");
+    }
+}

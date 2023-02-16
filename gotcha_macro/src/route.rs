@@ -68,14 +68,7 @@ impl FromMeta for RouteMeta {
 }
 
 
-#[cfg(test)]
-mod test {
-    #[test]
-    fn pass() {
-        let t = trybuild::TestCases::new();
-        t.pass("tests/pass/*.rs");
-    }
-}
+
 
 pub(crate) fn request_handler(method: HttpMethod, args: TokenStream, input_stream: TokenStream) -> TokenStream {
     let attr_args = parse_macro_input!(args as AttributeArgs);

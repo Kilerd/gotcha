@@ -82,21 +82,4 @@ pub(crate) fn handler(
 }
 
 
-#[cfg(test)]
-mod test {
-    use quote::quote;
-    use crate::parameter::handler;
-
-    #[test]
-    fn pass() {
-        let ret = quote!(
-            #[derive(Parameter)]
-            pub struct PaginationRequest {
-                page: usize,
-                size: usize
-            }
-        );
-        handler(ret);
-    }
-}
 
