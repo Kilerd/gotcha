@@ -1,7 +1,8 @@
 use actix_web::web::Path;
 use gotcha::{
-    post, put,
+    post,
     prelude::*,
+    put,
     task::{cron_proc_macro_wrapper, interval_proc_macro_wrapper},
     tracing::info,
 };
@@ -40,11 +41,10 @@ pub async fn update_pet_info(paths: Path<(i32,)>) -> impl Responder {
     "update pet info"
 }
 
-
 #[derive(Parameter, Deserialize)]
 pub struct UpdatePetAddressPathArgs {
-pet_id: i32,
-address_id: String
+    pet_id: i32,
+    address_id: String,
 }
 /// Update specific pet's address
 #[put("/pets/{pet_id}/address/{address_id}")]

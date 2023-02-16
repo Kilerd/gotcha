@@ -99,11 +99,7 @@ impl<T> GotchaApp<T>
             added_tags.iter().for_each(|tag| {
                 if let Some(tags) = &mut self.openapi_spec.tags {
                     if tags.iter().find(|each|each.name.eq(tag)).is_none() {
-                        tags.push(Tag {
-                            name: tag.to_owned(),
-                            description: None,
-                            external_docs: None
-                        })
+                        tags.push(Tag::new(tag, None))
                     }
                 }
             })
