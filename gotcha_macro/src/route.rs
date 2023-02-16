@@ -79,15 +79,15 @@ pub(crate) fn request_handler(method: HttpMethod, args: TokenStream, input_strea
             return TokenStream::from(e.write_errors());
         }
     };
-    let RouteMeta { path, extra } = dbg!(args);
+    let RouteMeta { path, extra } = args;
     let group = if let Some(group_name) = extra.group {
-        dbg! {quote! { Some(#group_name.to_string()) }}
+        quote! { Some(#group_name.to_string()) }
     } else {
         quote! { None }
     };
     let method = method.to_token_stream();
 
-    let input = dbg!(parse_macro_input!(input_stream as ItemFn));
+    let input = parse_macro_input!(input_stream as ItemFn);
     let fn_ident = input.sig.ident.clone();
     let fn_ident_string = fn_ident.to_string();
     let docs: Vec<String> = input.attrs.iter().filter_map(|attr| {

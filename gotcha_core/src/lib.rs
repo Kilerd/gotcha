@@ -147,7 +147,7 @@ impl<T1:ApiObject> ParameterProvider for Path<(T1, )> {
     fn generate(url: String) -> Option<Vec<Parameter>> {
         let pattern = regex::Regex::new(r"\{([^\}]+)\}").unwrap();
         let param_names_in_path: Vec<String> = pattern.captures_iter(&url)
-        .map(|digits| dbg!(digits.get(1).unwrap()).as_str().to_string())
+        .map(|digits| digits.get(1).unwrap().as_str().to_string())
         .collect();
 
         let mut t1_param = T1::generate();
@@ -166,7 +166,7 @@ impl<T1:ApiObject, T2: ApiObject> ParameterProvider for Path<(T1, T2)> {
     fn generate(url: String) -> Option<Vec<Parameter>> {
         let pattern = regex::Regex::new(r"\{([^\}]+)\}").unwrap();
         let param_names_in_path: Vec<String> = pattern.captures_iter(&url)
-        .map(|digits| dbg!(digits.get(1).unwrap()).as_str().to_string())
+        .map(|digits| digits.get(1).unwrap().as_str().to_string())
         .collect();
 
         let mut t1_param = T1::generate();

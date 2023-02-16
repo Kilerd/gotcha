@@ -35,8 +35,6 @@ pub(crate) fn handler(
     let x1 = parse2::<DeriveInput>(input).unwrap();
     let crud_opts: DomainOpts = DomainOpts::from_derive_input(&x1).unwrap();
 
-    dbg!(&crud_opts);
-
     let fields = crud_opts.data.take_struct().unwrap();
     let mut pk_count = fields
         .fields

@@ -26,7 +26,6 @@ pub(crate) fn handler(
     let x1 = parse2::<DeriveInput>(input).unwrap();
     let crud_opts: ParameterOpts = ParameterOpts::from_derive_input(&x1).unwrap();
 
-    dbg!(&crud_opts);
     let ident = crud_opts.ident.clone();
     let ident_string = ident.to_string();
 
@@ -75,7 +74,6 @@ pub(crate) fn handler(
             }
         }
     };
-    dbg!(impl_stream.to_string());
     Ok(impl_stream)
 }
 
