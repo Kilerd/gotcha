@@ -117,7 +117,7 @@ pub(crate) fn request_handler(method: HttpMethod, args: TokenStream, input_strea
         FnArg::Receiver(_) => None,
         FnArg::Typed(typed) => {
             let ty = &typed.ty;
-            Some(quote!{ <#ty as ::gotcha::ParameterProvider>::generate(self.uri().to_string())})
+            Some(quote!{ <#ty as ParameterProvider>::generate(self.uri().to_string())})
         }
     }).collect();
 
@@ -144,7 +144,7 @@ pub(crate) fn request_handler(method: HttpMethod, args: TokenStream, input_strea
             fn deprecated(&self) -> bool {
                 false
             }
-            fn parameters(&self) -> Vec<::gotcha::oas::Parameter> {
+            fn parameters(&self) -> Vec<Parameter> {
                 let mut ret = vec![];
 
                 #(

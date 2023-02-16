@@ -1,8 +1,9 @@
 use convert_case::{Case, Casing};
 use http::Method;
-use oas::{Operation, Parameter, Referenceable, Response, Responses,ParameterIn,Schema};
-use std::collections::BTreeMap;
-use actix_web::web::{Data, Path};
+use oas::{Operation, Parameter, Referenceable, Response, Responses,ParameterIn,Schema, Convertible};
+use std::collections::{BTreeMap};
+use actix_web::web::{Data, Path, Json};
+
 
 pub trait Operable {
     fn id(&self) -> &'static str;
@@ -77,6 +78,14 @@ pub trait ApiObject {
         // }
 
     }
+    fn generate_schema() -> Schema {
+        Schema{
+            _type: Some(Self::type_().to_string()),
+            format:None,
+            nullable:None,
+            extras:Default::default()
+        }
+    }
 }
 pub trait ParameterProvider {
     fn location() -> ParameterIn;
@@ -146,6 +155,20 @@ impl ApiObject for MyRequest {
     fn type_() -> &'static str {
         "object"
     }
+    fn generate_schema() -> Schema {
+        let mut schema = Schema{
+            _type: Some(Self::type_().to_string()),
+            format:None,
+            nullable:None,
+            extras:Default::default()
+        };
+        let mut properties = ::std::collections::HashMap::new();
+        properties.insert("name".to_string(), String::generate_schema().to_value());
+        properties.insert("fav_number".to_string(), i32::generate_schema().to_value());
+        
+        schema.extras.insert("properties".to_string(), serde_json::to_value(properties).unwrap());
+        schema
+    }
 }
 
 impl<T1:ApiObject> ParameterProvider for Path<(T1, )> {
@@ -196,10 +219,35 @@ impl<T: ApiObject> ParameterProvider for Path<T> {
     fn location() -> ParameterIn {
         ParameterIn::Path
     }
-    fn generate(url: String) -> Option<Vec<Parameter>> {
-        todo!()
+    fn generate(_url: String) -> Option<Vec<Parameter>> {
+        let mut ret = vec![];
+        let mut schema = T::generate_schema();
+        if let Some(mut properties) = schema.extras.remove("properties") {
+            if let Some(properties ) = properties.as_object_mut() {
+                properties.iter_mut().for_each(|(key,value)| {
+                    let schema = serde_json::from_value(value.clone()).unwrap();
+                    ret.push(Parameter {
+                        name: key.to_string(),
+                        _in: ParameterIn::Path,
+                        description: None,
+                        required: Some(T::required()),
+                        deprecated: Some(false),
+                        allow_empty_value: None,
+                        style: None,
+                        explode: None,
+                        allow_reserved:None,
+                        schema: Some(oas::Referenceable::Data(schema)),
+                        example: None,
+                        examples: None,
+                        content:None
+                    })
+                })
+            }
+        }
+        Some(ret)
     }
 }
+
 
 impl<T> ParameterProvider for Data<T> {
     fn location() -> ParameterIn {

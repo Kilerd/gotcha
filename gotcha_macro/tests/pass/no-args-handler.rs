@@ -1,5 +1,6 @@
-use gotcha_core::Operable;
+use gotcha_core::{Operable, ApiObject};
 use gotcha_macro::{get, post, put, patch, delete, head};
+use oas::{Parameter, Schema};
 
 #[get("/hello-world")]
 async fn handler() -> String {

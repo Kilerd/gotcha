@@ -29,6 +29,21 @@ pub use cli::GotchaCli;
 pub use tracing;
 use crate::openapi::{openapi_handler, openapi_html};
 
+pub mod prelude {
+    pub use gotcha_macro::{get, Parameter};
+    pub use crate::App;
+    pub use crate::Data;
+    pub use crate::GotchaAppWrapperExt;
+    pub use crate::GotchaCli;
+    pub use crate::HttpServer;
+    pub use crate::Responder;
+    pub use crate::Operable;
+    pub use gotcha_core::ApiObject;
+
+    pub use gotcha_core::{ParameterProvider};
+    pub use oas::{Parameter, Schema, Convertible};
+}
+
 pub struct GotchaApp<T> {
     api_endpoint: Option<String>,
     openapi_spec: OpenAPIV3,

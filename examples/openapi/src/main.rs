@@ -1,9 +1,9 @@
 use actix_web::web::Path;
 use gotcha::{
-    get, post, put,
+    post, put,
+    prelude::*,
     task::{cron_proc_macro_wrapper, interval_proc_macro_wrapper},
     tracing::info,
-    App, GotchaAppWrapperExt, GotchaCli, HttpServer, Responder, Operable
 };
 use serde::Deserialize;
 
@@ -39,9 +39,16 @@ pub async fn new_pet() -> impl Responder {
 pub async fn update_pet_info(paths: Path<(i32,)>) -> impl Responder {
     "update pet info"
 }
+
+
+#[derive(Parameter, Deserialize)]
+pub struct UpdatePetAddressPathArgs {
+pet_id: i32,
+address_id: String
+}
 /// Update specific pet's address
 #[put("/pets/{pet_id}/address/{address_id}")]
-pub async fn update_pet_address_detail(paths: Path<(i32, String)>) -> impl Responder {
+pub async fn update_pet_address_detail(paths: Path<UpdatePetAddressPathArgs>) -> impl Responder {
     "update pet info"
 }
 
@@ -64,7 +71,7 @@ async fn main() {
                     .done()
             })
             .workers(6)
-            .bind(("127.0.0.1", 8080))
+            .bind(("0.0.0.0", 8080))
             .unwrap()
             .run()
             .await
