@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 
-pub use conservator_macro::magic;
+pub use conservator_macro::auto;
 pub use conservator_macro::Creatable;
 pub use conservator_macro::Domain;
 pub use conservator_macro::sql;
