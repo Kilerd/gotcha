@@ -5,6 +5,8 @@ members = [
     "gotcha_macro",
     "conservator",
     "conservator_macro",
+]
+exclude = [
     "examples/basic",
     "examples/message",
     "examples/configuration",

@@ -7,6 +7,6 @@ version = "0.1.0"
 
 [dependencies]
 actix-web = "4"
-gotcha = {path = "../../gotcha"}
+gotcha = {version="0.1", path = "../../gotcha"}
 tokio = {version = "1", features = ["macros", 'rt-multi-thread']}
 serde = {version="1", features=["derive"]}
