@@ -92,6 +92,7 @@ impl_primitive_type! { u32, "u32", "number"}
 impl_primitive_type! { u64, "u64", "number"}
 impl_primitive_type! { usize, "usize", "number"}
 impl_primitive_type! { String, "string", "string"}
+impl_primitive_type! { bool, "string", "boolean"}
 
 
 
