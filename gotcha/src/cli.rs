@@ -2,6 +2,7 @@ use std::marker::PhantomData;
 
 use clap::{Args, Parser, Subcommand};
 use serde::de::DeserializeOwned;
+use tracing::info;
 
 use crate::config::GotchaConfigLoader;
 
@@ -58,9 +59,13 @@ where
     pub async fn run(self) -> () {
         tracing_subscriber::fmt::init();
         let opts = GotchaOpts::parse();
-
+        info!("starting gotcha");
         match opts {
             GotchaOpts::Run(opts) => {
+                match opts.profile.as_ref() {
+                    Some(env) => info!("gotcha is loading with profile [{}]", env),
+                    None => info!("gotcha is loading without any extra profile")
+                };
                 let config: CONFIG = GotchaConfigLoader::load(opts.profile);
                 let server_fn = self.server_fn.unwrap();
                 server_fn(config).await.expect("error");
