@@ -1,7 +1,7 @@
 [package]
 name = "conservator"
 description = "conservator is the orm based on sqlx"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 license = "MIT"
 
@@ -10,4 +10,4 @@ license = "MIT"
 [dependencies]
 async-trait = "0.1"
 sqlx = { version = "0.6", features = ["runtime-tokio-native-tls", "postgres", "chrono", "bigdecimal"] }
-conservator_macro = { version = "0.1.1" }
+conservator_macro = { version = "0.1" }
