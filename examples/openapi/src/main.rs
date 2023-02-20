@@ -1,10 +1,16 @@
-use gotcha::{get,post, App, GotchaAppWrapperExt, GotchaCli, HttpServer, Responder, tracing::{info}, task::{cron_proc_macro_wrapper, interval_proc_macro_wrapper}};
+use actix_web::web::Path;
+use gotcha::{
+    post,
+    prelude::*,
+    put,
+    tracing::info,
+};
 use serde::Deserialize;
 
 /// Rust has six types of attributes.
 ///
-/// - Outer attributes like #[repr(transparent)]. These appear outside or in front of the item they describe.
-/// - Inner attributes like #![feature(proc_macro)]. These appear inside of the item they describe, usually a module.
+/// - Outer attributes like `#[repr(transparent)]`. These appear outside or in front of the item they describe.
+/// - Inner attributes like `#![feature(proc_macro)]`. These appear inside of the item they describe, usually a module.
 /// - Outer doc comments like /// # Example.
 /// - Inner doc comments like //! Please file an issue.
 /// - Outer block comments /** # Example */.
@@ -23,9 +29,26 @@ pub async fn hello_world() -> impl Responder {
 }
 
 /// Add new pet to the store inventory.
-#[post("/pet", group="pet")]
+#[post("/pet", group = "pet")]
 pub async fn new_pet() -> impl Responder {
     "new pet"
+}
+
+/// Update specific pet's info
+#[put("/pets/{pet_id}/info")]
+pub async fn update_pet_info(_paths: Path<(i32,)>) -> impl Responder {
+    "update pet info"
+}
+
+#[derive(Parameter, Deserialize)]
+pub struct UpdatePetAddressPathArgs {
+    pub pet_id: i32,
+    pub address_id: String,
+}
+/// Update specific pet's address
+#[put("/pets/{pet_id}/address/{address_id}")]
+pub async fn update_pet_address_detail(_paths: Path<UpdatePetAddressPathArgs>) -> impl Responder {
+    "update pet info"
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -41,11 +64,13 @@ async fn main() {
                     .into_gotcha()
                     .service(hello_world)
                     .service(new_pet)
+                    .service(update_pet_info)
+                    .service(update_pet_address_detail)
                     .data(config.clone())
                     .done()
             })
             .workers(6)
-            .bind(("127.0.0.1", 8080))
+            .bind(("0.0.0.0", 8080))
             .unwrap()
             .run()
             .await

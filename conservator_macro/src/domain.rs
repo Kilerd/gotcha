@@ -1,4 +1,4 @@
-use darling::{FromDeriveInput, FromField, FromVariant};
+use darling::{FromDeriveInput, FromField};
 
 use itertools::Itertools;
 use proc_macro2::Span;
@@ -34,8 +34,6 @@ pub(crate) fn handler(
 ) -> Result<proc_macro2::TokenStream, (Span, &'static str)> {
     let x1 = parse2::<DeriveInput>(input).unwrap();
     let crud_opts: DomainOpts = DomainOpts::from_derive_input(&x1).unwrap();
-
-    dbg!(&crud_opts);
 
     let fields = crud_opts.data.take_struct().unwrap();
     let mut pk_count = fields

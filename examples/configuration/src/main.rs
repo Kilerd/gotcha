@@ -1,8 +1,8 @@
-use gotcha::{get, App, Data, GotchaAppWrapperExt, GotchaCli, HttpServer, Responder};
+use gotcha::prelude::*;
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize, Clone)]
-struct Config {
+pub struct Config {
     welcome: String,
 }
 

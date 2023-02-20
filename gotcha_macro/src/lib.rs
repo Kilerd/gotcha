@@ -1,9 +1,7 @@
 use darling::FromMeta;
 use proc_macro::TokenStream;
-use quote::__private::ext::RepToTokensExt;
-use quote::quote;
-use syn::{AttributeArgs, ItemFn, Lit, LitStr, Meta, parse_macro_input};
-use route::{HttpMethod, RouteMeta};
+
+use route::HttpMethod;
 use proc_macro_error::{proc_macro_error, abort};
 
 mod route;
@@ -28,6 +26,7 @@ handler!(head, HttpMethod::Head);
 handler!(trace, HttpMethod::Trace);
 
 
+
 #[proc_macro_derive(Parameter, attributes(parameter))]
 #[proc_macro_error]
 pub fn derive_parameter(input: TokenStream) -> TokenStream {
@@ -35,5 +34,14 @@ pub fn derive_parameter(input: TokenStream) -> TokenStream {
     match parameter::handler(stream2) {
         Ok(stream) => proc_macro::TokenStream::from(stream),
         Err((span, msg)) => abort! {span, msg}
+    }
+}
+
+#[cfg(test)]
+mod test {
+    #[test]
+    fn pass() {
+        let t = trybuild::TestCases::new();
+        t.pass("tests/pass/*.rs");
     }
 }

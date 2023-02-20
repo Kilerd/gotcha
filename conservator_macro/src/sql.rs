@@ -75,13 +75,13 @@ pub(crate) fn handler(
     let arg = args.to_string();
     let action = match Action::from_str(&arg) {
         Ok(action) => action,
-        Err(e) => return Err((args.span(), "unknown action type")),
+        Err(_) => return Err((args.span(), "unknown action type")),
     };
 
     let input_span = input.span().clone();
     let method = match parse2::<ItemFn>(input) {
         Ok(func) => func,
-        Err(e) => return Err((input_span, "unknown action type")),
+        Err(_) => return Err((input_span, "unknown action type")),
     };
 
     let vis = &method.vis;
