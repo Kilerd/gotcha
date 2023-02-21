@@ -2,7 +2,7 @@ use convert_case::{Case, Casing};
 use http::Method;
 use oas::{Operation, Parameter, Referenceable, Response, Responses, ParameterIn, Schema, Convertible};
 use std::collections::BTreeMap;
-use actix_web::web::{Data, Path};
+use actix_web::web::{Data, Json, Path, Query};
 
 
 pub trait Operable {
@@ -240,6 +240,37 @@ impl<T: ApiObject> ParameterProvider for Path<T> {
         Some(ret)
     }
 }
+
+impl<T: ApiObject> ParameterProvider for Json<T> {
+    fn location() -> ParameterIn {
+        ParameterIn::Path
+    }
+    fn generate(_url: String) -> Option<Vec<Parameter>> {
+        None
+        // todo
+    }
+}
+impl<T: ApiObject> ParameterProvider for Query<T> {
+    fn location() -> ParameterIn {
+        ParameterIn::Query
+    }
+    fn generate(_url: String) -> Option<Vec<Parameter>> {
+        let mut ret = vec![];
+        let mut schema = T::generate_schema();
+        if let Some(mut properties) = schema.extras.remove("properties") {
+            if let Some(properties) = properties.as_object_mut() {
+                properties.iter_mut().for_each(|(key, value)| {
+                    let schema = serde_json::from_value(value.clone()).unwrap();
+                    let param = build_param(key.to_string(), ParameterIn::Path, T::required(), schema);
+                    ret.push(param);
+                })
+            }
+        }
+        Some(ret)
+    }
+}
+
+
 
 impl<T> ParameterProvider for Data<T> {
     fn location() -> ParameterIn {
