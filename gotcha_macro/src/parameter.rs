@@ -39,7 +39,7 @@ pub(crate) fn handler(
             let field_name = field.ident.unwrap().to_string();
             let field_ty = field.ty;
             quote!{
-                properties.insert(#field_name.to_string(), #field_ty::generate_schema().to_value());
+                properties.insert(#field_name.to_string(), <#field_ty as ApiObject>::generate_schema().to_value());
             }
 
         })

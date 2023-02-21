@@ -1,7 +1,7 @@
 use convert_case::{Case, Casing};
 use http::Method;
-use oas::{Operation, Parameter, Referenceable, Response, Responses, ParameterIn, Schema};
-use std::collections::{BTreeMap};
+use oas::{Operation, Parameter, Referenceable, Response, Responses, ParameterIn, Schema, Convertible};
+use std::collections::BTreeMap;
 use actix_web::web::{Data, Path};
 
 
@@ -111,6 +111,48 @@ impl<T: ApiObject> ApiObject for Option<T> {
     }
     fn generate_schema() -> Schema {
         T::generate_schema()
+    }
+}
+
+impl<T: ApiObject> ApiObject for &T {
+    fn name() -> &'static str {
+        T::name()
+    }
+
+    fn required() -> bool {
+        T::required()
+    }
+
+    fn type_() -> &'static str {
+        T::type_()
+    }
+    fn generate_schema() -> Schema {
+        T::generate_schema()
+    }
+}
+
+impl<T: ApiObject> ApiObject for Vec<T> {
+    fn name() -> &'static str {
+        T::name()
+    }
+
+    fn required() -> bool {
+        T::required()
+    }
+
+    fn type_() -> &'static str {
+        "array"
+    }
+
+    fn generate_schema() -> Schema {
+        let mut schema = Schema {
+            _type: Some(Self::type_().to_string()),
+            format: None,
+            nullable: None,
+            extras: Default::default(),
+        };
+        schema.extras.insert("items".to_string(), T::generate_schema().to_value());
+        schema
     }
 }
 
