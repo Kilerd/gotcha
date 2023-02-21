@@ -46,7 +46,7 @@ pub trait Operable {
     fn parameters(&self) -> Vec<Parameter>;
 }
 
-pub trait ApiObject {
+pub trait Schematic {
     fn name() -> &'static str;
     fn required() -> bool;
     fn type_() -> &'static str;
@@ -67,7 +67,7 @@ pub trait ParameterProvider {
 
 macro_rules! impl_primitive_type {
     ($t: ty, $name: expr, $api_type: expr) => {
-        impl ApiObject for $t {
+        impl Schematic for $t {
             fn name() -> &'static str {
                 $name
             }
@@ -97,7 +97,7 @@ impl_primitive_type! { bool, "string", "boolean"}
 
 
 
-impl<T: ApiObject> ApiObject for Option<T> {
+impl<T: Schematic> Schematic for Option<T> {
     fn name() -> &'static str {
         T::name()
     }
@@ -114,7 +114,7 @@ impl<T: ApiObject> ApiObject for Option<T> {
     }
 }
 
-impl<T: ApiObject> ApiObject for &T {
+impl<T: Schematic> Schematic for &T {
     fn name() -> &'static str {
         T::name()
     }
@@ -131,7 +131,7 @@ impl<T: ApiObject> ApiObject for &T {
     }
 }
 
-impl<T: ApiObject> ApiObject for Vec<T> {
+impl<T: Schematic> Schematic for Vec<T> {
     fn name() -> &'static str {
         T::name()
     }
@@ -174,7 +174,7 @@ fn build_param(name: String, _in: ParameterIn, required: bool, schema: Schema) -
     }
 }
 
-impl<T1: ApiObject> ParameterProvider for Path<(T1, )> {
+impl<T1: Schematic> ParameterProvider for Path<(T1, )> {
     fn location() -> ParameterIn {
         ParameterIn::Path
     }
@@ -194,7 +194,7 @@ impl<T1: ApiObject> ParameterProvider for Path<(T1, )> {
     }
 }
 
-impl<T1: ApiObject, T2: ApiObject> ParameterProvider for Path<(T1, T2)> {
+impl<T1: Schematic, T2: Schematic> ParameterProvider for Path<(T1, T2)> {
     fn location() -> ParameterIn {
         ParameterIn::Path
     }
@@ -221,7 +221,7 @@ impl<T1: ApiObject, T2: ApiObject> ParameterProvider for Path<(T1, T2)> {
     }
 }
 
-impl<T: ApiObject> ParameterProvider for Path<T> {
+impl<T: Schematic> ParameterProvider for Path<T> {
     fn location() -> ParameterIn {
         ParameterIn::Path
     }
@@ -241,7 +241,7 @@ impl<T: ApiObject> ParameterProvider for Path<T> {
     }
 }
 
-impl<T: ApiObject> ParameterProvider for Json<T> {
+impl<T: Schematic> ParameterProvider for Json<T> {
     fn location() -> ParameterIn {
         ParameterIn::Path
     }
@@ -250,7 +250,7 @@ impl<T: ApiObject> ParameterProvider for Json<T> {
         // todo
     }
 }
-impl<T: ApiObject> ParameterProvider for Query<T> {
+impl<T: Schematic> ParameterProvider for Query<T> {
     fn location() -> ParameterIn {
         ParameterIn::Query
     }

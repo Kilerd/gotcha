@@ -1,4 +1,4 @@
-use gotcha_core::{Operable,ApiObject};
+use gotcha_core::{Operable,Schematic};
 use gotcha_macro::get;
 use oas::{Parameter, Schema};
 

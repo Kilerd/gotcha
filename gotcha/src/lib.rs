@@ -27,7 +27,7 @@ pub use tracing;
 use crate::openapi::{openapi_handler, openapi_html};
 
 pub mod prelude {
-    pub use gotcha_macro::{get, Parameter};
+    pub use gotcha_macro::{get, Schematic};
     pub use crate::App;
     pub use crate::Data;
     pub use crate::GotchaAppWrapperExt;
@@ -35,7 +35,7 @@ pub mod prelude {
     pub use crate::HttpServer;
     pub use crate::Responder;
     pub use crate::Operable;
-    pub use gotcha_core::ApiObject;
+    pub use gotcha_core::Schematic;
 
     pub use gotcha_core::{ParameterProvider};
     pub use oas::{Parameter, Schema, Convertible};

@@ -1,9 +1,9 @@
-use gotcha_core::{Operable,ApiObject};
-use gotcha_macro::{Parameter};
+use gotcha_core::{Operable,Schematic};
+use gotcha_macro::{Schematic};
 use oas::{Parameter, Schema, Convertible};
 
 
-#[derive(Parameter)]
+#[derive(Schematic)]
 pub struct Pagination {
     page: usize,
     size: usize
