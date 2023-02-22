@@ -41,6 +41,8 @@ pub struct RouteMeta {
 #[derive(Debug, FromMeta)]
 struct RouteExtraMeta {
     group: Option<String>,
+    #[darling(default)]
+    disable_openapi: Option<bool>
 }
 
 impl FromMeta for RouteMeta {
@@ -80,11 +82,13 @@ pub(crate) fn request_handler(method: HttpMethod, args: TokenStream, input_strea
         }
     };
     let RouteMeta { path, extra } = args;
+    dbg!(&extra);
     let group = if let Some(group_name) = extra.group {
         quote! { Some(#group_name.to_string()) }
     } else {
         quote! { None }
     };
+    let should_generate_openapi_spec = !extra.disable_openapi.unwrap_or(false);
     let method = method.to_token_stream();
 
     let input = parse_macro_input!(input_stream as ItemFn);
@@ -119,6 +123,9 @@ pub(crate) fn request_handler(method: HttpMethod, args: TokenStream, input_strea
         #input
 
         impl Operable for  #fn_ident {
+            fn should_generate_openapi_spec(&self) -> bool {
+                #should_generate_openapi_spec
+            }
             fn id(&self) -> &'static str {
                 #fn_ident_string
             }
