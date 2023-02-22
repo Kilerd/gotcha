@@ -8,7 +8,16 @@ use crate::config::GotchaConfigLoader;
 
 #[derive(Parser, Debug)]
 #[clap(about, version, author)]
-pub enum GotchaOpts {
+pub struct Cli {
+    #[clap(long, short)]
+    profile: Option<String>,
+    
+    #[command(subcommand)]
+    command: GotchaCommand
+}
+
+#[derive(Subcommand, Debug)]
+pub enum GotchaCommand {
     Run(RunOpts),
 
     #[clap(subcommand)]
@@ -18,10 +27,9 @@ pub enum GotchaOpts {
 #[derive(Subcommand, Debug)]
 pub enum MigrationOpts {}
 
+
 #[derive(Args, Debug)]
 pub struct RunOpts {
-    #[clap(long, short)]
-    pub profile: Option<String>,
 }
 
 pub struct GotchaCli<F, CONFIG: DeserializeOwned = (), const HAS_SERVER_FN: bool = false> {
@@ -58,19 +66,20 @@ where
 {
     pub async fn run(self) -> () {
         tracing_subscriber::fmt::init();
-        let opts = GotchaOpts::parse();
+        let opts = Cli::parse();
+        let profile = opts.profile.or(std::env::var("GOTCHA_ACTIVE_PROFILE").ok());
         info!("starting gotcha");
-        match opts {
-            GotchaOpts::Run(opts) => {
-                match opts.profile.as_ref() {
+        match opts.command {
+            GotchaCommand::Run(_) => {
+                match profile.as_ref() {
                     Some(env) => info!("gotcha is loading with profile [{}]", env),
                     None => info!("gotcha is loading without any extra profile")
                 };
-                let config: CONFIG = GotchaConfigLoader::load(opts.profile);
+                let config: CONFIG = GotchaConfigLoader::load(profile);
                 let server_fn = self.server_fn.unwrap();
                 server_fn(config).await.expect("error");
             }
-            GotchaOpts::Migration(_) => todo!(),
+            GotchaCommand::Migration(_) => todo!(),
         }
     }
 }
