@@ -6,6 +6,9 @@ use actix_web::web::{Data, Json, Path, Query};
 
 
 pub trait Operable {
+    fn should_generate_openapi_spec(&self) -> bool {
+        true
+    }
     fn id(&self) -> &'static str;
     fn method(&self) -> Method;
     fn uri(&self) -> &'static str;

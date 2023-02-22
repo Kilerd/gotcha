@@ -91,43 +91,45 @@ impl<T> GotchaApp<T>
         where
             F: Operable + actix_web::dev::HttpServiceFactory + 'static,
     {
-        let operation_object = factory.generate();
-        if let Some(added_tags) = &operation_object.tags {
-            added_tags.iter().for_each(|tag| {
-                if let Some(tags) = &mut self.openapi_spec.tags {
-                    if tags.iter().find(|each|each.name.eq(tag)).is_none() {
-                        tags.push(Tag::new(tag, None))
+        if factory.should_generate_openapi_spec() {
+            let operation_object = factory.generate();
+            if let Some(added_tags) = &operation_object.tags {
+                added_tags.iter().for_each(|tag| {
+                    if let Some(tags) = &mut self.openapi_spec.tags {
+                        if tags.iter().find(|each|each.name.eq(tag)).is_none() {
+                            tags.push(Tag::new(tag, None))
+                        }
                     }
-                }
-            })
+                })
+            }
+            let mut entry = self.openapi_spec.paths.entry(factory.uri().to_string()).or_insert_with(|| PathItem {
+                _ref: None,
+                summary: None,
+                description: None,
+                get: None,
+                put: None,
+                post: None,
+                delete: None,
+                options: None,
+                head: None,
+                patch: None,
+                trace: None,
+                servers: None,
+                parameters: None,
+            });
+            match factory.method() {
+                Method::GET => entry.get = Some(operation_object),
+                Method::POST => entry.post = Some(operation_object),
+                Method::PUT => entry.put = Some(operation_object),
+                Method::DELETE => entry.delete = Some(operation_object),
+                Method::HEAD => entry.head = Some(operation_object),
+                Method::OPTIONS => entry.options = Some(operation_object),
+                Method::PATCH => entry.patch = Some(operation_object),
+                Method::TRACE => entry.trace = Some(operation_object),
+                _ => {}
+            };
         }
-        let mut entry = self.openapi_spec.paths.entry(factory.uri().to_string()).or_insert_with(|| PathItem {
-            _ref: None,
-            summary: None,
-            description: None,
-            get: None,
-            put: None,
-            post: None,
-            delete: None,
-            options: None,
-            head: None,
-            patch: None,
-            trace: None,
-            servers: None,
-            parameters: None,
-        });
-        match factory.method() {
-            Method::GET => entry.get = Some(operation_object),
-            Method::POST => entry.post = Some(operation_object),
-            Method::PUT => entry.put = Some(operation_object),
-            Method::DELETE => entry.delete = Some(operation_object),
-            Method::HEAD => entry.head = Some(operation_object),
-            Method::OPTIONS => entry.options = Some(operation_object),
-            Method::PATCH => entry.patch = Some(operation_object),
-            Method::TRACE => entry.trace = Some(operation_object),
-            _ => {}
-        };
-
+        
         self.inner = self.inner.service(factory);
         self
     }
