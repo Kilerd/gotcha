@@ -61,6 +61,7 @@ pub trait Schematic {
             extras: Default::default(),
         }
     }
+    // todo should return the success state and also the error message, but need to be configurable, which means that need to return the the basic error info, pass into default handler to generate error
     fn is_match(&self) -> bool {
         true
     }

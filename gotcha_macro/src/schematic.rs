@@ -17,16 +17,13 @@ struct ParameterOpts {
 struct ParameterStructFieldOpt {
     ident: Option<syn::Ident>,
     ty: syn::Type,
-
     // for number
     maximum: Option<i64>,
     minimum: Option<i64>,
-
     // for string
     max_length: Option<u64>,
     min_length: Option<u64>,
     pattern: Option<String>,
-
     // array
     max_items: Option<u64>,
     min_items: Option<u64>,
