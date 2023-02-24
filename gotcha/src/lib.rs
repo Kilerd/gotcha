@@ -10,6 +10,7 @@ use actix_web::{dev::{ServiceFactory, ServiceRequest}, web};
 pub use async_trait::async_trait;
 use oas::{Info, OpenAPIV3,  PathItem, Tag};
 use http::Method;
+pub use request_json::Json;
 
 pub use gotcha_core::*;
 pub use gotcha_macro::*;
@@ -20,6 +21,7 @@ mod config;
 pub mod message;
 pub mod openapi;
 pub mod task;
+mod request_json;
 
 use crate::message::Messager;
 pub use cli::GotchaCli;

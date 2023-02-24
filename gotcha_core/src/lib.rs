@@ -61,6 +61,21 @@ pub trait Schematic {
             extras: Default::default(),
         }
     }
+    fn is_match(&self) -> bool {
+        true
+    }
+
+    fn validate_str_min_length(value: &str, min_length: u64) -> bool {
+        value.len() as u64 >= min_length
+    }
+
+    fn validate_str_max_length(value: &str, max_length: u64) -> bool {
+        value.len() as u64 <= max_length
+    }
+
+    fn validate_str_pattern(value:&str, regex: &regex::Regex) -> bool {
+        regex.is_match(value)
+    }
 }
 
 pub trait ParameterProvider {
