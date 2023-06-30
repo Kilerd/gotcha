@@ -129,9 +129,10 @@ impl<T> GotchaApp<T>
                 _ => {}
             };
         }
-        
-        self.inner = self.inner.service(factory);
-        self
+        Self {
+            inner: self.inner.service(factory),
+            ..self
+        }
     }
     pub fn wrap<M, B>(
         self,
@@ -185,9 +186,11 @@ impl<T> GotchaApp<T>
         }
     }
 
-    pub fn api_endpoint(mut self, path: impl Into<String>) -> Self {
-        self.api_endpoint = Some(path.into());
-        self
+    pub fn api_endpoint(self, path: impl Into<String>) -> Self {
+        Self {
+            api_endpoint: Some(path.into()),
+            ..self
+        }
     }
     pub fn data<U: 'static>(self, ext: U) -> Self {
         let ext_data = web::Data::new(ext);
