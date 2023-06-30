@@ -29,6 +29,20 @@ impl HttpMethod {
             HttpMethod::Trace => { quote! { ::actix_web::http::Method::Trace } }
         }
     }
+    fn to_macro_method(&self) -> proc_macro2::TokenStream {
+        match self {
+            HttpMethod::Get => { quote! { ::actix_web::get } }
+            HttpMethod::Post => { quote! { ::actix_web::post } }
+            HttpMethod::Put => { quote! { ::actix_web::put } }
+            HttpMethod::Patch => { quote! { ::actix_web::patch } }
+            HttpMethod::Delete => { quote! { ::actix_web::delete } }
+            HttpMethod::Options => { quote! { ::actix_web::options } }
+            HttpMethod::Head => { quote! { ::actix_web::head } }
+            HttpMethod::Connect => { quote! { ::actix_web::connect } }
+            HttpMethod::Trace => { quote! { ::actix_web::trace } }
+        }
+    }
+
 }
 
 
@@ -82,13 +96,13 @@ pub(crate) fn request_handler(method: HttpMethod, args: TokenStream, input_strea
         }
     };
     let RouteMeta { path, extra } = args;
-    dbg!(&extra);
     let group = if let Some(group_name) = extra.group {
         quote! { Some(#group_name.to_string()) }
     } else {
         quote! { None }
     };
     let should_generate_openapi_spec = !extra.disable_openapi.unwrap_or(false);
+    let macro_method = method.to_macro_method();
     let method = method.to_token_stream();
 
     let input = parse_macro_input!(input_stream as ItemFn);
@@ -119,7 +133,7 @@ pub(crate) fn request_handler(method: HttpMethod, args: TokenStream, input_strea
     }).collect();
 
     let ret = quote! {
-        #[::actix_web::get( "/" )]
+        #[ #macro_method ( #path )]
         #input
 
         impl Operable for  #fn_ident {
