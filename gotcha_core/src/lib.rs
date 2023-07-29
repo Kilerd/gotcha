@@ -283,3 +283,13 @@ impl<T> ParameterProvider for Data<T> {
         None
     }
 }
+
+
+impl ParameterProvider for actix_web::HttpRequest {
+    fn location() -> ParameterIn {
+        ParameterIn::Path
+    }
+    fn generate(_url: String) -> Option<Vec<Parameter>> {
+        None
+    }
+}
