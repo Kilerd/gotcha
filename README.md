@@ -14,7 +14,6 @@ provide a featured web framework
 ## get started
 add dependency into `Cargo.toml`
 ```toml
-actix-web = "4"
 gotcha = {version = "0.1"}
 tokio = {version = "1", features = ["macros", 'rt-multi-thread']}
 serde = {version="1", features=["derive"]}
