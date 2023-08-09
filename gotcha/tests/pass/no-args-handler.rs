@@ -1,4 +1,4 @@
-use gotcha::{get, post, put, patch, delete, head, Operable, Schematic};
+use gotcha::{get, post, put, patch, delete, head, Schematic};
 use oas::{Parameter, Schema};
 use actix_web::Responder;
 
@@ -38,6 +38,7 @@ async fn handler_with_impl_response() -> impl Responder {
 }
 
 fn main() {
+    use gotcha::Operable;
     let operation = handler.generate();
     assert!(operation.operation_id == Some("handler".to_string()));
     assert!(operation.description == None);

@@ -1,4 +1,4 @@
-use gotcha::{get, post, put, patch, delete, head, Operable, Schematic, ParameterProvider};
+use gotcha::{get, post, put, patch, delete, head, Schematic, ParameterProvider};
 use oas::{Parameter, Schema};
 use actix_web::Responder;
 use actix_web::web::{Path, Query, Json, Data};
@@ -30,6 +30,7 @@ async fn post_handler(tuple_path: Path<(i32, )>, struct_path: Query<QueryArgs>, 
 }
 
 fn main() {
+    use gotcha::Operable;
     let operation = post_handler.generate();
     assert!(operation.operation_id == Some("post_handler".to_string()));
     assert!(operation.description == None);

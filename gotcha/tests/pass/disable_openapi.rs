@@ -1,4 +1,4 @@
-use gotcha::{get, Operable,Schematic};
+use gotcha::{get,Schematic};
 use oas::{Parameter, Schema};
 
 
@@ -24,6 +24,7 @@ async fn disabled_2() -> String {
 
 
 fn main() {
+    use gotcha::Operable;
     assert!(default_generated.should_generate_openapi_spec() == true);
     assert!(enabled.should_generate_openapi_spec() == true);
     assert!(disabled.should_generate_openapi_spec() == false);

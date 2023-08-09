@@ -136,7 +136,7 @@ pub(crate) fn request_handler(method: HttpMethod, args: TokenStream, input_strea
         #[ #macro_method ( #path )]
         #input
 
-        impl Operable for  #fn_ident {
+        impl ::gotcha::Operable for  #fn_ident {
             fn should_generate_openapi_spec(&self) -> bool {
                 #should_generate_openapi_spec
             }

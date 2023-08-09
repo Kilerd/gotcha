@@ -1,4 +1,4 @@
-use gotcha::{Operable,Schematic};
+use gotcha::{Schematic};
 use oas::{Parameter, Schema};
 
 
