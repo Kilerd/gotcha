@@ -15,10 +15,3 @@ proc-macro2 = "1.0.47"
 darling = "0.14.2"
 gotcha_core = { version = "0.1", path = "../gotcha_core" }
 proc-macro-error = { version = "1", default-features = false }
-
-[dev-dependencies]
-trybuild = "1.0"
-actix-web = "4"
-oas = "0.0.4"
-serde_json = "1"
-serde = "1"

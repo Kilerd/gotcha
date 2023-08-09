@@ -38,7 +38,7 @@ pub mod prelude {
     pub use gotcha_core::Schematic;
 
     pub use gotcha_core::{ParameterProvider};
-    pub use oas::{Parameter, Schema, Convertible};
+    pub use oas::{Parameter, Schema};
 }
 
 pub struct GotchaApp<T> {
@@ -226,6 +226,11 @@ impl<T> GotchaApp<T>
             .service(redoc_handler)
     }
 }
-
 #[cfg(test)]
-mod tests {}
+mod test {
+    #[test]
+    fn pass() {
+        let t = trybuild::TestCases::new();
+        t.pass("tests/pass/*.rs");
+    }
+}

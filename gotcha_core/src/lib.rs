@@ -1,6 +1,6 @@
 use convert_case::{Case, Casing};
 use http::Method;
-use oas::{Operation, Parameter, Referenceable, Response, Responses, ParameterIn, Schema, Convertible};
+use oas::{Operation, Parameter, Referenceable, Response, Responses, ParameterIn, Schema};
 use std::collections::BTreeMap;
 use actix_web::web::{Data, Json, Path, Query};
 

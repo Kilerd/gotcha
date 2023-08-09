@@ -37,11 +37,3 @@ pub fn derive_parameter(input: TokenStream) -> TokenStream {
     }
 }
 
-#[cfg(test)]
-mod test {
-    #[test]
-    fn pass() {
-        let t = trybuild::TestCases::new();
-        t.pass("tests/pass/*.rs");
-    }
-}

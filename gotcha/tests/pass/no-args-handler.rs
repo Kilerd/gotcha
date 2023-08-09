@@ -1,5 +1,4 @@
-use gotcha_core::{Operable, Schematic};
-use gotcha_macro::{get, post, put, patch, delete, head};
+use gotcha::{get, post, put, patch, delete, head, Operable, Schematic};
 use oas::{Parameter, Schema};
 use actix_web::Responder;
 

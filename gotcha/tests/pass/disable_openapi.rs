@@ -1,5 +1,4 @@
-use gotcha_core::{Operable,Schematic};
-use gotcha_macro::get;
+use gotcha::{get, Operable,Schematic};
 use oas::{Parameter, Schema};
 
 

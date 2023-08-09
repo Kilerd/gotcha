@@ -1,6 +1,5 @@
-use gotcha_core::{Operable, Schematic, ParameterProvider};
-use gotcha_macro::{get, post, put, patch, delete, head, Schematic};
-use oas::{Parameter, Schema, Convertible};
+use gotcha::{get, post, put, patch, delete, head, Operable, Schematic, ParameterProvider};
+use oas::{Parameter, Schema};
 use actix_web::Responder;
 use actix_web::web::{Path, Query, Json, Data};
 use serde::Deserialize;

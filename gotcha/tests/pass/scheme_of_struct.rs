@@ -1,6 +1,5 @@
-use gotcha_core::{Operable,Schematic};
-use gotcha_macro::{Schematic};
-use oas::{Parameter, Schema, Convertible};
+use gotcha::{Operable,Schematic};
+use oas::{Parameter, Schema};
 
 
 #[derive(Schematic)]
