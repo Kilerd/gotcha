@@ -1,7 +1,4 @@
-use gotcha::{get, post, put, patch, delete, head, Schematic, ParameterProvider};
-use oas::{Parameter, Schema};
-use actix_web::Responder;
-use actix_web::web::{Path, Query, Json, Data};
+use gotcha::{ post, Schematic,web::{Json,Path, Query, Data}, Responder};
 use serde::Deserialize;
 #[derive(Clone)]
 pub struct AppData {
@@ -25,7 +22,7 @@ pub struct RequestPayload {
 
 
 #[post("/resources/{id}")]
-async fn post_handler(tuple_path: Path<(i32, )>, struct_path: Query<QueryArgs>, payload:Json<RequestPayload>, data:Data<AppData>) -> impl Responder {
+async fn post_handler(_tuple_path: Path<(i32, )>, _struct_path: Query<QueryArgs>, _payload:Json<RequestPayload>, _data:Data<AppData>) -> impl Responder {
     "Hello world".to_string()
 }
 

@@ -1,6 +1,7 @@
+use std::sync::Arc;
+
 use actix_web::web;
 use async_trait::async_trait;
-use std::sync::Arc;
 
 pub struct Messager {}
 

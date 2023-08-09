@@ -1,5 +1,4 @@
-use gotcha::{get,Schematic};
-use oas::{Parameter, Schema};
+use gotcha::{get};
 
 
 #[get("/hello-world")]

@@ -1,12 +1,11 @@
-use quote::quote;
+use std::str::FromStr;
 
 use itertools::Itertools;
 use proc_macro2::Span;
-
-use quote::format_ident;
-use std::str::FromStr;
+use quote::{format_ident, quote};
 use strum::EnumString;
-use syn::{parse2, spanned::Spanned, Expr, FnArg, ItemFn, Lit, Pat, Stmt};
+use syn::spanned::Spanned;
+use syn::{parse2, Expr, FnArg, ItemFn, Lit, Pat, Stmt};
 
 #[derive(Debug, EnumString)]
 #[strum(serialize_all = "snake_case")]
@@ -15,7 +14,7 @@ enum Action {
     Exists,
     Find,
     FetchAll,
-    Execute
+    Execute,
 }
 
 impl Action {
@@ -68,10 +67,7 @@ impl Action {
     }
 }
 
-pub(crate) fn handler(
-    args: proc_macro2::TokenStream,
-    input: proc_macro2::TokenStream,
-) -> Result<proc_macro2::TokenStream, (Span, &'static str)> {
+pub(crate) fn handler(args: proc_macro2::TokenStream, input: proc_macro2::TokenStream) -> Result<proc_macro2::TokenStream, (Span, &'static str)> {
     let arg = args.to_string();
     let action = match Action::from_str(&arg) {
         Ok(action) => action,
@@ -153,9 +149,6 @@ mod test {
                     .await
             }
         };
-        assert_eq!(
-            expected.to_string(),
-            handler(args, input).unwrap().to_string()
-        );
+        assert_eq!(expected.to_string(), handler(args, input).unwrap().to_string());
     }
 }

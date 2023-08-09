@@ -11,9 +11,9 @@ use crate::config::GotchaConfigLoader;
 pub struct Cli {
     #[clap(long, short)]
     profile: Option<String>,
-    
+
     #[command(subcommand)]
-    command: GotchaCommand
+    command: GotchaCommand,
 }
 
 #[derive(Subcommand, Debug)]
@@ -27,10 +27,8 @@ pub enum GotchaCommand {
 #[derive(Subcommand, Debug)]
 pub enum MigrationOpts {}
 
-
 #[derive(Args, Debug)]
-pub struct RunOpts {
-}
+pub struct RunOpts {}
 
 pub struct GotchaCli<F, CONFIG: DeserializeOwned = (), const HAS_SERVER_FN: bool = false> {
     server_fn: Option<F>,
@@ -73,7 +71,7 @@ where
             GotchaCommand::Run(_) => {
                 match profile.as_ref() {
                     Some(env) => info!("gotcha is loading with profile [{}]", env),
-                    None => info!("gotcha is loading without any extra profile")
+                    None => info!("gotcha is loading without any extra profile"),
                 };
                 let config: CONFIG = GotchaConfigLoader::load(profile);
                 let server_fn = self.server_fn.unwrap();

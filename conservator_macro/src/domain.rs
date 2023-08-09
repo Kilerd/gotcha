@@ -1,9 +1,9 @@
 use darling::{FromDeriveInput, FromField};
-
 use itertools::Itertools;
 use proc_macro2::Span;
 use quote::quote;
-use syn::{parse2, spanned::Spanned, DeriveInput};
+use syn::spanned::Spanned;
+use syn::{parse2, DeriveInput};
 
 #[derive(Debug, FromDeriveInput)]
 #[darling(attributes(domain))]
@@ -29,25 +29,16 @@ fn fetch_all(table_name: &str) -> String {
     format!("select * from {}", table_name)
 }
 
-pub(crate) fn handler(
-    input: proc_macro2::TokenStream,
-) -> Result<proc_macro2::TokenStream, (Span, &'static str)> {
+pub(crate) fn handler(input: proc_macro2::TokenStream) -> Result<proc_macro2::TokenStream, (Span, &'static str)> {
     let x1 = parse2::<DeriveInput>(input).unwrap();
     let crud_opts: DomainOpts = DomainOpts::from_derive_input(&x1).unwrap();
 
     let fields = crud_opts.data.take_struct().unwrap();
-    let mut pk_count = fields
-        .fields
-        .into_iter()
-        .filter(|field| field.primary_key == Some(true))
-        .collect_vec();
+    let mut pk_count = fields.fields.into_iter().filter(|field| field.primary_key == Some(true)).collect_vec();
 
     let pk_field = match pk_count.len() {
         0 => {
-            return Err((
-                x1.span(),
-                "missing primary key, using #[domain(primary_key)] to identify",
-            ));
+            return Err((x1.span(), "missing primary key, using #[domain(primary_key)] to identify"));
         }
         1 => pk_count.pop().unwrap(),
         _ => {

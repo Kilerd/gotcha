@@ -1,5 +1,4 @@
 use darling::{FromDeriveInput, FromField};
-
 use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::quote;
 use syn::{parse2, DeriveInput};
@@ -20,9 +19,7 @@ struct ParameterStructFieldOpt {
     // add more validator
 }
 
-pub(crate) fn handler(
-    input: TokenStream2,
-) -> Result<TokenStream2, (Span, &'static str)> {
+pub(crate) fn handler(input: TokenStream2) -> Result<TokenStream2, (Span, &'static str)> {
     let x1 = parse2::<DeriveInput>(input).unwrap();
     let crud_opts: ParameterOpts = ParameterOpts::from_derive_input(&x1).unwrap();
 
@@ -35,26 +32,24 @@ pub(crate) fn handler(
         .fields
         .into_iter()
         .map(|field| {
-
             let field_name = field.ident.unwrap().to_string();
             let field_ty = field.ty;
-            quote!{
+            quote! {
                 properties.insert(#field_name.to_string(), <#field_ty as Schematic>::generate_schema().to_value());
             }
-
         })
         .collect();
     let impl_stream = quote! {
-        
+
         impl Schematic for #ident {
             fn name() -> &'static str {
                 #ident_string
             }
-        
+
             fn required() -> bool {
                 true
             }
-        
+
             fn type_() -> &'static str {
                 "object"
             }
@@ -76,6 +71,3 @@ pub(crate) fn handler(
     };
     Ok(impl_stream)
 }
-
-
-

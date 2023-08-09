@@ -9,9 +9,7 @@ impl GotchaConfigLoader {
             .add_source(File::with_name("configurations/application"));
 
         if let Some(profile) = profile {
-            s = s.add_source(
-                File::with_name(&format!("configurations/application_{}", profile)).required(false),
-            );
+            s = s.add_source(File::with_name(&format!("configurations/application_{}", profile)).required(false));
         }
         s = s.add_source(config::Environment::with_prefix("APP"));
 

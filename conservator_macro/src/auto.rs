@@ -1,8 +1,7 @@
-use quote::quote;
+use std::str::FromStr;
 
 use itertools::Itertools;
-use quote::format_ident;
-use std::str::FromStr;
+use quote::{format_ident, quote};
 use strum::EnumString;
 use syn::{parse2, ImplItem, ImplItemMethod, Item, Type};
 
@@ -141,16 +140,12 @@ pub(crate) fn handler_magic_function(header: &Box<Type>, method: &ImplItemMethod
     let vis = &method.vis;
     let ident = &method.sig.ident;
     let ident_name = method.sig.ident.to_string();
-    let action_naming_convention =
-        regex::Regex::new("^(?P<action>fetch|fetch_all|exists|find)_by").expect("invalid regex");
-    let action_caps = action_naming_convention
-        .captures(&ident_name)
-        .expect("action not found");
+    let action_naming_convention = regex::Regex::new("^(?P<action>fetch|fetch_all|exists|find)_by").expect("invalid regex");
+    let action_caps = action_naming_convention.captures(&ident_name).expect("action not found");
 
     let action_name = action_caps.name("action").map_or("", |m| m.as_str());
     let action: Action = Action::from_str(action_name).unwrap();
-    let field_naming_convention =
-        regex::Regex::new("__(?P<field>[^__]+)__(?P<factor>is|equals|gt|lt|in)?").expect("invalid regex");
+    let field_naming_convention = regex::Regex::new("__(?P<field>[^__]+)__(?P<factor>is|equals|gt|lt|in)?").expect("invalid regex");
     let field_factors = field_naming_convention
         .captures_iter(&ident_name)
         .into_iter()

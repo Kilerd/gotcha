@@ -5,11 +5,9 @@
 //! }
 use std::str::FromStr;
 
+use chrono::Utc;
 use cron::Schedule;
-use chrono::{Utc};
 use tracing::info;
-
-
 
 async fn my_task() {
     info!("hello task");

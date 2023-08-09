@@ -1,5 +1,4 @@
 use gotcha::{Schematic};
-use oas::{Parameter, Schema};
 
 
 #[derive(Schematic)]
@@ -9,6 +8,6 @@ pub struct Pagination {
 }
 
 fn main() {
-    let operation = Pagination::generate_schema();
+    let _operation = Pagination::generate_schema();
     assert!(Pagination::name().eq("Pagination"));
 }

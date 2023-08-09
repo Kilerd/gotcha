@@ -1,9 +1,9 @@
+use std::collections::BTreeMap;
+
+use actix_web::web::{Data, Json, Path, Query};
 use convert_case::{Case, Casing};
 use http::Method;
-use oas::{Operation, Parameter, Referenceable, Response, Responses, ParameterIn, Schema};
-use std::collections::BTreeMap;
-use actix_web::web::{Data, Json, Path, Query};
-
+use oas::{Operation, Parameter, ParameterIn, Referenceable, Response, Responses, Schema};
 
 pub trait Operable {
     fn should_generate_openapi_spec(&self) -> bool {
@@ -16,11 +16,7 @@ pub trait Operable {
     fn description(&self) -> Option<&'static str>;
     fn deprecated(&self) -> bool;
     fn generate(&self) -> Operation {
-        let tags = if let Some(group) = self.group() {
-            Some(vec![group])
-        } else {
-            None
-        };
+        let tags = if let Some(group) = self.group() { Some(vec![group]) } else { None };
         let params = self.parameters().into_iter().map(|param| Referenceable::Data(param)).collect();
         Operation {
             tags,
@@ -81,7 +77,7 @@ macro_rules! impl_primitive_type {
                 $api_type
             }
         }
-    }
+    };
 }
 
 impl_primitive_type! { i8, "i32", "number"}
@@ -96,9 +92,6 @@ impl_primitive_type! { u64, "u64", "number"}
 impl_primitive_type! { usize, "usize", "number"}
 impl_primitive_type! { String, "string", "string"}
 impl_primitive_type! { bool, "string", "boolean"}
-
-
-
 
 impl<T: Schematic> Schematic for Option<T> {
     fn name() -> &'static str {
@@ -177,15 +170,13 @@ fn build_param(name: String, _in: ParameterIn, required: bool, schema: Schema) -
     }
 }
 
-impl<T1: Schematic> ParameterProvider for Path<(T1, )> {
+impl<T1: Schematic> ParameterProvider for Path<(T1,)> {
     fn location() -> ParameterIn {
         ParameterIn::Path
     }
     fn generate(url: String) -> Option<Vec<Parameter>> {
         let pattern = regex::Regex::new(r"\{([^\}]+)\}").unwrap();
-        let param_names_in_path: Vec<String> = pattern.captures_iter(&url)
-            .map(|digits| digits.get(1).unwrap().as_str().to_string())
-            .collect();
+        let param_names_in_path: Vec<String> = pattern.captures_iter(&url).map(|digits| digits.get(1).unwrap().as_str().to_string()).collect();
 
         let t1_param = build_param(
             param_names_in_path.get(0).cloned().expect("cannot get param in path"),
@@ -203,9 +194,7 @@ impl<T1: Schematic, T2: Schematic> ParameterProvider for Path<(T1, T2)> {
     }
     fn generate(url: String) -> Option<Vec<Parameter>> {
         let pattern = regex::Regex::new(r"\{([^\}]+)\}").unwrap();
-        let param_names_in_path: Vec<String> = pattern.captures_iter(&url)
-            .map(|digits| digits.get(1).unwrap().as_str().to_string())
-            .collect();
+        let param_names_in_path: Vec<String> = pattern.captures_iter(&url).map(|digits| digits.get(1).unwrap().as_str().to_string()).collect();
 
         let t1_param = build_param(
             param_names_in_path.get(0).cloned().expect("cannot get param in path"),
@@ -273,8 +262,6 @@ impl<T: Schematic> ParameterProvider for Query<T> {
     }
 }
 
-
-
 impl<T> ParameterProvider for Data<T> {
     fn location() -> ParameterIn {
         ParameterIn::Path
@@ -283,7 +270,6 @@ impl<T> ParameterProvider for Data<T> {
         None
     }
 }
-
 
 impl ParameterProvider for actix_web::HttpRequest {
     fn location() -> ParameterIn {

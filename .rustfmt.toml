@@ -1,0 +1,4 @@
+group_imports = "StdExternalCrate"
+fn_params_layout = "Compressed"
+imports_granularity = "Module"
+max_width = 160

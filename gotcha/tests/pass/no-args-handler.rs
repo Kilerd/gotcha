@@ -1,6 +1,4 @@
-use gotcha::{get, post, put, patch, delete, head, Schematic};
-use oas::{Parameter, Schema};
-use actix_web::Responder;
+use gotcha::{get, post, put, patch, delete, head, Responder};
 
 #[get("/hello-world")]
 async fn handler() -> String {
