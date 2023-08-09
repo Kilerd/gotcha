@@ -1,45 +1,34 @@
 use actix_service::IntoServiceFactory;
+use actix_web::{dev::{ServiceFactory, ServiceRequest}};
+pub use actix_web;
+pub use actix_web::App;
 use actix_web::body::MessageBody;
 use actix_web::dev::ServiceResponse;
 use actix_web::dev::Transform;
-pub use actix_web::web::Data;
-pub use actix_web::App;
 pub use actix_web::HttpServer;
 pub use actix_web::Responder;
-use actix_web::{dev::{ServiceFactory, ServiceRequest}, web};
+pub use actix_web::web::Data;
 pub use async_trait::async_trait;
-use oas::{Info, OpenAPIV3,  PathItem, Tag};
 use http::Method;
+use oas::{Info, OpenAPIV3, PathItem, Tag};
+pub use oas;
+pub use tracing;
 
+pub use cli::GotchaCli;
 pub use gotcha_core::*;
 pub use gotcha_macro::*;
-pub use oas;
 
+pub use crate::message::{Messager, Message, MessagerWrapper};
+use crate::openapi::{openapi_handler, openapi_html};
+
+pub mod web {
+    pub use actix_web::web::{Path, Json, Query, Header};
+}
 pub mod cli;
 mod config;
 pub mod message;
 pub mod openapi;
 pub mod task;
-
-use crate::message::Messager;
-pub use cli::GotchaCli;
-pub use tracing;
-use crate::openapi::{openapi_handler, openapi_html};
-
-pub mod prelude {
-    pub use gotcha_macro::{get, Schematic};
-    pub use crate::App;
-    pub use crate::Data;
-    pub use crate::GotchaAppWrapperExt;
-    pub use crate::GotchaCli;
-    pub use crate::HttpServer;
-    pub use crate::Responder;
-    pub use crate::Operable;
-    pub use gotcha_core::Schematic;
-
-    pub use gotcha_core::{ParameterProvider};
-    pub use oas::{Parameter, Schema};
-}
 
 pub struct GotchaApp<T> {
     api_endpoint: Option<String>,
@@ -96,7 +85,7 @@ impl<T> GotchaApp<T>
             if let Some(added_tags) = &operation_object.tags {
                 added_tags.iter().for_each(|tag| {
                     if let Some(tags) = &mut self.openapi_spec.tags {
-                        if tags.iter().find(|each|each.name.eq(tag)).is_none() {
+                        if tags.iter().find(|each| each.name.eq(tag)).is_none() {
                             tags.push(Tag::new(tag, None))
                         }
                     }
@@ -193,7 +182,7 @@ impl<T> GotchaApp<T>
         }
     }
     pub fn data<U: 'static>(self, ext: U) -> Self {
-        let ext_data = web::Data::new(ext);
+        let ext_data = actix_web::web::Data::new(ext);
         Self {
             inner: self.inner.app_data(ext_data),
             ..self
@@ -202,7 +191,7 @@ impl<T> GotchaApp<T>
 
     pub fn task<Task, TaskRet>(mut self, t: Task) -> Self
         where
-        Task: (Fn() -> TaskRet) + 'static,
+            Task: (Fn() -> TaskRet) + 'static,
             TaskRet: std::future::Future<Output=()> + Send + 'static,
     {
         self.tasks.push(Box::new(move || {
@@ -220,12 +209,13 @@ impl<T> GotchaApp<T>
         for task in app.tasks {
             task();
         }
-        let openapi_handler = web::resource("/openapi.json").to(openapi_handler);
-        let redoc_handler = web::resource("/swagger-ui").to(openapi_html);
+        let openapi_handler = actix_web::web::resource("/openapi.json").to(openapi_handler);
+        let redoc_handler = actix_web::web::resource("/swagger-ui").to(openapi_html);
         app.inner.service(openapi_handler)
             .service(redoc_handler)
     }
 }
+
 #[cfg(test)]
 mod test {
     #[test]

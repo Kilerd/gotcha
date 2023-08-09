@@ -18,31 +18,43 @@ pub enum HttpMethod {
 impl HttpMethod {
     fn to_token_stream(&self) -> proc_macro2::TokenStream {
         match self {
-            HttpMethod::Get => { quote! { ::actix_web::http::Method::GET } }
-            HttpMethod::Post => { quote! { ::actix_web::http::Method::POST } }
-            HttpMethod::Put => { quote! { ::actix_web::http::Method::PUT } }
-            HttpMethod::Patch => { quote! { ::actix_web::http::Method::PATCH } }
-            HttpMethod::Delete => { quote! { ::actix_web::http::Method::DELETE } }
-            HttpMethod::Options => { quote! { ::actix_web::http::Method::OPTIONS } }
-            HttpMethod::Head => { quote! { ::actix_web::http::Method::HEAD } }
-            HttpMethod::Connect => { quote! { ::actix_web::http::Method::CONNECT } }
-            HttpMethod::Trace => { quote! { ::actix_web::http::Method::Trace } }
+            HttpMethod::Get => { quote! { ::gotcha::actix_web::http::Method::GET } }
+            HttpMethod::Post => { quote! { ::gotcha::actix_web::http::Method::POST } }
+            HttpMethod::Put => { quote! { ::gotcha::actix_web::http::Method::PUT } }
+            HttpMethod::Patch => { quote! { ::gotcha::actix_web::http::Method::PATCH } }
+            HttpMethod::Delete => { quote! { ::gotcha::actix_web::http::Method::DELETE } }
+            HttpMethod::Options => { quote! { ::gotcha::actix_web::http::Method::OPTIONS } }
+            HttpMethod::Head => { quote! { ::gotcha::actix_web::http::Method::HEAD } }
+            HttpMethod::Connect => { quote! { ::gotcha::actix_web::http::Method::CONNECT } }
+            HttpMethod::Trace => { quote! { ::gotcha::actix_web::http::Method::Trace } }
         }
     }
     fn to_macro_method(&self) -> proc_macro2::TokenStream {
         match self {
-            HttpMethod::Get => { quote! { ::actix_web::get } }
-            HttpMethod::Post => { quote! { ::actix_web::post } }
-            HttpMethod::Put => { quote! { ::actix_web::put } }
-            HttpMethod::Patch => { quote! { ::actix_web::patch } }
-            HttpMethod::Delete => { quote! { ::actix_web::delete } }
-            HttpMethod::Options => { quote! { ::actix_web::options } }
-            HttpMethod::Head => { quote! { ::actix_web::head } }
-            HttpMethod::Connect => { quote! { ::actix_web::connect } }
-            HttpMethod::Trace => { quote! { ::actix_web::trace } }
+            HttpMethod::Get => { quote! { ::gotcha::actix_web::get } }
+            HttpMethod::Post => { quote! { ::gotcha::actix_web::post } }
+            HttpMethod::Put => { quote! { ::gotcha::actix_web::put } }
+            HttpMethod::Patch => { quote! { ::gotcha::actix_web::patch } }
+            HttpMethod::Delete => { quote! { ::gotcha::actix_web::delete } }
+            HttpMethod::Options => { quote! { ::gotcha::actix_web::options } }
+            HttpMethod::Head => { quote! { ::gotcha::actix_web::head } }
+            HttpMethod::Connect => { quote! { ::gotcha::actix_web::connect } }
+            HttpMethod::Trace => { quote! { ::gotcha::actix_web::trace } }
         }
     }
-
+    fn to_guard_method(&self) -> proc_macro2::TokenStream {
+        match self {
+            HttpMethod::Get => { quote! { ::gotcha::actix_web::guard::Get() } }
+            HttpMethod::Post => { quote! { ::gotcha::actix_web::guard::Post() } }
+            HttpMethod::Put => { quote! { ::gotcha::actix_web::guard::Put() } }
+            HttpMethod::Patch => { quote! { ::gotcha::actix_web::guard::Patch() } }
+            HttpMethod::Delete => { quote! { ::gotcha::actix_web::guard::Delete() } }
+            HttpMethod::Options => { quote! { ::gotcha::actix_web::guard::Options() } }
+            HttpMethod::Head => { quote! { ::gotcha::actix_web::guard::Head() } }
+            HttpMethod::Connect => { quote! { ::gotcha::actix_web::guard::Connect() } }
+            HttpMethod::Trace => { quote! { ::gotcha::actix_web::guard::Trace() } }
+        }
+    }
 }
 
 
@@ -56,7 +68,7 @@ pub struct RouteMeta {
 struct RouteExtraMeta {
     group: Option<String>,
     #[darling(default)]
-    disable_openapi: Option<bool>
+    disable_openapi: Option<bool>,
 }
 
 impl FromMeta for RouteMeta {
@@ -84,8 +96,6 @@ impl FromMeta for RouteMeta {
 }
 
 
-
-
 pub(crate) fn request_handler(method: HttpMethod, args: TokenStream, input_stream: TokenStream) -> TokenStream {
     let attr_args = parse_macro_input!(args as AttributeArgs);
 
@@ -103,8 +113,8 @@ pub(crate) fn request_handler(method: HttpMethod, args: TokenStream, input_strea
     };
     let should_generate_openapi_spec = !extra.disable_openapi.unwrap_or(false);
     let macro_method = method.to_macro_method();
+    let gurad_method = method.to_guard_method();
     let method = method.to_token_stream();
-
     let input = parse_macro_input!(input_stream as ItemFn);
     let fn_ident = input.sig.ident.clone();
     let fn_ident_string = fn_ident.to_string();
@@ -120,21 +130,36 @@ pub(crate) fn request_handler(method: HttpMethod, args: TokenStream, input_strea
         }
     }).map(|doc| doc.trim().to_string()).collect();
 
-    let docs = if docs.is_empty() { quote!(None)} else {
+    let docs = if docs.is_empty() { quote!(None) } else {
         let t = docs.join("\n");
-        quote!{ Some(#t) }
+        quote! { Some(#t) }
     };
     let params_token: Vec<proc_macro2::TokenStream> = input.sig.inputs.iter().flat_map(|param| match param {
         FnArg::Receiver(_) => None,
         FnArg::Typed(typed) => {
             let ty = &typed.ty;
-            Some(quote!{ <#ty as ParameterProvider>::generate(self.uri().to_string())})
+            Some(quote! { <#ty as ::gotcha::ParameterProvider>::generate(self.uri().to_string())})
         }
     }).collect();
 
     let ret = quote! {
-        #[ #macro_method ( #path )]
-        #input
+
+        #[allow(non_camel_case_types, missing_docs)]
+        pub struct #fn_ident;
+
+        impl ::gotcha::actix_web::dev::HttpServiceFactory for #fn_ident {
+            fn register(self, __config: &mut ::gotcha::actix_web::dev::AppService) {
+
+                #input
+                let __resource = ::gotcha::actix_web::Resource::new(
+                        #path,
+                    )
+                    .name(#fn_ident_string)
+                    .guard(#gurad_method)
+                    .to(#fn_ident);
+                ::gotcha::actix_web::dev::HttpServiceFactory::register(__resource, __config);
+            }
+        }
 
         impl ::gotcha::Operable for  #fn_ident {
             fn should_generate_openapi_spec(&self) -> bool {
@@ -143,7 +168,7 @@ pub(crate) fn request_handler(method: HttpMethod, args: TokenStream, input_strea
             fn id(&self) -> &'static str {
                 #fn_ident_string
             }
-            fn method(&self) -> ::actix_web::http::Method {
+            fn method(&self) -> ::gotcha::actix_web::http::Method {
                 #method
             }
             fn uri(&self) -> &'static str {
@@ -158,7 +183,7 @@ pub(crate) fn request_handler(method: HttpMethod, args: TokenStream, input_strea
             fn deprecated(&self) -> bool {
                 false
             }
-            fn parameters(&self) -> Vec<Parameter> {
+            fn parameters(&self) -> Vec<::gotcha::oas::Parameter> {
                 let mut ret = vec![];
 
                 #(

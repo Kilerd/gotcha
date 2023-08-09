@@ -1,10 +1,5 @@
-use actix_web::web::Path;
-use gotcha::{
-    post,
-    prelude::*,
-    put,
-    tracing::info,
-};
+use gotcha::{App, get, web::Path, post, put,delete, GotchaCli, Responder,Schematic, HttpServer, tracing::{info}, task::{interval_proc_macro_wrapper}, GotchaAppWrapperExt};
+
 use serde::Deserialize;
 
 /// Rust has six types of attributes.
@@ -36,15 +31,16 @@ pub async fn new_pet() -> impl Responder {
 
 /// Update specific pet's info
 #[put("/pets/{pet_id}/info")]
-pub async fn update_pet_info(_paths: Path<(i32,)>) -> impl Responder {
+pub async fn update_pet_info(_paths: Path<(i32, )>) -> impl Responder {
     "update pet info"
 }
 
-#[derive(Parameter, Deserialize)]
+#[derive(Schematic, Deserialize)]
 pub struct UpdatePetAddressPathArgs {
     pub pet_id: i32,
     pub address_id: String,
 }
+
 /// Update specific pet's address
 #[put("/pets/{pet_id}/address/{address_id}")]
 pub async fn update_pet_address_detail(_paths: Path<UpdatePetAddressPathArgs>) -> impl Responder {
@@ -69,11 +65,11 @@ async fn main() {
                     .data(config.clone())
                     .done()
             })
-            .workers(6)
-            .bind(("0.0.0.0", 8080))
-            .unwrap()
-            .run()
-            .await
+                .workers(6)
+                .bind(("0.0.0.0", 8080))
+                .unwrap()
+                .run()
+                .await
         })
         .run()
         .await

@@ -1,4 +1,4 @@
-use gotcha::{prelude::*, tracing::{info}, task::{interval_proc_macro_wrapper}};
+use gotcha::{App, get, GotchaCli, Responder, HttpServer, tracing::{info}, task::{interval_proc_macro_wrapper}, GotchaAppWrapperExt};
 use serde::Deserialize;
 
 #[get("/")]
@@ -22,11 +22,11 @@ async fn main() {
                     .task(interval_proc_macro_wrapper)
                     .done()
             })
-            .workers(6)
-            .bind(("127.0.0.1", 8080))
-            .unwrap()
-            .run()
-            .await
+                .workers(6)
+                .bind(("127.0.0.1", 8080))
+                .unwrap()
+                .run()
+                .await
         })
         .run()
         .await

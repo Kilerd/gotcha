@@ -58,8 +58,8 @@ pub(crate) fn handler(
             fn type_() -> &'static str {
                 "object"
             }
-            fn generate_schema() -> Schema {
-                let mut schema = Schema{
+            fn generate_schema() -> ::gotcha::oas::Schema {
+                let mut schema = ::gotcha::oas::Schema {
                     _type: Some(Self::type_().to_string()),
                     format:None,
                     nullable:None,
