@@ -138,21 +138,23 @@ pub(crate) fn request_handler(method: HttpMethod, args: TokenStream, input_strea
     let fn_ident = input.sig.ident.clone();
     let fn_ident_string = fn_ident.to_string();
     let docs = match input.attrs.get_doc() {
-        None => {quote!(None)}
-        Some(t) => {quote! { Some(#t) }}
+        None => { quote!(None) }
+        Some(t) => { quote! { Some(#t) } }
     };
-    let params_token: Vec<proc_macro2::TokenStream> = input
-        .sig
-        .inputs
-        .iter()
-        .flat_map(|param| match param {
-            FnArg::Receiver(_) => None,
-            FnArg::Typed(typed) => {
-                let ty = &typed.ty;
-                Some(quote! { <#ty as ::gotcha::ParameterProvider>::generate(self.uri().to_string())})
-            }
-        })
-        .collect();
+    let params_token: Vec<proc_macro2::TokenStream> = if should_generate_openapi_spec {
+        input
+            .sig
+            .inputs
+            .iter()
+            .flat_map(|param| match param {
+                FnArg::Receiver(_) => None,
+                FnArg::Typed(typed) => {
+                    let ty = &typed.ty;
+                    Some(quote! { <#ty as ::gotcha::ParameterProvider>::generate(self.uri().to_string())})
+                }
+            })
+            .collect()
+    } else { Vec::new() };
 
     let ret = quote! {
 
