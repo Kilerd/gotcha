@@ -216,17 +216,13 @@ pub(crate) fn request_handler(method: HttpMethod, args: TokenStream, input_strea
             fn deprecated(&self) -> bool {
                 false
             }
-            fn parameters(&self) -> Vec<::gotcha::oas::Parameter> {
+            fn parameters(&self) -> Vec<::gotcha::actix_web::Either<Vec<::gotcha::oas::Parameter>, ::gotcha::oas::RequestBody>> {
                 let mut ret = vec![];
 
                 #(
-                    if let Some(mut one_params) = #params_token {
-                        ret.append(&mut one_params);
-                    }
-
+                    ret.push(#params_token);
                 )*
                 ret
-
             }
         }
     };

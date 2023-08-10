@@ -1,9 +1,10 @@
 use std::collections::BTreeMap;
+use actix_web::Either;
 
 use actix_web::web::{Data, Json, Path, Query};
 use convert_case::{Case, Casing};
 use http::Method;
-use oas::{Operation, Parameter, ParameterIn, Referenceable, Response, Responses, Schema};
+use oas::{MediaType, Operation, Parameter, ParameterIn, Referenceable, RequestBody, Response, Responses, Schema};
 
 pub trait Operable {
     fn should_generate_openapi_spec(&self) -> bool {
@@ -17,7 +18,16 @@ pub trait Operable {
     fn deprecated(&self) -> bool;
     fn generate(&self) -> Operation {
         let tags = if let Some(group) = self.group() { Some(vec![group]) } else { None };
-        let params = self.parameters().into_iter().map(|param| Referenceable::Data(param)).collect();
+
+        let mut params = vec![];
+        let mut request_body = None;
+        let vec1 = self.parameters();
+        for item in vec1 {
+            match item {
+                Either::Left(params_vec) => { params.extend(params_vec.into_iter().map(|param| Referenceable::Data(param))); }
+                Either::Right(req_body) => { request_body = Some(Referenceable::Data(req_body)) }
+            }
+        }
         Operation {
             tags,
             summary: Some(self.id().to_case(Case::Title)),
@@ -25,7 +35,7 @@ pub trait Operable {
             external_docs: None,
             operation_id: Some(self.id().to_string()),
             parameters: Some(params),
-            request_body: None,
+            request_body: request_body,
             responses: Responses {
                 default: Some(Referenceable::Data(Response {
                     description: "default return".to_string(),
@@ -42,7 +52,7 @@ pub trait Operable {
         }
     }
 
-    fn parameters(&self) -> Vec<Parameter>;
+    fn parameters(&self) -> Vec<Either<Vec<Parameter>, RequestBody>>;
 }
 
 pub trait Schematic {
@@ -60,8 +70,7 @@ pub trait Schematic {
 }
 
 pub trait ParameterProvider {
-    fn location() -> ParameterIn;
-    fn generate(url: String) -> Option<Vec<Parameter>>;
+    fn generate(url: String) -> Either<Vec<Parameter>, RequestBody>;
 }
 
 macro_rules! impl_primitive_type {
@@ -170,11 +179,8 @@ fn build_param(name: String, _in: ParameterIn, required: bool, schema: Schema) -
     }
 }
 
-impl<T1: Schematic> ParameterProvider for Path<(T1,)> {
-    fn location() -> ParameterIn {
-        ParameterIn::Path
-    }
-    fn generate(url: String) -> Option<Vec<Parameter>> {
+impl<T1: Schematic> ParameterProvider for Path<(T1, )> {
+    fn generate(url: String) -> Either<Vec<Parameter>, RequestBody> {
         let pattern = regex::Regex::new(r"\{([^\}]+)\}").unwrap();
         let param_names_in_path: Vec<String> = pattern.captures_iter(&url).map(|digits| digits.get(1).unwrap().as_str().to_string()).collect();
 
@@ -184,15 +190,12 @@ impl<T1: Schematic> ParameterProvider for Path<(T1,)> {
             T1::required(),
             T1::generate_schema(),
         );
-        Some(vec![t1_param])
+        Either::Left(vec![t1_param])
     }
 }
 
 impl<T1: Schematic, T2: Schematic> ParameterProvider for Path<(T1, T2)> {
-    fn location() -> ParameterIn {
-        ParameterIn::Path
-    }
-    fn generate(url: String) -> Option<Vec<Parameter>> {
+    fn generate(url: String) -> Either<Vec<Parameter>, RequestBody> {
         let pattern = regex::Regex::new(r"\{([^\}]+)\}").unwrap();
         let param_names_in_path: Vec<String> = pattern.captures_iter(&url).map(|digits| digits.get(1).unwrap().as_str().to_string()).collect();
 
@@ -209,15 +212,12 @@ impl<T1: Schematic, T2: Schematic> ParameterProvider for Path<(T1, T2)> {
             T2::generate_schema(),
         );
 
-        Some(vec![t1_param, t2_param])
+        Either::Left(vec![t1_param, t2_param])
     }
 }
 
 impl<T: Schematic> ParameterProvider for Path<T> {
-    fn location() -> ParameterIn {
-        ParameterIn::Path
-    }
-    fn generate(_url: String) -> Option<Vec<Parameter>> {
+    fn generate(_url: String) -> Either<Vec<Parameter>, RequestBody> {
         let mut ret = vec![];
         let mut schema = T::generate_schema();
         if let Some(mut properties) = schema.extras.remove("properties") {
@@ -229,24 +229,32 @@ impl<T: Schematic> ParameterProvider for Path<T> {
                 })
             }
         }
-        Some(ret)
+        Either::Left(ret)
     }
 }
 
 impl<T: Schematic> ParameterProvider for Json<T> {
-    fn location() -> ParameterIn {
-        ParameterIn::Path
-    }
-    fn generate(_url: String) -> Option<Vec<Parameter>> {
-        None
-        // todo
+    fn generate(_url: String) -> Either<Vec<Parameter>, RequestBody> {
+        let mut contents = BTreeMap::new();
+
+        let schema = T::generate_schema();
+        contents.insert("application/json".to_owned(), MediaType {
+            schema: Some(Referenceable::Data(schema)),
+            example: None,
+            examples: None,
+            encoding: None,
+        });
+        let req_body = RequestBody {
+            description: None,
+            required: Some(T::required()),
+            content: contents,
+        };
+        Either::Right(req_body)
     }
 }
+
 impl<T: Schematic> ParameterProvider for Query<T> {
-    fn location() -> ParameterIn {
-        ParameterIn::Query
-    }
-    fn generate(_url: String) -> Option<Vec<Parameter>> {
+    fn generate(_url: String) -> Either<Vec<Parameter>, RequestBody> {
         let mut ret = vec![];
         let mut schema = T::generate_schema();
         if let Some(mut properties) = schema.extras.remove("properties") {
@@ -258,24 +266,18 @@ impl<T: Schematic> ParameterProvider for Query<T> {
                 })
             }
         }
-        Some(ret)
+        Either::Left(ret)
     }
 }
 
 impl<T> ParameterProvider for Data<T> {
-    fn location() -> ParameterIn {
-        ParameterIn::Path
-    }
-    fn generate(_url: String) -> Option<Vec<Parameter>> {
-        None
+    fn generate(_url: String) -> Either<Vec<Parameter>, RequestBody> {
+        Either::Left(vec![])
     }
 }
 
 impl ParameterProvider for actix_web::HttpRequest {
-    fn location() -> ParameterIn {
-        ParameterIn::Path
-    }
-    fn generate(_url: String) -> Option<Vec<Parameter>> {
-        None
+    fn generate(_url: String) -> Either<Vec<Parameter>, RequestBody> {
+        Either::Left(vec![])
     }
 }

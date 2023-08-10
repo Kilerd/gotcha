@@ -1,6 +1,6 @@
 use gotcha::tracing::info;
 use gotcha::web::Path;
-use gotcha::{get, post, put, App, GotchaAppWrapperExt, GotchaCli, HttpServer, Responder, Schematic};
+use gotcha::{get, post, put, App, web::{Json}, GotchaAppWrapperExt, GotchaCli, HttpServer, Responder, Schematic};
 use serde::Deserialize;
 
 /// Rust has six types of attributes.
@@ -42,9 +42,27 @@ pub struct UpdatePetAddressPathArgs {
     pub address_id: String,
 }
 
+/// the world belongs to cat
+#[derive(Schematic, Deserialize)]
+pub enum PetType {
+    Cat,
+    OtherCat,
+    MoreCat,
+}
+
+/// the world belongs to cat
+#[derive(Schematic, Deserialize)]
+pub struct PetUpdateJson {
+    name: String,
+    pet_type: PetType
+}
+
+
+
+
 /// Update specific pet's address
 #[put("/pets/{pet_id}/address/{address_id}")]
-pub async fn update_pet_address_detail(_paths: Path<UpdatePetAddressPathArgs>) -> impl Responder {
+pub async fn update_pet_address_detail(_paths: Path<UpdatePetAddressPathArgs>, _payload: Json<PetUpdateJson>) -> impl Responder {
     "update pet info"
 }
 

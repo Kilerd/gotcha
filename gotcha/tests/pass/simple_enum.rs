@@ -1,0 +1,16 @@
+use gotcha::{Schematic, oas::Schema};
+
+
+#[derive(Debug, Schematic)]
+pub enum MyType {
+    One,
+    Two,
+    Three
+}
+
+fn main() {
+    let schema: Schema = MyType::generate_schema();
+    assert!(MyType::name().eq("MyType"));
+    assert!(MyType::type_().eq("string"));
+    assert!(schema.extras.get("enum").unwrap().as_array().unwrap().len() == 3);
+}
