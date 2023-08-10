@@ -3,17 +3,19 @@ use darling::ast::Data;
 use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::quote;
 use syn::{parse2, DeriveInput};
+use crate::utils::AttributesExt;
 
 #[derive(Debug, FromDeriveInput)]
-#[darling(attributes(parameter))]
+#[darling(attributes(parameter), forward_attrs(allow, doc, cfg))]
 struct ParameterOpts {
     ident: syn::Ident,
     // fall over the serde info
     data: darling::ast::Data<ParameterEnumVariantOpt, ParameterStructFieldOpt>,
+    attrs: Vec<syn::Attribute>
 }
 
 #[derive(Debug, FromField)]
-#[darling(attributes(serde, parameter))]
+#[darling(attributes(parameter), forward_attrs(allow, doc, cfg))]
 struct ParameterStructFieldOpt {
     ident: Option<syn::Ident>,
     ty: syn::Type,
@@ -21,9 +23,10 @@ struct ParameterStructFieldOpt {
 }
 
 #[derive(Debug, FromVariant)]
-#[darling(attributes(serde, parameter))]
+#[darling(attributes(parameter), forward_attrs(allow, doc, cfg))]
 struct ParameterEnumVariantOpt {
     ident: syn::Ident,
+    attrs: Vec<syn::Attribute>
 }
 
 
@@ -33,10 +36,14 @@ pub(crate) fn handler(input: TokenStream2) -> Result<TokenStream2, (Span, &'stat
 
     let ident = crud_opts.ident.clone();
     let ident_string = ident.to_string();
-
+    let doc = match crud_opts.attrs.get_doc() {
+        None => {quote!{ None }}
+        Some(t) => { quote!{Some( #t.to_owned()) }}
+    };
 
     let impl_stream = match crud_opts.data {
         Data::Enum(enum_variants) => {
+            dbg!(&enum_variants);
             let variant_vec: Vec<TokenStream2> = enum_variants.into_iter()
                 .map(|variant| variant.ident.to_string()).map(|variant_str| quote!{ #variant_str }).collect();
             quote! {
@@ -51,6 +58,9 @@ pub(crate) fn handler(input: TokenStream2) -> Result<TokenStream2, (Span, &'stat
 
                     fn type_() -> &'static str {
                         "string"
+                    }
+                    fn doc() -> Option<String> {
+                        #doc
                     }
                     fn generate_schema() -> ::gotcha::oas::Schema {
                         let mut schema = ::gotcha::oas::Schema {
@@ -90,6 +100,9 @@ pub(crate) fn handler(input: TokenStream2) -> Result<TokenStream2, (Span, &'stat
 
                     fn type_() -> &'static str {
                         "object"
+                    }
+                    fn doc() -> Option<String> {
+                        #doc
                     }
                     fn generate_schema() -> ::gotcha::oas::Schema {
                         let mut schema = ::gotcha::oas::Schema {

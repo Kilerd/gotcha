@@ -3,6 +3,7 @@ use quote::quote;
 use syn::{parse_macro_input, AttributeArgs, FnArg, ItemFn, Lit, LitStr, Meta};
 
 use crate::FromMeta;
+use crate::utils::AttributesExt;
 
 pub enum HttpMethod {
     Get,
@@ -136,31 +137,9 @@ pub(crate) fn request_handler(method: HttpMethod, args: TokenStream, input_strea
     let input = parse_macro_input!(input_stream as ItemFn);
     let fn_ident = input.sig.ident.clone();
     let fn_ident_string = fn_ident.to_string();
-    let docs: Vec<String> = input
-        .attrs
-        .iter()
-        .filter_map(|attr| match attr.parse_meta().unwrap() {
-            Meta::NameValue(doc) => {
-                if doc.path.is_ident("doc") {
-                    Some(doc)
-                } else {
-                    None
-                }
-            }
-            _ => None,
-        })
-        .filter_map(|attr| match attr.lit {
-            Lit::Str(lit_str) => Some(lit_str.value()),
-            _ => None,
-        })
-        .map(|doc| doc.trim().to_string())
-        .collect();
-
-    let docs = if docs.is_empty() {
-        quote!(None)
-    } else {
-        let t = docs.join("\n");
-        quote! { Some(#t) }
+    let docs = match input.attrs.get_doc() {
+        None => {quote!(None)}
+        Some(t) => {quote! { Some(#t) }}
     };
     let params_token: Vec<proc_macro2::TokenStream> = input
         .sig

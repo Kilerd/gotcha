@@ -5,6 +5,7 @@ use gotcha::{Schematic, oas::Schema};
 pub enum MyType {
     One,
     Two,
+    /// three
     Three
 }
 

@@ -59,6 +59,7 @@ pub trait Schematic {
     fn name() -> &'static str;
     fn required() -> bool;
     fn type_() -> &'static str;
+    fn doc() -> Option<String> { None }
     fn generate_schema() -> Schema {
         Schema {
             _type: Some(Self::type_().to_string()),
@@ -114,6 +115,10 @@ impl<T: Schematic> Schematic for Option<T> {
     fn type_() -> &'static str {
         T::type_()
     }
+
+    fn doc() -> Option<String> {
+        T::doc()
+    }
     fn generate_schema() -> Schema {
         T::generate_schema()
     }
@@ -130,6 +135,9 @@ impl<T: Schematic> Schematic for &T {
 
     fn type_() -> &'static str {
         T::type_()
+    }
+    fn doc() -> Option<String> {
+        T::doc()
     }
     fn generate_schema() -> Schema {
         T::generate_schema()
@@ -161,7 +169,7 @@ impl<T: Schematic> Schematic for Vec<T> {
     }
 }
 
-fn build_param(name: String, _in: ParameterIn, required: bool, schema: Schema) -> Parameter {
+fn build_param(name: String, _in: ParameterIn, required: bool, schema: Schema, description: Option<String>) -> Parameter {
     Parameter {
         name,
         _in,
@@ -189,6 +197,7 @@ impl<T1: Schematic> ParameterProvider for Path<(T1, )> {
             ParameterIn::Path,
             T1::required(),
             T1::generate_schema(),
+            T1::doc()
         );
         Either::Left(vec![t1_param])
     }
@@ -204,12 +213,14 @@ impl<T1: Schematic, T2: Schematic> ParameterProvider for Path<(T1, T2)> {
             ParameterIn::Path,
             T1::required(),
             T1::generate_schema(),
+            T1::doc()
         );
         let t2_param = build_param(
             param_names_in_path.get(1).cloned().expect("cannot get param in path"),
             ParameterIn::Path,
             T2::required(),
             T2::generate_schema(),
+            T2::doc()
         );
 
         Either::Left(vec![t1_param, t2_param])
@@ -224,7 +235,7 @@ impl<T: Schematic> ParameterProvider for Path<T> {
             if let Some(properties) = properties.as_object_mut() {
                 properties.iter_mut().for_each(|(key, value)| {
                     let schema = serde_json::from_value(value.clone()).unwrap();
-                    let param = build_param(key.to_string(), ParameterIn::Path, T::required(), schema);
+                    let param = build_param(key.to_string(), ParameterIn::Path, T::required(), schema, T::doc());
                     ret.push(param);
                 })
             }
@@ -245,7 +256,7 @@ impl<T: Schematic> ParameterProvider for Json<T> {
             encoding: None,
         });
         let req_body = RequestBody {
-            description: None,
+            description: T::doc(),
             required: Some(T::required()),
             content: contents,
         };
@@ -261,7 +272,7 @@ impl<T: Schematic> ParameterProvider for Query<T> {
             if let Some(properties) = properties.as_object_mut() {
                 properties.iter_mut().for_each(|(key, value)| {
                     let schema = serde_json::from_value(value.clone()).unwrap();
-                    let param = build_param(key.to_string(), ParameterIn::Path, T::required(), schema);
+                    let param = build_param(key.to_string(), ParameterIn::Path, T::required(), schema, T::doc());
                     ret.push(param);
                 })
             }

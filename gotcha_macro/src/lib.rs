@@ -6,6 +6,8 @@ use route::HttpMethod;
 mod route;
 mod schematic;
 
+pub(crate)  mod utils;
+
 macro_rules! handler {
     ($name:tt, $method: expr) => {
         #[proc_macro_attribute]
