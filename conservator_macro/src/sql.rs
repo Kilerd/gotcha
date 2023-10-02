@@ -61,7 +61,8 @@ impl Action {
                 ::sqlx::query(#sql)
                 #(.bind(#fields))*
                 .execute(executor)
-                .await
+                .await?;
+                Ok(())
             },
         }
     }
