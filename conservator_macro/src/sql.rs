@@ -58,7 +58,7 @@ impl Action {
                 }
             }
             Action::Execute => quote! {
-                ::sqlx::query_as(#sql)
+                ::sqlx::query(#sql)
                 #(.bind(#fields))*
                 .execute(executor)
                 .await
