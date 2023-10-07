@@ -34,6 +34,10 @@ pub trait Domain: Sized {
     async fn fetch_all<'e, 'c: 'e, E: 'e + ::sqlx::Executor<'c, Database = ::sqlx::Postgres>>(executor: E) -> Result<Vec<Self>, ::sqlx::Error>;
 
     async fn create<'e, 'c: 'e, E: 'e + ::sqlx::Executor<'c, Database = ::sqlx::Postgres>, C: Creatable>(data: C, executor: E) -> Result<Self, ::sqlx::Error>;
+
+    async fn delete_by_pk<'e, 'c: 'e, E: 'e + ::sqlx::Executor<'c, Database = ::sqlx::Postgres>>(
+        pk: &Self::PrimaryKey, executor: E,
+    ) -> Result<(), ::sqlx::Error>;
 }
 
 pub trait Creatable: Send {
