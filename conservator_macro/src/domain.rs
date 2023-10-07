@@ -23,23 +23,23 @@ struct DomainFieldOpt {
 }
 
 fn find_by_id(table_name: &str, primary_field_name: &str) -> String {
-    format!("select * from {} where {} = $1", table_name, primary_field_name)
+    format!("select * from {} where \"{}\" = $1", table_name, primary_field_name)
 }
 fn fetch_all(table_name: &str) -> String {
     format!("select * from {}", table_name)
 }
 
 fn delete_by_pk(table_name: &str, primary_field_name: &str) -> String {
-    format!("delete from {} where {} = $1", table_name, primary_field_name)
+    format!("delete from {} where \"{}\" = $1", table_name, primary_field_name)
 }
 fn update_sql(table_name: &str, primary_field_name: &str, non_pk_fields: &[syn::Ident]) -> String {
     let set_part = non_pk_fields
         .iter()
         .enumerate()
-        .map(|(idx, field)| format!("{} = ${}", field.to_string(), idx + 1))
+        .map(|(idx, field)| format!("\"{}\" = ${}", field.to_string(), idx + 1))
         .join(", ");
     format!(
-        "UPDATE {} SET {} WHERE {} = ${}",
+        "UPDATE {} SET {} WHERE \"{}\" = ${}",
         table_name,
         set_part,
         primary_field_name,
@@ -172,7 +172,7 @@ mod test {
                     pk: &Uuid,
                     executor: E
                 ) -> Result<Option<Self>, ::sqlx::Error> {
-                    sqlx::query_as("select * from users where id = $1")
+                    sqlx::query_as("select * from users where \"id\" = $1")
                         .bind(pk)
                         .fetch_optional(executor)
                         .await
@@ -184,7 +184,7 @@ mod test {
                     pk: &Uuid,
                     executor: E
                 ) -> Result<Self, ::sqlx::Error> {
-                    sqlx::query_as("select * from users where id = $1")
+                    sqlx::query_as("select * from users where \"id\" = $1")
                         .bind(pk)
                         .fetch_one(executor)
                         .await
@@ -215,7 +215,7 @@ mod test {
                 }
 
                 async fn delete_by_pk<'e, 'c: 'e, E: 'e + ::sqlx::Executor<'c, Database = ::sqlx::Postgres>>(pk: &Self::PrimaryKey, executor: E,) ->Result<(), ::sqlx::Error> {
-                    sqlx::query("delete from users where id = $1")
+                    sqlx::query("delete from users where \"id\" = $1")
                     .bind(pk)
                 .execute(executor)
                 .await?;
@@ -223,7 +223,7 @@ mod test {
                 }
 
                 async fn update<'e, 'c: 'e, E: 'e + ::sqlx::Executor<'c, Database = ::sqlx::Postgres>>(entity:Self, executor: E) ->Result<(), ::sqlx::Error> {
-                    sqlx::query("UPDATE users SET username = $1, email = $2, password = $3, role = $4, create_at = $5, last_login_at = $6 WHERE id = $7")
+                    sqlx::query("UPDATE users SET \"username\" = $1, \"email\" = $2, \"password\" = $3, \"role\" = $4, \"create_at\" = $5, \"last_login_at\" = $6 WHERE \"id\" = $7")
                         .bind(entity.username)
                         .bind(entity.email)
                         .bind(entity.password)

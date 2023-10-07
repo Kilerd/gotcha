@@ -21,7 +21,7 @@ pub(crate) fn handle_creatable(input: proc_macro2::TokenStream) -> proc_macro2::
 
         let field_list = fields
             .iter()
-            .map(|it| format!("{}", it.as_ref().map(|ident| ident.to_string()).expect("ident not found")))
+            .map(|it| format!("\"{}\"", it.as_ref().map(|ident| ident.to_string()).expect("ident not found")))
             .join(",");
         let param_list = fields.iter().enumerate().map(|it| it.0).map(|it| format!("${}", it + 1)).join(",");
         let insert_sql = format!("({}) VALUES ({})", field_list, param_list);
