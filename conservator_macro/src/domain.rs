@@ -1,7 +1,7 @@
 use darling::{FromDeriveInput, FromField};
 use itertools::Itertools;
 use proc_macro2::Span;
-use quote::{quote};
+use quote::quote;
 use syn::spanned::Spanned;
 use syn::{parse2, DeriveInput};
 
@@ -33,8 +33,18 @@ fn delete_by_pk(table_name: &str, primary_field_name: &str) -> String {
     format!("delete from {} where {} = $1", table_name, primary_field_name)
 }
 fn update_sql(table_name: &str, primary_field_name: &str, non_pk_fields: &[syn::Ident]) -> String {
-    let set_part = non_pk_fields.iter().enumerate().map(|(idx, field)| format!("{} = ${}", field.to_string(), idx+1)).join(", ");
-    format!("UPDATE {} SET {} WHERE {} = ${}", table_name, set_part, primary_field_name, non_pk_fields.len()+1)
+    let set_part = non_pk_fields
+        .iter()
+        .enumerate()
+        .map(|(idx, field)| format!("{} = ${}", field.to_string(), idx + 1))
+        .join(", ");
+    format!(
+        "UPDATE {} SET {} WHERE {} = ${}",
+        table_name,
+        set_part,
+        primary_field_name,
+        non_pk_fields.len() + 1
+    )
 }
 
 pub(crate) fn handler(input: proc_macro2::TokenStream) -> Result<proc_macro2::TokenStream, (Span, &'static str)> {
@@ -42,7 +52,12 @@ pub(crate) fn handler(input: proc_macro2::TokenStream) -> Result<proc_macro2::To
     let crud_opts: DomainOpts = DomainOpts::from_derive_input(&x1).unwrap();
 
     let fields = crud_opts.data.take_struct().unwrap();
-    let non_pk_field_names = fields.fields.iter().filter(|field| field.primary_key.is_none()).filter_map(|field|field.ident.clone()).collect_vec();
+    let non_pk_field_names = fields
+        .fields
+        .iter()
+        .filter(|field| field.primary_key.is_none())
+        .filter_map(|field| field.ident.clone())
+        .collect_vec();
 
     let mut pk_count = fields.fields.into_iter().filter(|field| field.primary_key == Some(true)).collect_vec();
 
