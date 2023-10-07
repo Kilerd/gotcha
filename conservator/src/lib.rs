@@ -38,6 +38,8 @@ pub trait Domain: Sized {
     async fn delete_by_pk<'e, 'c: 'e, E: 'e + ::sqlx::Executor<'c, Database = ::sqlx::Postgres>>(
         pk: &Self::PrimaryKey, executor: E,
     ) -> Result<(), ::sqlx::Error>;
+
+    async fn update<'e, 'c: 'e, E: 'e + ::sqlx::Executor<'c, Database = ::sqlx::Postgres>>(entity:Self, executor: E) ->Result<Self, ::sqlx::Error>;
 }
 
 pub trait Creatable: Send {

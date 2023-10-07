@@ -1,7 +1,7 @@
 use darling::{FromDeriveInput, FromField};
 use itertools::Itertools;
 use proc_macro2::Span;
-use quote::{quote, format_ident};
+use quote::{quote};
 use syn::spanned::Spanned;
 use syn::{parse2, DeriveInput};
 
@@ -32,14 +32,18 @@ fn fetch_all(table_name: &str) -> String {
 fn delete_by_pk(table_name: &str, primary_field_name: &str) -> String {
     format!("delete from {} where {} = $1", table_name, primary_field_name)
 }
+fn update_sql(table_name: &str, primary_field_name: &str, non_pk_fields: &[syn::Ident]) -> String {
+    let set_part = non_pk_fields.iter().enumerate().map(|(idx, field)| format!("{} = ${}", field.to_string(), idx+1)).join(", ");
+    format!("UPDATE {} SET {} WHERE {} = ${}", table_name, set_part, primary_field_name, non_pk_fields.len()+1)
+}
 
 pub(crate) fn handler(input: proc_macro2::TokenStream) -> Result<proc_macro2::TokenStream, (Span, &'static str)> {
     let x1 = parse2::<DeriveInput>(input).unwrap();
     let crud_opts: DomainOpts = DomainOpts::from_derive_input(&x1).unwrap();
 
     let fields = crud_opts.data.take_struct().unwrap();
-    let non_pk_field_names = fields.fields.iter().filter(|field| field.primary_key.is_none()).filter_map(|field|field.ident.as_ref().map(|it|it.to_string())).map(|it| quote!{#it}).collect_vec();
-    let non_pk_fields_count = non_pk_field_names.len();
+    let non_pk_field_names = fields.fields.iter().filter(|field| field.primary_key.is_none()).filter_map(|field|field.ident.clone()).collect_vec();
+
     let mut pk_count = fields.fields.into_iter().filter(|field| field.primary_key == Some(true)).collect_vec();
 
     let pk_field = match pk_count.len() {
@@ -51,21 +55,20 @@ pub(crate) fn handler(input: proc_macro2::TokenStream) -> Result<proc_macro2::To
             return Err((x1.span(), "mutliple primary key detect"));
         }
     };
-    let pk_field_name = pk_field.ident.unwrap().to_string();
+    let pk_field_ident = pk_field.ident.unwrap();
+    let pk_field_name = pk_field_ident.clone().to_string();
     let pk_field_type = pk_field.ty;
 
     let table_name = &crud_opts.table;
     let ident = crud_opts.ident;
-    let field_ident = format_ident!("__CONSERVATOR_{}_DOMAIN_FIELDS", ident.clone().to_string().to_uppercase());
 
     let find_by_id_sql = find_by_id(&crud_opts.table, &pk_field_name);
     let fetch_all_sql = fetch_all(&crud_opts.table);
     let delete_by_pk = delete_by_pk(&crud_opts.table, &pk_field_name);
+    let update_sql = update_sql(&crud_opts.table, &pk_field_name, &non_pk_field_names);
 
     Ok(quote! {
 
-
-        static #field_ident : [&'static; #non_pk_fields_count] = [#(#non_pk_field_names ,)*];
         #[async_trait::async_trait]
         impl ::conservator::Domain for #ident {
             const PK_FIELD_NAME: &'static str = #pk_field_name;
@@ -108,6 +111,14 @@ pub(crate) fn handler(input: proc_macro2::TokenStream) -> Result<proc_macro2::To
                 .await?;
                 Ok(())
             }
+            async fn update<'e, 'c: 'e, E: 'e + ::sqlx::Executor<'c, Database = ::sqlx::Postgres>>(entity:Self, executor: E) ->Result<(), ::sqlx::Error> {
+                sqlx::query(#update_sql)
+                    #(.bind(eneity. #non_pk_field_names))*
+                    .bind(eneity. #pk_field_ident)
+                    .execute(executor)
+                    .await?;
+                Ok(())
+            }
         }
 
     })
@@ -137,7 +148,6 @@ mod test {
         };
         let expected_output = quote! {
 
-            static __CONSERVATOR_USERENTITY_DOMAIN_FIELDS :[&'static; 6usize] = ["username" , "email" , "password" , "role" , "create_at" , "last_login_at" ,];
             #[async_trait::async_trait]
             impl ::conservator::Domain for UserEntity {
                 const PK_FIELD_NAME: &'static str = "id";
@@ -189,11 +199,25 @@ mod test {
                     data.build(ex).fetch_one(executor).await
                 }
 
-            async fn delete_by_pk<'e, 'c: 'e, E: 'e + ::sqlx::Executor<'c, Database = ::sqlx::Postgres>>(pk: &Self::PrimaryKey, executor: E,) ->Result<(), ::sqlx::Error> {
+                async fn delete_by_pk<'e, 'c: 'e, E: 'e + ::sqlx::Executor<'c, Database = ::sqlx::Postgres>>(pk: &Self::PrimaryKey, executor: E,) ->Result<(), ::sqlx::Error> {
                     sqlx::query("delete from users where id = $1")
                     .bind(pk)
                 .execute(executor)
                 .await?;
+                    Ok(())
+                }
+
+                async fn update<'e, 'c: 'e, E: 'e + ::sqlx::Executor<'c, Database = ::sqlx::Postgres>>(entity:Self, executor: E) ->Result<(), ::sqlx::Error> {
+                    sqlx::query("UPDATE users SET username = $1, email = $2, password = $3, role = $4, create_at = $5, last_login_at = $6 WHERE id = $7")
+                        .bind(eneity.username)
+                        .bind(eneity.email)
+                        .bind(eneity.password)
+                        .bind(eneity.role)
+                        .bind(eneity.create_at)
+                        .bind(eneity.last_login_at)
+                        .bind(eneity.id)
+                        .execute(executor)
+                        .await?;
                     Ok(())
                 }
             }
