@@ -15,6 +15,16 @@
             "name": "Cargo Format",
             "cargoArgs": ["fmt"],
         },
+        {
+            "type": "cargo",
+            "name": "Publish conservator",
+            "cargoArgs": ["publish", "-p", "conservator"],
+        },
+        {
+            "type": "cargo",
+            "name": "Publish conservator_macro",
+            "cargoArgs": ["publish", "-p", "conservator_macro"],
+        },
         
     ]
 }

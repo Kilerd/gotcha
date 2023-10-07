@@ -87,11 +87,11 @@ pub struct NewUser {
 `Createable` means it can be executed by magic ORM, using `UserDomain::create(NewUser{...})` to create a new user into
 user table.
 
-Conservator ORM aslo provide the `#[magic]` proc macro for those customized sql query.
+Conservator ORM aslo provide the `#[auto]` proc macro for those customized sql query.
 ```rust
 use conservator::auto;
 impl UserDomain {
-    #[magic]
+    #[auto]
     pub async fn find_by__email__is<E>(email: &str, executor: E) -> Result<Option<UserEntity>, Error> {
         todo!()
     }
@@ -119,4 +119,3 @@ impl UserService {
 }
 ```
 notice that, rather than sqlx's `$1`, we use param `:email` in sql, it can be used in native sql execution tools as well without any modification, like IDEA.
-
