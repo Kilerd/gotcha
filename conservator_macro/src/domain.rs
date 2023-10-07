@@ -128,8 +128,8 @@ pub(crate) fn handler(input: proc_macro2::TokenStream) -> Result<proc_macro2::To
             }
             async fn update<'e, 'c: 'e, E: 'e + ::sqlx::Executor<'c, Database = ::sqlx::Postgres>>(entity:Self, executor: E) ->Result<(), ::sqlx::Error> {
                 sqlx::query(#update_sql)
-                    #(.bind(eneity. #non_pk_field_names))*
-                    .bind(eneity. #pk_field_ident)
+                    #(.bind(entity. #non_pk_field_names))*
+                    .bind(entity. #pk_field_ident)
                     .execute(executor)
                     .await?;
                 Ok(())
@@ -224,13 +224,13 @@ mod test {
 
                 async fn update<'e, 'c: 'e, E: 'e + ::sqlx::Executor<'c, Database = ::sqlx::Postgres>>(entity:Self, executor: E) ->Result<(), ::sqlx::Error> {
                     sqlx::query("UPDATE users SET username = $1, email = $2, password = $3, role = $4, create_at = $5, last_login_at = $6 WHERE id = $7")
-                        .bind(eneity.username)
-                        .bind(eneity.email)
-                        .bind(eneity.password)
-                        .bind(eneity.role)
-                        .bind(eneity.create_at)
-                        .bind(eneity.last_login_at)
-                        .bind(eneity.id)
+                        .bind(entity.username)
+                        .bind(entity.email)
+                        .bind(entity.password)
+                        .bind(entity.role)
+                        .bind(entity.create_at)
+                        .bind(entity.last_login_at)
+                        .bind(entity.id)
                         .execute(executor)
                         .await?;
                     Ok(())
