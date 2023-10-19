@@ -25,6 +25,10 @@
             "name": "Publish conservator_macro",
             "cargoArgs": ["publish", "-p", "conservator_macro"],
         },
-        
+        {
+            "type": "cargo",
+            "name": "Publish gotcha",
+            "cargoArgs": ["publish", "-p", "gotcha"],
+        },
     ]
 }
