@@ -3,6 +3,7 @@ use std::marker::PhantomData;
 use clap::{Args, Parser, Subcommand};
 use serde::de::DeserializeOwned;
 use tracing::info;
+use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
 use crate::config::GotchaConfigLoader;
 
@@ -63,7 +64,10 @@ where
     CONFIG: DeserializeOwned,
 {
     pub async fn run(self) -> () {
-        tracing_subscriber::fmt::try_init().ok();
+        tracing_subscriber::registry()
+            .with(fmt::layer())
+            .with(EnvFilter::from_default_env())
+            .try_init().ok();
         let opts = Cli::parse();
         let profile = opts.profile.or(std::env::var("GOTCHA_ACTIVE_PROFILE").ok());
         info!("starting gotcha");
