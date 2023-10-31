@@ -43,7 +43,6 @@ pub(crate) fn handler(input: TokenStream2) -> Result<TokenStream2, (Span, &'stat
 
     let impl_stream = match crud_opts.data {
         Data::Enum(enum_variants) => {
-            dbg!(&enum_variants);
             let variant_vec: Vec<TokenStream2> = enum_variants.into_iter()
                 .map(|variant| variant.ident.to_string()).map(|variant_str| quote!{ #variant_str }).collect();
             quote! {
