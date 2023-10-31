@@ -87,26 +87,8 @@ pub struct NewUser {
 `Createable` means it can be executed by magic ORM, using `UserDomain::create(NewUser{...})` to create a new user into
 user table.
 
-Conservator ORM aslo provide the `#[auto]` proc macro for those customized sql query.
-```rust
-use conservator::auto;
-impl UserDomain {
-    #[auto]
-    pub async fn find_by__email__is<E>(email: &str, executor: E) -> Result<Option<UserEntity>, Error> {
-        todo!()
-    }
 
-    #[magic]
-    pub async fn exists_by_email_is<E>(_email: &str, executor: E) -> Result<bool, Error> {
-        todo!()
-    }
-}
-```
-code above will generate two sql query statement automatically:
- - `select * from users where email = $1`
- - `select exists(select 1 from users where email = $1)`
-
-and `#[sql]` aslo provide some convinent way to write customized sql query
+`#[sql]` aslo provide some convinent way to write customized sql query
 ```rust
 use conservator::sql;
 
