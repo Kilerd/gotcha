@@ -91,14 +91,14 @@ pub(crate) fn handler(input: proc_macro2::TokenStream) -> Result<proc_macro2::To
 
             type PrimaryKey = #pk_field_type;
 
-            async fn find_by_pk<'e, 'c: 'e, E: 'e + ::sqlx::Executor<'c, Database=::sqlx::Postgres>>(pk: &Uuid, executor: E) -> Result<Option<Self>, ::sqlx::Error> {
+            async fn find_by_pk<'e, 'c: 'e, E: 'e + ::sqlx::Executor<'c, Database=::sqlx::Postgres>>(pk: &Self::PrimaryKey, executor: E) -> Result<Option<Self>, ::sqlx::Error> {
                 sqlx::query_as(#find_by_id_sql)
                 .bind(pk)
                 .fetch_optional(executor)
                 .await
             }
 
-            async fn fetch_one_by_pk<'e, 'c: 'e, E: 'e + ::sqlx::Executor<'c, Database=::sqlx::Postgres>>(pk: &Uuid, executor: E) -> Result<Self, ::sqlx::Error> {
+            async fn fetch_one_by_pk<'e, 'c: 'e, E: 'e + ::sqlx::Executor<'c, Database=::sqlx::Postgres>>(pk: &Self::PrimaryKey, executor: E) -> Result<Self, ::sqlx::Error> {
                 sqlx::query_as(#find_by_id_sql)
                 .bind(pk)
                 .fetch_one(executor)
@@ -169,7 +169,7 @@ mod test {
                 const TABLE_NAME: &'static str = "users";
                 type PrimaryKey = Uuid;
                 async fn find_by_pk<'e, 'c: 'e, E: 'e + ::sqlx::Executor<'c, Database = ::sqlx::Postgres>>(
-                    pk: &Uuid,
+                    pk: &Self::PrimaryKey,
                     executor: E
                 ) -> Result<Option<Self>, ::sqlx::Error> {
                     sqlx::query_as("select * from users where \"id\" = $1")
@@ -181,7 +181,7 @@ mod test {
                     'e,
                     'c: 'e,
                     E: 'e + ::sqlx::Executor<'c, Database = ::sqlx::Postgres>>(
-                    pk: &Uuid,
+                    pk: &Self::PrimaryKey,
                     executor: E
                 ) -> Result<Self, ::sqlx::Error> {
                     sqlx::query_as("select * from users where \"id\" = $1")
