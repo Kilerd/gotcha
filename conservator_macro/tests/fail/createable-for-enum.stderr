@@ -1,8 +1,0 @@
-error: enum does not support
- --> tests/fail/createable-for-enum.rs:4:1
-  |
-4 | / pub enum NotSupport {
-5 | |     A,
-6 | |     B,
-7 | | }
-  | |_^
