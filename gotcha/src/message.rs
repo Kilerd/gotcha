@@ -1,11 +1,11 @@
 use std::sync::Arc;
 
-use actix_web::web;
 use async_trait::async_trait;
+use axum::extract::State;
 
 pub struct Messager {}
 
-pub type MessagerWrapper = web::Data<Messager>;
+pub type MessagerWrapper = State<Messager>;
 
 impl Messager {
     pub async fn send<T: Message>(self: Arc<Self>, msg: T) -> T::Output {

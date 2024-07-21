@@ -9,8 +9,6 @@ repository = "https://github.com/Kilerd/gotcha/"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-actix-web = "4"
-actix-service = "2"
 async-trait = "0.1.60"
 clap = { version = "4.0.32", features = ["derive"] }
 gotcha_macro = { version = "0.1", path = "../gotcha_macro" }
@@ -25,6 +23,9 @@ chrono = "0.4.23"
 http = "0.2"
 oas = "0.1"
 yaac = "0.1"
+axum = "0.7.5"
+tower-layer = "0.3.2"
+tower-service = "0.3.2"
 
 [dev-dependencies]
 trybuild = "1.0"

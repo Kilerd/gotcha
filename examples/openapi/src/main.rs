@@ -1,6 +1,6 @@
 use gotcha::tracing::info;
-use gotcha::web::Path;
-use gotcha::{get, post, put, App, web::{Json}, GotchaAppWrapperExt, GotchaCli, HttpServer, Responder, Schematic};
+use gotcha::{GotchaApp, Path};
+use gotcha::{get, post, put, Json, GotchaCli, Responder, Schematic};
 use serde::Deserialize;
 
 /// Rust has six types of attributes.
@@ -19,19 +19,16 @@ use serde::Deserialize;
 ///   ^^^^^^~~~~~~         ^^^^^^^^^^^^^^^^^^^ ~~~~~
 ///   path  tokens                 path        tokens
 /// ```
-#[get("/")]
 pub async fn hello_world() -> impl Responder {
     "hello world"
 }
 
 /// Add new pet to the store inventory.
-#[post("/pet", group = "pet")]
 pub async fn new_pet() -> impl Responder {
     "new pet"
 }
 
 /// Update specific pet's info
-#[put("/pets/{pet_id}/info")]
 pub async fn update_pet_info(_paths: Path<(i32,)>) -> impl Responder {
     "update pet info"
 }
@@ -54,14 +51,11 @@ pub enum PetType {
 #[derive(Schematic, Deserialize)]
 pub struct PetUpdateJson {
     name: String,
-    pet_type: PetType
+    pet_type: PetType,
 }
 
 
-
-
 /// Update specific pet's address
-#[put("/pets/{pet_id}/address/{address_id}")]
 pub async fn update_pet_address_detail(_paths: Path<UpdatePetAddressPathArgs>, _payload: Json<PetUpdateJson>) -> impl Responder {
     "update pet info"
 }
@@ -71,25 +65,12 @@ struct Config {}
 
 #[tokio::main]
 async fn main() {
-    GotchaCli::<_, Config>::new()
-        .server(|config| async move {
-            info!("starting application");
-            HttpServer::new(move || {
-                App::new()
-                    .into_gotcha()
-                    .service(hello_world)
-                    .service(new_pet)
-                    .service(update_pet_info)
-                    .service(update_pet_address_detail)
-                    .data(config.clone())
-                    .done()
-            })
-            .workers(6)
-            .bind(("0.0.0.0", 8080))
-            .unwrap()
-            .run()
-            .await
-        })
-        .run()
+    GotchaApp::<_, Config>::new()
+        .route("/", get(hello_world))
+        .route("/pets", post(new_pet))
+        .route("/pets", put(update_pet_info))
+        .route("/pets/{pet_id}/address/{address_id}", put(update_pet_address_detail))
+        .done()
+        .serve("0.0.0.0", 8080)
         .await
 }

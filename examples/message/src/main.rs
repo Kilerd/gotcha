@@ -1,7 +1,8 @@
 use std::sync::Arc;
 
-use gotcha::{async_trait, get, App, GotchaAppWrapperExt, GotchaCli, HttpServer, Message, Messager, MessagerWrapper, Responder};
+use gotcha::{async_trait, get, GotchaApp, GotchaCli, Message, Messager, Responder};
 use serde::Deserialize;
+use gotcha::message::MessagerWrapper;
 
 #[derive(Debug, Deserialize, Clone)]
 struct Config {}
@@ -28,21 +29,15 @@ impl Message for BackgroudTask {
     }
 }
 
-#[get("/")]
-pub async fn hello_world(messager: MessagerWrapper) -> impl Responder {
-    messager.into_inner().send(HelloWorldMessage).await
+pub async fn hello_world() -> impl Responder {
+    // messager.0.send(HelloWorldMessage).await
 }
 
 #[tokio::main]
 async fn main() {
-    GotchaCli::<_, Config>::new()
-        .server(|_| async move {
-            HttpServer::new(|| App::new().into_gotcha().service(hello_world).done())
-                .bind(("127.0.0.1", 8080))
-                .unwrap()
-                .run()
-                .await
-        })
-        .run()
+    GotchaApp::<_,Config>::new()
+        .route("/",get(hello_world))
+        .done()
+        .serve("127.0.0.1", 8080)
         .await
 }

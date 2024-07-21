@@ -1,152 +1,75 @@
-use actix_service::IntoServiceFactory;
-use actix_web::body::MessageBody;
-use actix_web::dev::{ServiceFactory, ServiceRequest, ServiceResponse, Transform};
-pub use actix_web::web::Data;
-pub use actix_web::{App, HttpServer, Responder};
+use std::convert::Infallible;
+use std::marker::PhantomData;
+use std::net::{Ipv4Addr, SocketAddrV4};
+use std::str::FromStr;
 pub use async_trait::async_trait;
+use axum::body::Body;
+use axum::extract::Request;
+use axum::{Router, ServiceExt};
+use axum::routing::{MethodRouter, Route};
 pub use cli::GotchaCli;
 pub use gotcha_core::*;
 pub use gotcha_macro::*;
 use http::Method;
-use oas::{Info, OpenAPIV3, PathItem, Tag};
-pub use {actix_web, oas, tracing};
+use oas::{OpenAPIV3};
+use tower_layer::Layer;
+use tower_service::Service;
+use tracing_subscriber::Layer as TracingLayer;
+pub use {oas, tracing, axum};
 
-pub use crate::message::{Message, Messager, MessagerWrapper};
-use crate::openapi::{openapi_handler, openapi_html};
+pub use crate::message::{Message, Messager};
 
-pub mod web {
-    pub use actix_web::web::{Data, Header, Json, Path, Query};
-}
+pub use axum::response::IntoResponse as Responder;
+
+pub use axum::extract::{Path, Query, Json, State};
+use axum::response::Response;
+pub use axum::routing::{get, post, put, delete, patch};
+use axum::serve::IncomingStream;
+use serde::de::DeserializeOwned;
+use crate::config::GotchaConfigLoader;
+use crate::state::ExtendableState;
+
 pub mod cli;
 mod config;
 pub mod message;
 pub mod openapi;
 pub mod task;
 
-pub struct GotchaApp<T> {
-    api_endpoint: Option<String>,
-    openapi_spec: OpenAPIV3,
-    inner: actix_web::App<T>,
-    tasks: Vec<Box<dyn Fn()>>,
-}
+pub mod state;
 
-pub trait GotchaAppWrapperExt<T> {
-    type Wrapper;
-    fn into_gotcha(self) -> Self::Wrapper;
-}
-
-impl<T> GotchaAppWrapperExt<T> for actix_web::App<T> {
-    type Wrapper = GotchaApp<T>;
-
-    fn into_gotcha(self) -> Self::Wrapper {
-        GotchaApp {
-            inner: self,
-            openapi_spec: OpenAPIV3 {
-                openapi: "3.0.0".to_string(),
-                info: Info {
-                    title: "".to_string(),
-                    description: None,
-                    terms_of_service: None,
-                    contact: None,
-                    license: None,
-                    version: "".to_string(),
-                },
-                servers: None,
-                paths: Default::default(),
-                components: None,
-                security: None,
-                tags: Some(vec![]),
-                external_docs: None,
-                extras: None,
-            },
-            api_endpoint: None,
-            tasks: vec![],
-        }
-    }
-}
-
-impl<T> GotchaApp<T>
+pub struct GotchaApp<State, Config: DeserializeOwned, Data = (), const DONE: bool = false, const HAS_STATE: bool = false>
 where
-    T: ServiceFactory<ServiceRequest, Config = (), Error = actix_web::Error, InitError = ()>,
+    Config: for<'de> serde::Deserialize<'de>,
 {
-    pub fn service<F>(mut self, factory: F) -> Self
-    where
-        F: Operable + actix_web::dev::HttpServiceFactory + 'static,
-    {
-        if factory.should_generate_openapi_spec() {
-            let operation_object = factory.generate();
-            if let Some(added_tags) = &operation_object.tags {
-                added_tags.iter().for_each(|tag| {
-                    if let Some(tags) = &mut self.openapi_spec.tags {
-                        if tags.iter().find(|each| each.name.eq(tag)).is_none() {
-                            tags.push(Tag::new(tag, None))
-                        }
-                    }
-                })
-            }
-            let entry = self.openapi_spec.paths.entry(factory.uri().to_string()).or_insert_with(|| PathItem {
-                _ref: None,
-                summary: None,
-                description: None,
-                get: None,
-                put: None,
-                post: None,
-                delete: None,
-                options: None,
-                head: None,
-                patch: None,
-                trace: None,
-                servers: None,
-                parameters: None,
-            });
-            match factory.method() {
-                Method::GET => entry.get = Some(operation_object),
-                Method::POST => entry.post = Some(operation_object),
-                Method::PUT => entry.put = Some(operation_object),
-                Method::DELETE => entry.delete = Some(operation_object),
-                Method::HEAD => entry.head = Some(operation_object),
-                Method::OPTIONS => entry.options = Some(operation_object),
-                Method::PATCH => entry.patch = Some(operation_object),
-                Method::TRACE => entry.trace = Some(operation_object),
-                _ => {}
-            };
-        }
-        Self {
-            inner: self.inner.service(factory),
-            ..self
-        }
-    }
-    pub fn wrap<M, B>(
-        self, mw: M,
-    ) -> GotchaApp<impl ServiceFactory<ServiceRequest, Config = (), Response = ServiceResponse<B>, Error = actix_web::Error, InitError = ()>>
-    where
-        M: Transform<T::Service, ServiceRequest, Response = ServiceResponse<B>, Error = actix_web::Error, InitError = ()> + 'static,
-        B: MessageBody,
-    {
-        let inner = self.inner.wrap(mw);
+    api_endpoint: Option<String>,
+    openapi_spec: Option<OpenAPIV3>,
+    tasks: Vec<Box<dyn Fn()>>,
+
+    data: Data,
+    pub app: Router<State>,
+
+    config: PhantomData<Config>,
+}
+
+
+impl<State, Config, Data> GotchaApp<State, Config, Data, false>
+where
+    State: Clone + Send + Sync + 'static,
+    Config: for<'de> serde::Deserialize<'de>,
+{
+    pub fn new() -> GotchaApp<State, Config, (), false> {
         GotchaApp {
-            inner,
-            api_endpoint: self.api_endpoint,
-            openapi_spec: self.openapi_spec,
+            api_endpoint: None,
+            openapi_spec: None,
             tasks: vec![],
+            data: (),
+            app: Router::new(),
+            config: Default::default(),
         }
     }
 
-    pub fn default_service<F, U>(self, svc: F) -> Self
-    where
-        F: IntoServiceFactory<U, ServiceRequest>,
-        U: ServiceFactory<ServiceRequest, Config = (), Response = ServiceResponse, Error = actix_web::Error> + 'static,
-        U::InitError: std::fmt::Debug,
-    {
-        let inner = self.inner.default_service(svc);
 
-        GotchaApp {
-            inner,
-            api_endpoint: self.api_endpoint,
-            openapi_spec: self.openapi_spec,
-            tasks: self.tasks,
-        }
-    }
+    // todo default service
 
     pub fn api_endpoint(self, path: impl Into<String>) -> Self {
         Self {
@@ -154,18 +77,55 @@ where
             ..self
         }
     }
-    pub fn data<U: 'static>(self, ext: U) -> Self {
-        let ext_data = actix_web::web::Data::new(ext);
+
+    pub fn route(self, path: &str, method_router: MethodRouter<State>) -> Self {
         Self {
-            inner: self.inner.app_data(ext_data),
-            ..self
+            api_endpoint: self.api_endpoint,
+            openapi_spec: self.openapi_spec,
+            tasks: self.tasks,
+            data: self.data,
+            app: self.app.route(path, method_router),
+            config: self.config,
+        }
+    }
+
+    pub fn layer<L>(self, layer: L) -> GotchaApp<State, Config, Data>
+    where
+        L: Layer<Route> + Clone + Send + 'static,
+        L::Service: Service<Request> + Clone + Send + 'static,
+        <L::Service as Service<Request>>::Response: Responder + 'static,
+        <L::Service as Service<Request>>::Error: Into<Infallible> + 'static,
+        <L::Service as Service<Request>>::Future: Send + 'static,
+    {
+        GotchaApp {
+            app: self.app.layer(layer),
+            api_endpoint: self.api_endpoint,
+            openapi_spec: self.openapi_spec,
+            tasks: self.tasks,
+            config: self.config,
+            data: self.data,
+        }
+    }
+    pub fn data<Data2, NewPartialData>(self, state: NewPartialData) -> GotchaApp<State, Config, Data2>
+    where
+        Data: ExtendableState<NewPartialData, Ret=Data2>,
+        Data2: Clone,
+    {
+        let new_state = self.data.extend(state);
+        GotchaApp {
+            app: self.app,
+            api_endpoint: self.api_endpoint,
+            openapi_spec: self.openapi_spec,
+            tasks: self.tasks,
+            config: self.config,
+            data: new_state.clone(),
         }
     }
 
     pub fn task<Task, TaskRet>(mut self, t: Task) -> Self
     where
         Task: (Fn() -> TaskRet) + 'static,
-        TaskRet: std::future::Future<Output = ()> + Send + 'static,
+        TaskRet: std::future::Future<Output=()> + Send + 'static,
     {
         self.tasks.push(Box::new(move || {
             tokio::spawn(t());
@@ -173,20 +133,48 @@ where
 
         self
     }
-    pub fn done(self) -> App<T> {
-        // todo add swagger api
-        // init messager
-        let apiv3 = self.openapi_spec.clone();
-        let app = self.data(Messager {}).data(apiv3);
-        // start task
-        for task in app.tasks {
-            task();
+
+
+    pub fn done(self) -> GotchaApp<(), Config, State, true>
+    where
+
+        Data: ExtendableState<Config, Ret=State>,
+    {
+        let config: Config = GotchaConfigLoader::load(None);
+
+        let app = self.data(config);
+        let router = app.app;
+        let data = app.data;
+        let router1 = router.with_state(data.clone());
+        GotchaApp {
+            api_endpoint: app.api_endpoint,
+            openapi_spec: app.openapi_spec,
+            tasks: app.tasks,
+            data,
+            app: router1,
+            config: app.config,
         }
-        let openapi_handler = actix_web::web::resource("/openapi.json").to(openapi_handler);
-        let redoc_handler = actix_web::web::resource("/swagger-ui").to(openapi_html);
-        app.inner.service(openapi_handler).service(redoc_handler)
     }
 }
+
+
+impl<Config, Data, R> GotchaApp<(), Config, Data, true>
+where
+    // State: Clone + Send + Sync + 'static,
+    for<'a> Router<()>: Service<IncomingStream<'a>, Response=R, Error=Infallible> + Send + 'static,
+for<'a> <Router<()> as Service<IncomingStream<'a>>>::Future: Send,
+    R: Service<Request, Response=Response, Error=Infallible> + Clone + Send + 'static,
+    R::Future: Send,
+    Config: for<'de> serde::Deserialize<'de>,
+{
+    pub async fn serve(self, addr: &str, port: u16) -> () {
+        let app: Router<_> = self.app;
+        let addr = SocketAddrV4::new(Ipv4Addr::from_str(addr).unwrap(), port);
+        let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
+        axum::serve(listener, app).await.unwrap();
+    }
+}
+
 
 #[cfg(test)]
 mod test {
