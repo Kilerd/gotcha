@@ -11,8 +11,9 @@ pub(crate) async fn openapi_html() -> impl Responder {
 
 #[derive(Debug, Clone)]
 pub struct Operable {
+    pub type_name: &'static str,
     pub id: &'static str,
-    pub group: Option<String>,
+    pub group: Option<&'static str>,
     pub description: Option<&'static str>,
     pub deprecated: bool,
     pub parameters: Vec<Either<Vec<Parameter>, RequestBody>>,
@@ -21,7 +22,7 @@ pub struct Operable {
 
 impl Operable {
     pub fn generate(self) -> Operation {
-        let tags = if let Some(group) = self.group { Some(vec![group]) } else { None };
+        let tags = if let Some(group) = self.group { Some(vec![group.to_string()]) } else { None };
 
         let mut params = vec![];
         let mut request_body = None;

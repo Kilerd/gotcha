@@ -19,7 +19,7 @@ use serde::Deserialize;
 ///   ^^^^^^~~~~~~         ^^^^^^^^^^^^^^^^^^^ ~~~~~
 ///   path  tokens                 path        tokens
 /// ```
-#[api]
+#[api(id="index", group="hello")]
 pub async fn hello_world() -> impl Responder {
     "hello world"
 }

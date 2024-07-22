@@ -138,7 +138,7 @@ where
     {
         let handle_name = std::any::type_name::<H>();
 
-        let handle_operable = inventory::iter::<Operable>.into_iter().find(|it| it.id.eq(handle_name)).cloned();
+        let handle_operable = inventory::iter::<Operable>.into_iter().find(|it| it.type_name.eq(handle_name)).cloned();
         if let Some(operable) = handle_operable {
             info!("generating openapi spec for {}[{}]", &handle_name, &path);
             let operation = operable.generate();

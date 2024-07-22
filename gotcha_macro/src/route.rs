@@ -14,6 +14,7 @@ pub struct RouteMeta {
 #[derive(Debug, FromMeta)]
 struct RouteExtraMeta {
     group: Option<String>,
+    id: Option<String>
 }
 
 impl FromMeta for RouteMeta {
@@ -32,8 +33,8 @@ pub(crate) fn request_handler(args: TokenStream, input_stream: TokenStream) -> T
             return TokenStream::from(e.write_errors());
         }
     };
-    let RouteMeta { extra } = args;
-    let group = if let Some(group_name) = extra.group {
+    let meta = args;
+    let group = if let Some(group_name) = meta.extra.group {
         quote! { Some(#group_name) }
     } else {
         quote! { None }
@@ -41,6 +42,9 @@ pub(crate) fn request_handler(args: TokenStream, input_stream: TokenStream) -> T
     let input = parse_macro_input!(input_stream as ItemFn);
     let fn_ident = input.sig.ident.clone();
     let fn_ident_string = fn_ident.to_string();
+
+    let operation_id = meta.extra.id.unwrap_or(fn_ident_string.clone());
+
     let docs = match input.attrs.get_doc() {
         None => { quote!(None) }
         Some(t) => { quote! { Some(#t) } }
@@ -64,7 +68,8 @@ pub(crate) fn request_handler(args: TokenStream, input_stream: TokenStream) -> T
 
         ::gotcha::inventory::submit! {
             ::gotcha::Operable {
-                id: concat!(module_path!(), "::", #fn_ident_string),
+                type_name: concat!(module_path!(), "::", #fn_ident_string),
+                id: #operation_id,
                 group: #group,
                 description: #docs,
                 deprecated: false,
