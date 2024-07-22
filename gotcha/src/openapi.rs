@@ -7,25 +7,19 @@ use crate::Responder;
 
 pub(crate) async fn openapi_html() -> impl Responder {
     Html(include_str!("../statics/redoc.html"))
-
 }
-
-
-
 
 #[derive(Debug, Clone)]
 pub struct Operable {
-   pub id: &'static str,
-    pub  group: Option<String>,
-    pub  description: Option<&'static str>,
-    pub  deprecated: bool,
-    pub  parameters: Vec<Either<Vec<Parameter>, RequestBody>>
+    pub id: &'static str,
+    pub group: Option<String>,
+    pub description: Option<&'static str>,
+    pub deprecated: bool,
+    pub parameters: Vec<Either<Vec<Parameter>, RequestBody>>,
 }
 
 
-
 impl Operable {
-
     pub fn generate(self) -> Operation {
         let tags = if let Some(group) = self.group { Some(vec![group]) } else { None };
 
@@ -61,7 +55,6 @@ impl Operable {
             servers: None,
         }
     }
-
 }
 
 

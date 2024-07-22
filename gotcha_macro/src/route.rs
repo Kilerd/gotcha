@@ -6,7 +6,6 @@ use crate::FromMeta;
 use crate::utils::AttributesExt;
 
 
-
 #[derive(Debug)]
 pub struct RouteMeta {
     extra: RouteExtraMeta,
@@ -15,8 +14,6 @@ pub struct RouteMeta {
 #[derive(Debug, FromMeta)]
 struct RouteExtraMeta {
     group: Option<String>,
-    #[darling(default)]
-    disable_openapi: Option<bool>,
 }
 
 impl FromMeta for RouteMeta {
@@ -41,7 +38,6 @@ pub(crate) fn request_handler(args: TokenStream, input_stream: TokenStream) -> T
     } else {
         quote! { None }
     };
-    let should_generate_openapi_spec = !extra.disable_openapi.unwrap_or(false);
     let input = parse_macro_input!(input_stream as ItemFn);
     let fn_ident = input.sig.ident.clone();
     let fn_ident_string = fn_ident.to_string();
@@ -49,8 +45,7 @@ pub(crate) fn request_handler(args: TokenStream, input_stream: TokenStream) -> T
         None => { quote!(None) }
         Some(t) => { quote! { Some(#t) } }
     };
-    let params_token: Vec<proc_macro2::TokenStream> = if should_generate_openapi_spec {
-        input
+    let params_token: Vec<proc_macro2::TokenStream> = input
             .sig
             .inputs
             .iter()
@@ -61,8 +56,7 @@ pub(crate) fn request_handler(args: TokenStream, input_stream: TokenStream) -> T
                     Some(quote! { <#ty as ::gotcha::ParameterProvider>::generate(self.uri().to_string())})
                 }
             })
-            .collect()
-    } else { Vec::new() };
+            .collect();
 
     let ret = quote! {
 
