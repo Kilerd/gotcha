@@ -26,6 +26,9 @@ yaac = "0.1"
 axum = "0.7.5"
 tower-layer = "0.3.2"
 tower-service = "0.3.2"
+inventory = "0.3.15"
+either = "1.13.0"
+convert_case = "0.4.0"
 
 [dev-dependencies]
 trybuild = "1.0"

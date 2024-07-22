@@ -1,6 +1,6 @@
 use gotcha::tracing::info;
-use gotcha::{GotchaApp, Path};
-use gotcha::{get, post, put, Json, GotchaCli, Responder, Schematic};
+use gotcha::{api, get, GotchaApp, Path};
+use gotcha::{post, put, Json, GotchaCli, Responder, Schematic};
 use serde::Deserialize;
 
 /// Rust has six types of attributes.
@@ -19,6 +19,7 @@ use serde::Deserialize;
 ///   ^^^^^^~~~~~~         ^^^^^^^^^^^^^^^^^^^ ~~~~~
 ///   path  tokens                 path        tokens
 /// ```
+#[api]
 pub async fn hello_world() -> impl Responder {
     "hello world"
 }
@@ -66,10 +67,10 @@ struct Config {}
 #[tokio::main]
 async fn main() {
     GotchaApp::<_, Config>::new()
-        .route("/", get(hello_world))
-        .route("/pets", post(new_pet))
-        .route("/pets", put(update_pet_info))
-        .route("/pets/{pet_id}/address/{address_id}", put(update_pet_address_detail))
+        .get("/", hello_world)
+        .post("/pets", new_pet)
+        .put("/pets", update_pet_info)
+        .put("/pets/{pet_id}/address/{address_id}", update_pet_address_detail)
         .done()
         .serve("0.0.0.0", 8080)
         .await

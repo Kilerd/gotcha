@@ -6,12 +6,11 @@ pub use async_trait::async_trait;
 use axum::body::Body;
 use axum::extract::Request;
 use axum::{Router, ServiceExt};
-use axum::routing::{MethodRouter, Route};
+use axum::routing::{MethodFilter, MethodRouter, Route};
 pub use cli::GotchaCli;
-pub use gotcha_core::*;
 pub use gotcha_macro::*;
 use http::Method;
-use oas::{OpenAPIV3};
+use oas::{Info, OpenAPIV3, PathItem, Tag};
 use tower_layer::Layer;
 use tower_service::Service;
 use tracing_subscriber::Layer as TracingLayer;
@@ -22,13 +21,19 @@ pub use crate::message::{Message, Messager};
 pub use axum::response::IntoResponse as Responder;
 
 pub use axum::extract::{Path, Query, Json, State};
+use axum::handler::Handler;
 use axum::response::Response;
-pub use axum::routing::{get, post, put, delete, patch};
+pub use axum::routing::{post, put, delete, patch};
 use axum::serve::IncomingStream;
+use cron::TimeUnitSpec;
 use serde::de::DeserializeOwned;
 use crate::config::GotchaConfigLoader;
 use crate::state::ExtendableState;
 
+pub use gotcha_core::Schematic;
+pub use inventory;
+use log::info;
+pub use crate::openapi::Operable;
 pub mod cli;
 mod config;
 pub mod message;
@@ -37,12 +42,24 @@ pub mod task;
 
 pub mod state;
 
+pub fn get<H, T, S>(handler: H) -> MethodRouter<S, Infallible>
+where
+    H: Handler<T, S>,
+    T: 'static,
+    S: Clone + Send + Sync + 'static,
+{
+    dbg!(std::any::type_name::<H>());
+    let router = MethodRouter::new();
+
+    router.on(MethodFilter::GET, handler)
+}
+
 pub struct GotchaApp<State, Config: DeserializeOwned, Data = (), const DONE: bool = false, const HAS_STATE: bool = false>
 where
     Config: for<'de> serde::Deserialize<'de>,
 {
     api_endpoint: Option<String>,
-    openapi_spec: Option<OpenAPIV3>,
+    openapi_spec: OpenAPIV3,
     tasks: Vec<Box<dyn Fn()>>,
 
     data: Data,
@@ -52,6 +69,14 @@ where
 }
 
 
+macro_rules! implement_method {
+    ($method:expr, $fn_name: tt ) => {
+        pub fn $fn_name<H: Handler<T, State>, T: 'static>(self, path: &str, handler: H) -> Self {
+            self.method_route(path, $method, handler)
+        }
+    };
+}
+
 impl<State, Config, Data> GotchaApp<State, Config, Data, false>
 where
     State: Clone + Send + Sync + 'static,
@@ -60,7 +85,24 @@ where
     pub fn new() -> GotchaApp<State, Config, (), false> {
         GotchaApp {
             api_endpoint: None,
-            openapi_spec: None,
+            openapi_spec: OpenAPIV3 {
+                openapi: "3.0.0".to_string(),
+                info: Info {
+                    title: "".to_string(),
+                    description: None,
+                    terms_of_service: None,
+                    contact: None,
+                    license: None,
+                    version: "".to_string(),
+                },
+                servers: None,
+                paths: Default::default(),
+                components: None,
+                security: None,
+                tags: Some(vec![]),
+                external_docs: None,
+                extras: None,
+            },
             tasks: vec![],
             data: (),
             app: Router::new(),
@@ -88,6 +130,75 @@ where
             config: self.config,
         }
     }
+
+    pub fn method_route<H, T>(mut self, path: &str, method: MethodFilter, handler: H) -> Self
+    where
+        H: Handler<T, State>,
+        T: 'static,
+    {
+        let handle_name = std::any::type_name::<H>();
+
+        let handle_operable = inventory::iter::<Operable>.into_iter().find(|it| it.id.eq(handle_name)).cloned();
+        if let Some(operable) = handle_operable {
+            info!("generating openapi spec for {}[{}]", &handle_name, &path);
+            let operation = operable.generate();
+            if let Some(added_tags) = &operation.tags {
+                added_tags.iter().for_each(|tag| {
+                    if let Some(tags) = &mut self.openapi_spec.tags {
+                        if tags.iter().find(|each| each.name.eq(tag)).is_none() {
+                            tags.push(Tag::new(tag, None))
+                        }
+                    }
+                })
+            }
+            let entry = self.openapi_spec.paths.entry(path.to_string()).or_insert_with(|| PathItem {
+                _ref: None,
+                summary: None,
+                description: None,
+                get: None,
+                put: None,
+                post: None,
+                delete: None,
+                options: None,
+                head: None,
+                patch: None,
+                trace: None,
+                servers: None,
+                parameters: None,
+            });
+            match method {
+                MethodFilter::GET => entry.get = Some(operation),
+                MethodFilter::POST => entry.post = Some(operation),
+                MethodFilter::PUT => entry.put = Some(operation),
+                MethodFilter::DELETE => entry.delete = Some(operation),
+                MethodFilter::HEAD => entry.head = Some(operation),
+                MethodFilter::OPTIONS => entry.options = Some(operation),
+                MethodFilter::PATCH => entry.patch = Some(operation),
+                MethodFilter::TRACE => entry.trace = Some(operation),
+                _ => {}
+            };
+        }
+
+        let router = MethodRouter::new().on(method, handler);
+
+        Self {
+            api_endpoint: self.api_endpoint,
+            openapi_spec: self.openapi_spec,
+            tasks: self.tasks,
+            data: self.data,
+            app: self.app.route(path, router),
+            config: self.config,
+        }
+    }
+
+    implement_method!(MethodFilter::GET, get);
+    implement_method!(MethodFilter::POST, post);
+    implement_method!(MethodFilter::PUT, put);
+    implement_method!(MethodFilter::PATCH, patch);
+    implement_method!(MethodFilter::HEAD, head);
+    implement_method!(MethodFilter::DELETE, delete);
+    implement_method!(MethodFilter::OPTIONS, options);
+    implement_method!(MethodFilter::TRACE, trace);
 
     pub fn layer<L>(self, layer: L) -> GotchaApp<State, Config, Data>
     where
@@ -143,12 +254,18 @@ where
         let config: Config = GotchaConfigLoader::load(None);
 
         let app = self.data(config);
-        let router = app.app;
         let data = app.data;
-        let router1 = router.with_state(data.clone());
+        let router = app.app;
+        let apiv3 = app.openapi_spec;
+        let apiv3_2 = apiv3.clone();
+        let router1 = router
+            .route(app.api_endpoint.as_deref().unwrap_or("/openapi.json"), get(|| async move { Json(apiv3.clone()) }))
+            .route("/redoc", get(openapi::openapi_html))
+            .with_state(data.clone());
+
         GotchaApp {
             api_endpoint: app.api_endpoint,
-            openapi_spec: app.openapi_spec,
+            openapi_spec: apiv3_2,
             tasks: app.tasks,
             data,
             app: router1,
@@ -160,12 +277,11 @@ where
 
 impl<Config, Data, R> GotchaApp<(), Config, Data, true>
 where
-    // State: Clone + Send + Sync + 'static,
-    for<'a> Router<()>: Service<IncomingStream<'a>, Response=R, Error=Infallible> + Send + 'static,
-for<'a> <Router<()> as Service<IncomingStream<'a>>>::Future: Send,
-    R: Service<Request, Response=Response, Error=Infallible> + Clone + Send + 'static,
-    R::Future: Send,
-    Config: for<'de> serde::Deserialize<'de>,
+        for<'a> Router<()>: Service<IncomingStream<'a>, Response=R, Error=Infallible> + Send + 'static,
+        for<'a> <Router<()> as Service<IncomingStream<'a>>>::Future: Send,
+        R: Service<Request, Response=Response, Error=Infallible> + Clone + Send + 'static,
+        R::Future: Send,
+        Config: for<'de> serde::Deserialize<'de>,
 {
     pub async fn serve(self, addr: &str, port: u16) -> () {
         let app: Router<_> = self.app;
