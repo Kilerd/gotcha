@@ -3,34 +3,34 @@ use axum::response::Html;
 use either::Either;
 use oas::{OpenAPIV3, Operation, Parameter, Referenceable, RequestBody, Response, Responses};
 use convert_case::{Case, Casing};
+use once_cell::sync::Lazy;
 use crate::Responder;
 
 pub(crate) async fn openapi_html() -> impl Responder {
     Html(include_str!("../statics/redoc.html"))
 }
 
-#[derive(Debug, Clone)]
+#[derive()]
 pub struct Operable {
     pub type_name: &'static str,
     pub id: &'static str,
     pub group: Option<&'static str>,
     pub description: Option<&'static str>,
     pub deprecated: bool,
-    pub parameters: Vec<Either<Vec<Parameter>, RequestBody>>,
+    pub parameters: &'static Lazy<Vec<Box<dyn Fn(String) -> Either<Vec<Parameter>, RequestBody> + Sync + Send + 'static>>>,
 }
 
 
 impl Operable {
-    pub fn generate(self) -> Operation {
+    pub fn generate(&self, path: String) -> Operation {
         let tags = if let Some(group) = self.group { Some(vec![group.to_string()]) } else { None };
 
         let mut params = vec![];
         let mut request_body = None;
-        let vec1 = self.parameters;
-        for item in vec1 {
-            match item {
-                Either::Left(params_vec) => { params.extend(params_vec.into_iter().map(|param| Referenceable::Data(param))); }
-                Either::Right(req_body) => { request_body = Some(Referenceable::Data(req_body)) }
+        for item in self.parameters.iter() {
+            match item(path.clone()) {
+                Either::Left(params_vec) => { params.extend(params_vec.into_iter().map(|param| Referenceable::Data(param.clone()))); }
+                Either::Right(req_body) => { request_body = Some(Referenceable::Data(req_body.clone())) }
             }
         }
         Operation {

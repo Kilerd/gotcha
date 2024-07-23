@@ -10,7 +10,7 @@ use axum::routing::{MethodFilter, MethodRouter, Route};
 pub use cli::GotchaCli;
 pub use gotcha_macro::*;
 use http::Method;
-use oas::{Info, OpenAPIV3, PathItem, Tag};
+use oas::{Info, OpenAPIV3, Parameter, PathItem, RequestBody, Tag};
 use tower_layer::Layer;
 use tower_service::Service;
 use tracing_subscriber::Layer as TracingLayer;
@@ -26,9 +26,12 @@ use axum::response::Response;
 pub use axum::routing::{post, put, delete, patch};
 use axum::serve::IncomingStream;
 use cron::TimeUnitSpec;
+pub use either::Either;
 use serde::de::DeserializeOwned;
 use crate::config::GotchaConfigLoader;
 use crate::state::ExtendableState;
+pub use gotcha_core::ParameterProvider;
+pub use once_cell::sync::Lazy;
 
 pub use gotcha_core::Schematic;
 pub use inventory;
@@ -41,6 +44,8 @@ pub mod openapi;
 pub mod task;
 
 pub mod state;
+
+
 
 pub fn get<H, T, S>(handler: H) -> MethodRouter<S, Infallible>
 where
@@ -75,6 +80,18 @@ macro_rules! implement_method {
             self.method_route(path, $method, handler)
         }
     };
+}
+
+#[doc(hidden)]
+pub fn extract_operable<H, T, State>() -> Option<&'static Operable>
+where
+    H: Handler<T, State>,
+    T: 'static,
+{
+    let handle_name = std::any::type_name::<H>();
+    let handle_operable = inventory::iter::<Operable>.into_iter().find(|it| it.type_name.eq(handle_name));
+    handle_operable
+
 }
 
 impl<State, Config, Data> GotchaApp<State, Config, Data, false>
@@ -136,12 +153,11 @@ where
         H: Handler<T, State>,
         T: 'static,
     {
-        let handle_name = std::any::type_name::<H>();
 
-        let handle_operable = inventory::iter::<Operable>.into_iter().find(|it| it.type_name.eq(handle_name)).cloned();
+        let handle_operable = extract_operable::<H,T,State>();
         if let Some(operable) = handle_operable {
-            info!("generating openapi spec for {}[{}]", &handle_name, &path);
-            let operation = operable.generate();
+            info!("generating openapi spec for {}[{}]", &operable.type_name, &path);
+            let operation = operable.generate(path.to_string());
             if let Some(added_tags) = &operation.tags {
                 added_tags.iter().for_each(|tag| {
                     if let Some(tags) = &mut self.openapi_spec.tags {

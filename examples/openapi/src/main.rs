@@ -25,11 +25,13 @@ pub async fn hello_world() -> impl Responder {
 }
 
 /// Add new pet to the store inventory.
+#[api]
 pub async fn new_pet() -> impl Responder {
     "new pet"
 }
 
 /// Update specific pet's info
+#[api()]
 pub async fn update_pet_info(_paths: Path<(i32,)>) -> impl Responder {
     "update pet info"
 }
@@ -69,7 +71,7 @@ async fn main() {
     GotchaApp::<_, Config>::new()
         .get("/", hello_world)
         .post("/pets", new_pet)
-        .put("/pets", update_pet_info)
+        .put("/pets/:pet_id", update_pet_info)
         .put("/pets/{pet_id}/address/{address_id}", update_pet_address_detail)
         .done()
         .serve("0.0.0.0", 8080)

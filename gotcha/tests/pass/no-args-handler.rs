@@ -1,43 +1,20 @@
-use gotcha::{get, post, put, patch, delete, head, Responder};
+use gotcha::{api, Responder};
 
-#[get("/hello-world")]
+#[api]
 async fn handler() -> String {
     "Hello world".to_string()
 }
-
-#[post("/hello-world")]
-async fn post_handler() -> String {
-    "Hello world".to_string()
+fn extract<H, T>(handler: H) -> Option<&'static gotcha::openapi::Operable>
+where
+    H: gotcha::axum::handler::Handler<T, ()>,
+    T: 'static,
+{
+    gotcha::extract_operable::<H, T, ()>()
 }
-
-#[put("/hello-world")]
-async fn put_handler() -> String {
-    "Hello world".to_string()
-}
-
-#[patch("/hello-world")]
-async fn patch_handler() -> String {
-    "Hello world".to_string()
-}
-
-#[delete("/hello-world")]
-async fn delete_handler() -> String {
-    "Hello world".to_string()
-}
-
-#[head("/hello-world")]
-async fn head_handler() -> String {
-    "Hello world".to_string()
-}
-
-#[get("/hello-world")]
-async fn handler_with_impl_response() -> impl Responder {
-    "Hello world".to_string()
-}
-
 fn main() {
-    use gotcha::Operable;
-    let operation = handler.generate();
+    let operable = extract(handler).unwrap();
+
+    let operation = operable.generate();
     assert!(operation.operation_id == Some("handler".to_string()));
     assert!(operation.description == None);
     assert!(operation.deprecated == Some(false));

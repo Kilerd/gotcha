@@ -1,7 +1,7 @@
 use proc_macro::TokenStream;
-use quote::quote;
+use quote::{format_ident, quote};
 use syn::{parse_macro_input, AttributeArgs, FnArg, ItemFn, Lit, LitStr, Meta};
-
+use uuid::Uuid;
 use crate::FromMeta;
 use crate::utils::AttributesExt;
 
@@ -49,6 +49,9 @@ pub(crate) fn request_handler(args: TokenStream, input_stream: TokenStream) -> T
         None => { quote!(None) }
         Some(t) => { quote! { Some(#t) } }
     };
+
+    let random_uuid = Uuid::new_v4().simple().to_string();
+    let uuid_ident = format_ident!("__PARAM_{}", random_uuid);
     let params_token: Vec<proc_macro2::TokenStream> = input
             .sig
             .inputs
@@ -57,7 +60,7 @@ pub(crate) fn request_handler(args: TokenStream, input_stream: TokenStream) -> T
                 FnArg::Receiver(_) => None,
                 FnArg::Typed(typed) => {
                     let ty = &typed.ty;
-                    Some(quote! { <#ty as ::gotcha::ParameterProvider>::generate(self.uri().to_string())})
+                    Some(quote! { Box::new(|path:String| {<#ty as ::gotcha::ParameterProvider>::generate(path) }) })
                 }
             })
             .collect();
@@ -66,6 +69,11 @@ pub(crate) fn request_handler(args: TokenStream, input_stream: TokenStream) -> T
 
         #input
 
+        static #uuid_ident : ::gotcha::Lazy<Vec<Box<dyn Fn(String) -> ::gotcha::Either<Vec<::gotcha::oas::Parameter>, ::gotcha::oas::RequestBody> + Send + Sync + 'static>>> = ::gotcha::Lazy::new(||{
+                    vec![
+                    #( #params_token , )*
+                ]
+                });
         ::gotcha::inventory::submit! {
             ::gotcha::Operable {
                 type_name: concat!(module_path!(), "::", #fn_ident_string),
@@ -73,9 +81,8 @@ pub(crate) fn request_handler(args: TokenStream, input_stream: TokenStream) -> T
                 group: #group,
                 description: #docs,
                 deprecated: false,
-                parameters: vec![
-                    #( #params_token, )*
-                ]
+                parameters: &#uuid_ident
+
             }
         }
     };

@@ -4,7 +4,6 @@ use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::quote;
 use syn::{parse2, DeriveInput};
 use crate::utils::AttributesExt;
-
 #[derive(Debug, FromDeriveInput)]
 #[darling(attributes(parameter), forward_attrs(allow, doc, cfg))]
 struct ParameterOpts {

@@ -1,8 +1,8 @@
 use std::collections::BTreeMap;
-use actix_web::Either;
 
-use actix_web::web::{Data, Json, Path, Query};
+use axum::extract::{State, Json, Path, Query, Request};
 use convert_case::{Case, Casing};
+use either::Either;
 use http::Method;
 use oas::{MediaType, Operation, Parameter, ParameterIn, Referenceable, RequestBody, Response, Responses, Schema};
 
@@ -143,7 +143,7 @@ fn build_param(name: String, _in: ParameterIn, required: bool, schema: Schema, d
 
 impl<T1: Schematic> ParameterProvider for Path<(T1, )> {
     fn generate(url: String) -> Either<Vec<Parameter>, RequestBody> {
-        let pattern = regex::Regex::new(r"\{([^\}]+)\}").unwrap();
+        let pattern = regex::Regex::new(r":([^/]+)").unwrap();
         let param_names_in_path: Vec<String> = pattern.captures_iter(&url).map(|digits| digits.get(1).unwrap().as_str().to_string()).collect();
 
         let t1_param = build_param(
@@ -235,13 +235,13 @@ impl<T: Schematic> ParameterProvider for Query<T> {
     }
 }
 
-impl<T> ParameterProvider for Data<T> {
+impl<T> ParameterProvider for State<T> {
     fn generate(_url: String) -> Either<Vec<Parameter>, RequestBody> {
         Either::Left(vec![])
     }
 }
 
-impl ParameterProvider for actix_web::HttpRequest {
+impl ParameterProvider for Request {
     fn generate(_url: String) -> Either<Vec<Parameter>, RequestBody> {
         Either::Left(vec![])
     }
