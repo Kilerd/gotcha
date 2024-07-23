@@ -16,6 +16,6 @@ T: 'static, {
 fn main() {
     use gotcha::Operable;
     let operable = extract(handler).unwrap();
-    let operation = operable.generate();
+    let operation = operable.generate("/".to_owned());
     assert!(operation.tags.unwrap().pop().unwrap().eq("authentication"));
 }

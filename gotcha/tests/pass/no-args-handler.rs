@@ -14,7 +14,7 @@ where
 fn main() {
     let operable = extract(handler).unwrap();
 
-    let operation = operable.generate();
+    let operation = operable.generate("/".to_owned());
     assert!(operation.operation_id == Some("handler".to_string()));
     assert!(operation.description == None);
     assert!(operation.deprecated == Some(false));
