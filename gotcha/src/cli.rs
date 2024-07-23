@@ -3,7 +3,8 @@ use std::marker::PhantomData;
 use clap::{Args, Parser, Subcommand};
 use serde::de::DeserializeOwned;
 use tracing::info;
-use tracing_subscriber::{EnvFilter, fmt, prelude::*};
+use tracing_subscriber::prelude::*;
+use tracing_subscriber::{fmt, EnvFilter};
 
 use crate::config::GotchaConfigLoader;
 
@@ -36,6 +37,17 @@ pub struct GotchaCli<F, CONFIG: DeserializeOwned = (), const HAS_SERVER_FN: bool
     config: PhantomData<CONFIG>,
 }
 
+impl<F, FR, CONFIG> Default for GotchaCli<F, CONFIG, false>
+where
+    F: (Fn(CONFIG) -> FR) + Sync + 'static,
+    FR: std::future::Future<Output = Result<(), std::io::Error>> + 'static,
+    CONFIG: DeserializeOwned,
+{
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<F, FR, CONFIG> GotchaCli<F, CONFIG, false>
 where
     F: (Fn(CONFIG) -> FR) + Sync + 'static,
@@ -63,11 +75,12 @@ where
     FR: std::future::Future<Output = Result<(), std::io::Error>> + 'static,
     CONFIG: DeserializeOwned,
 {
-    pub async fn run(self) -> () {
+    pub async fn run(self) {
         tracing_subscriber::registry()
             .with(fmt::layer())
             .with(EnvFilter::from_default_env())
-            .try_init().ok();
+            .try_init()
+            .ok();
         let opts = Cli::parse();
         let profile = opts.profile.or(std::env::var("GOTCHA_ACTIVE_PROFILE").ok());
         info!("starting gotcha");

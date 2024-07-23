@@ -1,7 +1,8 @@
 use std::path::PathBuf;
 use std::str::FromStr;
-use yaac::{ConfigLoader, EnvironmentSource, FileSource};
+
 use serde::de::DeserializeOwned;
+use yaac::{ConfigLoader, EnvironmentSource, FileSource};
 
 pub struct GotchaConfigLoader;
 impl GotchaConfigLoader {

@@ -1,22 +1,17 @@
-use axum::extract::FromRef;
-
 pub trait ExtendableState<NewState> {
     type Ret;
     fn extend(self, next: NewState) -> Self::Ret;
 }
 
-impl< NewState> ExtendableState<NewState> for () {
-
-    type Ret = (NewState, );
+impl<NewState> ExtendableState<NewState> for () {
+    type Ret = (NewState,);
 
     fn extend(self, next: NewState) -> Self::Ret {
         (next,)
     }
 }
 
-
 impl<T, NewState> ExtendableState<NewState> for (T,) {
-
     type Ret = (T, NewState);
 
     fn extend(self, next: NewState) -> Self::Ret {

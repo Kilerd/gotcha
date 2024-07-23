@@ -1,19 +1,16 @@
 use std::collections::BTreeMap;
 
-use axum::extract::{State, Json, Path, Query, Request};
-use convert_case::{Case, Casing};
+use axum::extract::{Json, Path, Query, Request, State};
 use either::Either;
-use http::Method;
-use oas::{MediaType, Operation, Parameter, ParameterIn, Referenceable, RequestBody, Response, Responses, Schema};
-
-
-
+use oas::{MediaType, Parameter, ParameterIn, Referenceable, RequestBody, Schema};
 
 pub trait Schematic {
     fn name() -> &'static str;
     fn required() -> bool;
     fn type_() -> &'static str;
-    fn doc() -> Option<String> { None }
+    fn doc() -> Option<String> {
+        None
+    }
     fn generate_schema() -> Schema {
         Schema {
             _type: Some(Self::type_().to_string()),
@@ -127,7 +124,7 @@ fn build_param(name: String, _in: ParameterIn, required: bool, schema: Schema, d
     Parameter {
         name,
         _in,
-        description: None,
+        description,
         required: Some(required),
         deprecated: None,
         allow_empty_value: None,
@@ -141,17 +138,17 @@ fn build_param(name: String, _in: ParameterIn, required: bool, schema: Schema, d
     }
 }
 
-impl<T1: Schematic> ParameterProvider for Path<(T1, )> {
+impl<T1: Schematic> ParameterProvider for Path<(T1,)> {
     fn generate(url: String) -> Either<Vec<Parameter>, RequestBody> {
         let pattern = regex::Regex::new(r":([^/]+)").unwrap();
         let param_names_in_path: Vec<String> = pattern.captures_iter(&url).map(|digits| digits.get(1).unwrap().as_str().to_string()).collect();
 
         let t1_param = build_param(
-            param_names_in_path.get(0).cloned().expect("cannot get param in path"),
+            param_names_in_path.first().cloned().expect("cannot get param in path"),
             ParameterIn::Path,
             T1::required(),
             T1::generate_schema(),
-            T1::doc()
+            T1::doc(),
         );
         Either::Left(vec![t1_param])
     }
@@ -163,18 +160,18 @@ impl<T1: Schematic, T2: Schematic> ParameterProvider for Path<(T1, T2)> {
         let param_names_in_path: Vec<String> = pattern.captures_iter(&url).map(|digits| digits.get(1).unwrap().as_str().to_string()).collect();
 
         let t1_param = build_param(
-            param_names_in_path.get(0).cloned().expect("cannot get param in path"),
+            param_names_in_path.first().cloned().expect("cannot get param in path"),
             ParameterIn::Path,
             T1::required(),
             T1::generate_schema(),
-            T1::doc()
+            T1::doc(),
         );
         let t2_param = build_param(
             param_names_in_path.get(1).cloned().expect("cannot get param in path"),
             ParameterIn::Path,
             T2::required(),
             T2::generate_schema(),
-            T2::doc()
+            T2::doc(),
         );
 
         Either::Left(vec![t1_param, t2_param])
@@ -203,12 +200,15 @@ impl<T: Schematic> ParameterProvider for Json<T> {
         let mut contents = BTreeMap::new();
 
         let schema = T::generate_schema();
-        contents.insert("application/json".to_owned(), MediaType {
-            schema: Some(Referenceable::Data(schema)),
-            example: None,
-            examples: None,
-            encoding: None,
-        });
+        contents.insert(
+            "application/json".to_owned(),
+            MediaType {
+                schema: Some(Referenceable::Data(schema)),
+                example: None,
+                examples: None,
+                encoding: None,
+            },
+        );
         let req_body = RequestBody {
             description: T::doc(),
             required: Some(T::required()),

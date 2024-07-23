@@ -1,16 +1,17 @@
-use darling::{FromDeriveInput, FromField, FromVariant};
 use darling::ast::Data;
+use darling::{FromDeriveInput, FromField, FromVariant};
 use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::quote;
 use syn::{parse2, DeriveInput};
+
 use crate::utils::AttributesExt;
 #[derive(Debug, FromDeriveInput)]
 #[darling(attributes(parameter), forward_attrs(allow, doc, cfg))]
 struct ParameterOpts {
     ident: syn::Ident,
     // fall over the serde info
-    data: darling::ast::Data<ParameterEnumVariantOpt, ParameterStructFieldOpt>,
-    attrs: Vec<syn::Attribute>
+    data: Data<ParameterEnumVariantOpt, ParameterStructFieldOpt>,
+    attrs: Vec<syn::Attribute>,
 }
 
 #[derive(Debug, FromField)]
@@ -25,9 +26,9 @@ struct ParameterStructFieldOpt {
 #[darling(attributes(parameter), forward_attrs(allow, doc, cfg))]
 struct ParameterEnumVariantOpt {
     ident: syn::Ident,
-    attrs: Vec<syn::Attribute>
+    #[allow(dead_code)]
+    attrs: Vec<syn::Attribute>,
 }
-
 
 pub(crate) fn handler(input: TokenStream2) -> Result<TokenStream2, (Span, &'static str)> {
     let x1 = parse2::<DeriveInput>(input).unwrap();
@@ -36,14 +37,21 @@ pub(crate) fn handler(input: TokenStream2) -> Result<TokenStream2, (Span, &'stat
     let ident = crud_opts.ident.clone();
     let ident_string = ident.to_string();
     let doc = match crud_opts.attrs.get_doc() {
-        None => {quote!{ None }}
-        Some(t) => { quote!{Some( #t.to_owned()) }}
+        None => {
+            quote! { None }
+        }
+        Some(t) => {
+            quote! {Some( #t.to_owned()) }
+        }
     };
 
     let impl_stream = match crud_opts.data {
         Data::Enum(enum_variants) => {
-            let variant_vec: Vec<TokenStream2> = enum_variants.into_iter()
-                .map(|variant| variant.ident.to_string()).map(|variant_str| quote!{ #variant_str }).collect();
+            let variant_vec: Vec<TokenStream2> = enum_variants
+                .into_iter()
+                .map(|variant| variant.ident.to_string())
+                .map(|variant_str| quote! { #variant_str })
+                .collect();
             quote! {
                 impl Schematic for #ident {
                     fn name() -> &'static str {
@@ -82,8 +90,8 @@ pub(crate) fn handler(input: TokenStream2) -> Result<TokenStream2, (Span, &'stat
                     let field_name = field.ident.unwrap().to_string();
                     let field_ty = field.ty;
                     quote! {
-                properties.insert(#field_name.to_string(), <#field_ty as Schematic>::generate_schema().to_value());
-            }
+                        properties.insert(#field_name.to_string(), <#field_ty as Schematic>::generate_schema().to_value());
+                    }
                 })
                 .collect();
             quote! {

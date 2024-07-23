@@ -1,27 +1,27 @@
+#![allow(dead_code)]
 use std::sync::Arc;
 
-use gotcha::{async_trait, get, GotchaApp, GotchaCli, Message, Messager, Responder};
+use gotcha::{async_trait, GotchaApp, Message, Messager, Responder};
 use serde::Deserialize;
-use gotcha::message::MessagerWrapper;
 
 #[derive(Debug, Deserialize, Clone)]
 struct Config {}
 
-struct HelloWorldMessage;
+pub(crate) struct HelloWorldMessage;
 
 #[async_trait]
 impl Message for HelloWorldMessage {
     type Output = String;
     async fn handle(self, messager: Arc<Messager>) -> Self::Output {
-        messager.spawn(BackgroudTask).await;
+        messager.spawn(BackgroundTask).await;
         "hello world".to_string()
     }
 }
 
-struct BackgroudTask;
+pub struct BackgroundTask;
 
 #[async_trait]
-impl Message for BackgroudTask {
+impl Message for BackgroundTask {
     type Output = ();
     async fn handle(self, _messager: Arc<Messager>) -> Self::Output {
         // do backend task here
@@ -35,9 +35,5 @@ pub async fn hello_world() -> impl Responder {
 
 #[tokio::main]
 async fn main() {
-    GotchaApp::<_,Config>::new()
-        .route("/",get(hello_world))
-        .done()
-        .serve("127.0.0.1", 8080)
-        .await
+    GotchaApp::<_, Config>::new().get("/", hello_world).done().serve("127.0.0.1", 8080).await
 }

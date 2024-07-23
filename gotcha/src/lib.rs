@@ -2,41 +2,33 @@ use std::convert::Infallible;
 use std::marker::PhantomData;
 use std::net::{Ipv4Addr, SocketAddrV4};
 use std::str::FromStr;
+
 pub use async_trait::async_trait;
-use axum::body::Body;
 use axum::extract::Request;
-use axum::{Router, ServiceExt};
+pub use axum::extract::{Json, Path, Query, State};
+use axum::handler::Handler;
+pub use axum::response::IntoResponse as Responder;
+use axum::response::Response;
+pub use axum::routing::{delete, patch, post, put};
 use axum::routing::{MethodFilter, MethodRouter, Route};
+use axum::serve::IncomingStream;
+use axum::Router;
 pub use cli::GotchaCli;
+pub use either::Either;
+pub use gotcha_core::{ParameterProvider, Schematic};
 pub use gotcha_macro::*;
-use http::Method;
-use oas::{Info, OpenAPIV3, Parameter, PathItem, RequestBody, Tag};
+use log::info;
+use oas::{Info, OpenAPIV3, PathItem, Tag};
+pub use once_cell::sync::Lazy;
+use serde::de::DeserializeOwned;
 use tower_layer::Layer;
 use tower_service::Service;
-use tracing_subscriber::Layer as TracingLayer;
-pub use {oas, tracing, axum};
+pub use {axum, inventory, oas, tracing};
 
-pub use crate::message::{Message, Messager};
-
-pub use axum::response::IntoResponse as Responder;
-
-pub use axum::extract::{Path, Query, Json, State};
-use axum::handler::Handler;
-use axum::response::Response;
-pub use axum::routing::{post, put, delete, patch};
-use axum::serve::IncomingStream;
-use cron::TimeUnitSpec;
-pub use either::Either;
-use serde::de::DeserializeOwned;
 use crate::config::GotchaConfigLoader;
-use crate::state::ExtendableState;
-pub use gotcha_core::ParameterProvider;
-pub use once_cell::sync::Lazy;
-
-pub use gotcha_core::Schematic;
-pub use inventory;
-use log::info;
+pub use crate::message::{Message, Messager};
 pub use crate::openapi::Operable;
+use crate::state::ExtendableState;
 pub mod cli;
 mod config;
 pub mod message;
@@ -44,20 +36,6 @@ pub mod openapi;
 pub mod task;
 
 pub mod state;
-
-
-
-pub fn get<H, T, S>(handler: H) -> MethodRouter<S, Infallible>
-where
-    H: Handler<T, S>,
-    T: 'static,
-    S: Clone + Send + Sync + 'static,
-{
-    dbg!(std::any::type_name::<H>());
-    let router = MethodRouter::new();
-
-    router.on(MethodFilter::GET, handler)
-}
 
 pub struct GotchaApp<State, Config: DeserializeOwned, Data = (), const DONE: bool = false, const HAS_STATE: bool = false>
 where
@@ -72,7 +50,6 @@ where
 
     config: PhantomData<Config>,
 }
-
 
 macro_rules! implement_method {
     ($method:expr, $fn_name: tt ) => {
@@ -89,9 +66,7 @@ where
     T: 'static,
 {
     let handle_name = std::any::type_name::<H>();
-    let handle_operable = inventory::iter::<Operable>.into_iter().find(|it| it.type_name.eq(handle_name));
-    handle_operable
-
+    inventory::iter::<Operable>.into_iter().find(|it| it.type_name.eq(handle_name))
 }
 
 impl<State, Config, Data> GotchaApp<State, Config, Data, false>
@@ -127,7 +102,6 @@ where
         }
     }
 
-
     // todo default service
 
     pub fn api_endpoint(self, path: impl Into<String>) -> Self {
@@ -153,15 +127,14 @@ where
         H: Handler<T, State>,
         T: 'static,
     {
-
-        let handle_operable = extract_operable::<H,T,State>();
+        let handle_operable = extract_operable::<H, T, State>();
         if let Some(operable) = handle_operable {
             info!("generating openapi spec for {}[{}]", &operable.type_name, &path);
             let operation = operable.generate(path.to_string());
             if let Some(added_tags) = &operation.tags {
                 added_tags.iter().for_each(|tag| {
                     if let Some(tags) = &mut self.openapi_spec.tags {
-                        if tags.iter().find(|each| each.name.eq(tag)).is_none() {
+                        if !tags.iter().any(|each| each.name.eq(tag)) {
                             tags.push(Tag::new(tag, None))
                         }
                     }
@@ -235,7 +208,7 @@ where
     }
     pub fn data<Data2, NewPartialData>(self, state: NewPartialData) -> GotchaApp<State, Config, Data2>
     where
-        Data: ExtendableState<NewPartialData, Ret=Data2>,
+        Data: ExtendableState<NewPartialData, Ret = Data2>,
         Data2: Clone,
     {
         let new_state = self.data.extend(state);
@@ -252,7 +225,7 @@ where
     pub fn task<Task, TaskRet>(mut self, t: Task) -> Self
     where
         Task: (Fn() -> TaskRet) + 'static,
-        TaskRet: std::future::Future<Output=()> + Send + 'static,
+        TaskRet: std::future::Future<Output = ()> + Send + 'static,
     {
         self.tasks.push(Box::new(move || {
             tokio::spawn(t());
@@ -261,11 +234,9 @@ where
         self
     }
 
-
     pub fn done(self) -> GotchaApp<(), Config, State, true>
     where
-
-        Data: ExtendableState<Config, Ret=State>,
+        Data: ExtendableState<Config, Ret = State>,
     {
         let config: Config = GotchaConfigLoader::load(None);
 
@@ -275,8 +246,11 @@ where
         let apiv3 = app.openapi_spec;
         let apiv3_2 = apiv3.clone();
         let router1 = router
-            .route(app.api_endpoint.as_deref().unwrap_or("/openapi.json"), get(|| async move { Json(apiv3.clone()) }))
-            .route("/redoc", get(openapi::openapi_html))
+            .route(
+                app.api_endpoint.as_deref().unwrap_or("/openapi.json"),
+                axum::routing::get(|| async move { Json(apiv3.clone()) }),
+            )
+            .route("/redoc", axum::routing::get(openapi::openapi_html))
             .with_state(data.clone());
 
         GotchaApp {
@@ -290,23 +264,21 @@ where
     }
 }
 
-
 impl<Config, Data, R> GotchaApp<(), Config, Data, true>
 where
-        for<'a> Router<()>: Service<IncomingStream<'a>, Response=R, Error=Infallible> + Send + 'static,
-        for<'a> <Router<()> as Service<IncomingStream<'a>>>::Future: Send,
-        R: Service<Request, Response=Response, Error=Infallible> + Clone + Send + 'static,
-        R::Future: Send,
-        Config: for<'de> serde::Deserialize<'de>,
+    for<'a> Router<()>: Service<IncomingStream<'a>, Response = R, Error = Infallible> + Send + 'static,
+    for<'a> <Router<()> as Service<IncomingStream<'a>>>::Future: Send,
+    R: Service<Request, Response = Response, Error = Infallible> + Clone + Send + 'static,
+    R::Future: Send,
+    Config: for<'de> serde::Deserialize<'de>,
 {
-    pub async fn serve(self, addr: &str, port: u16) -> () {
+    pub async fn serve(self, addr: &str, port: u16) {
         let app: Router<_> = self.app;
         let addr = SocketAddrV4::new(Ipv4Addr::from_str(addr).unwrap(), port);
         let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
         axum::serve(listener, app).await.unwrap();
     }
 }
-
 
 #[cfg(test)]
 mod test {

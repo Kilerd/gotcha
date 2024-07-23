@@ -1,14 +1,20 @@
 use std::collections::BTreeMap;
+
 use axum::response::Html;
-use either::Either;
-use oas::{OpenAPIV3, Operation, Parameter, Referenceable, RequestBody, Response, Responses};
 use convert_case::{Case, Casing};
+use either::Either;
+use oas::{Operation, Parameter, Referenceable, RequestBody, Response, Responses};
 use once_cell::sync::Lazy;
+
 use crate::Responder;
 
 pub(crate) async fn openapi_html() -> impl Responder {
     Html(include_str!("../statics/redoc.html"))
 }
+
+pub type ParamType = Either<Vec<Parameter>, RequestBody>;
+
+pub type ParamConstructor = Box<dyn Fn(String) -> ParamType + Sync + Send + 'static>;
 
 #[derive()]
 pub struct Operable {
@@ -17,20 +23,21 @@ pub struct Operable {
     pub group: Option<&'static str>,
     pub description: Option<&'static str>,
     pub deprecated: bool,
-    pub parameters: &'static Lazy<Vec<Box<dyn Fn(String) -> Either<Vec<Parameter>, RequestBody> + Sync + Send + 'static>>>,
+    pub parameters: &'static Lazy<Vec<ParamConstructor>>,
 }
-
 
 impl Operable {
     pub fn generate(&self, path: String) -> Operation {
-        let tags = if let Some(group) = self.group { Some(vec![group.to_string()]) } else { None };
+        let tags = self.group.map(|group| vec![group.to_string()]);
 
         let mut params = vec![];
         let mut request_body = None;
         for item in self.parameters.iter() {
             match item(path.clone()) {
-                Either::Left(params_vec) => { params.extend(params_vec.into_iter().map(|param| Referenceable::Data(param.clone()))); }
-                Either::Right(req_body) => { request_body = Some(Referenceable::Data(req_body.clone())) }
+                Either::Left(params_vec) => {
+                    params.extend(params_vec.into_iter().map(|param| Referenceable::Data(param.clone())));
+                }
+                Either::Right(req_body) => request_body = Some(Referenceable::Data(req_body.clone())),
             }
         }
         Operation {
@@ -40,7 +47,7 @@ impl Operable {
             external_docs: None,
             operation_id: Some(self.id.to_string()),
             parameters: Some(params),
-            request_body: request_body,
+            request_body,
             responses: Responses {
                 default: Some(Referenceable::Data(Response {
                     description: "default return".to_string(),
@@ -57,6 +64,5 @@ impl Operable {
         }
     }
 }
-
 
 inventory::collect!(Operable);

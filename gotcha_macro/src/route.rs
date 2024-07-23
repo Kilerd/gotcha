@@ -1,10 +1,10 @@
 use proc_macro::TokenStream;
 use quote::{format_ident, quote};
-use syn::{parse_macro_input, AttributeArgs, FnArg, ItemFn, Lit, LitStr, Meta};
+use syn::{parse_macro_input, AttributeArgs, FnArg, ItemFn};
 use uuid::Uuid;
-use crate::FromMeta;
-use crate::utils::AttributesExt;
 
+use crate::utils::AttributesExt;
+use crate::FromMeta;
 
 #[derive(Debug)]
 pub struct RouteMeta {
@@ -14,12 +14,12 @@ pub struct RouteMeta {
 #[derive(Debug, FromMeta)]
 struct RouteExtraMeta {
     group: Option<String>,
-    id: Option<String>
+    id: Option<String>,
 }
 
 impl FromMeta for RouteMeta {
     fn from_list(items: &[syn::NestedMeta]) -> darling::Result<Self> {
-        let extra_meta = RouteExtraMeta::from_list(&items)?;
+        let extra_meta = RouteExtraMeta::from_list(items)?;
         Ok(RouteMeta { extra: extra_meta })
     }
 }
@@ -46,24 +46,28 @@ pub(crate) fn request_handler(args: TokenStream, input_stream: TokenStream) -> T
     let operation_id = meta.extra.id.unwrap_or(fn_ident_string.clone());
 
     let docs = match input.attrs.get_doc() {
-        None => { quote!(None) }
-        Some(t) => { quote! { Some(#t) } }
+        None => {
+            quote!(None)
+        }
+        Some(t) => {
+            quote! { Some(#t) }
+        }
     };
 
     let random_uuid = Uuid::new_v4().simple().to_string();
     let uuid_ident = format_ident!("__PARAM_{}", random_uuid);
     let params_token: Vec<proc_macro2::TokenStream> = input
-            .sig
-            .inputs
-            .iter()
-            .flat_map(|param| match param {
-                FnArg::Receiver(_) => None,
-                FnArg::Typed(typed) => {
-                    let ty = &typed.ty;
-                    Some(quote! { Box::new(|path:String| {<#ty as ::gotcha::ParameterProvider>::generate(path) }) })
-                }
-            })
-            .collect();
+        .sig
+        .inputs
+        .iter()
+        .flat_map(|param| match param {
+            FnArg::Receiver(_) => None,
+            FnArg::Typed(typed) => {
+                let ty = &typed.ty;
+                Some(quote! { Box::new(|path:String| {<#ty as ::gotcha::ParameterProvider>::generate(path) }) })
+            }
+        })
+        .collect();
 
     let ret = quote! {
 
@@ -86,7 +90,5 @@ pub(crate) fn request_handler(args: TokenStream, input_stream: TokenStream) -> T
             }
         }
     };
-    let stream = TokenStream::from(ret);
-    println!("{}", &stream);
-    stream
+    TokenStream::from(ret)
 }

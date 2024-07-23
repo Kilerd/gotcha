@@ -16,8 +16,8 @@ async fn my_task() {
 pub async fn cron_proc_macro_wrapper() {
     let expression = "0   30   9,12,15     1,15       May-Aug  Mon,Wed,Fri  2018/2";
     let schedule = Schedule::from_str(expression).unwrap();
-    let mut scheduler = schedule.upcoming(Utc);
-    while let Some(next_trigger_time) = scheduler.next() {
+    let scheduler = schedule.upcoming(Utc);
+    for next_trigger_time in scheduler {
         let now = Utc::now();
         let duration = next_trigger_time - now;
         tokio::time::sleep(duration.to_std().unwrap()).await;

@@ -12,7 +12,7 @@ impl Messager {
         msg.handle(self).await
     }
 
-    pub async fn spawn<T>(self: Arc<Self>, msg: T) -> ()
+    pub async fn spawn<T>(self: Arc<Self>, msg: T)
     where
         T: Message + 'static,
         T::Output: Send,
