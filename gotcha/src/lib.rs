@@ -251,6 +251,7 @@ where
                 axum::routing::get(|| async move { Json(apiv3.clone()) }),
             )
             .route("/redoc", axum::routing::get(openapi::openapi_html))
+            .route("/scalar", axum::routing::get(openapi::scalar_html))
             .with_state(data.clone());
 
         GotchaApp {
