@@ -16,6 +16,7 @@ pub trait Schematic {
             _type: Some(Self::type_().to_string()),
             format: None,
             nullable: None,
+            description: Self::doc(),
             extras: Default::default(),
         }
     }
@@ -113,6 +114,7 @@ impl<T: Schematic> Schematic for Vec<T> {
             _type: Some(Self::type_().to_string()),
             format: None,
             nullable: None,
+            description: Self::doc(),
             extras: Default::default(),
         };
         schema.extras.insert("items".to_string(), T::generate_schema().to_value());

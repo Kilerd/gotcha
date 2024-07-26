@@ -51,11 +51,13 @@ pub enum PetType {
 /// the world belongs to cat
 #[derive(Schematic, Deserialize)]
 pub struct PetUpdateJson {
+    /// new pet name
     name: String,
     pet_type: PetType,
 }
 
 /// Update specific pet's address
+#[api]
 pub async fn update_pet_address_detail(_paths: Path<UpdatePetAddressPathArgs>, _payload: Json<PetUpdateJson>) -> impl Responder {
     format!("update pet info: {} {:?}", _payload.name, _payload.pet_type)
 }
@@ -69,7 +71,7 @@ async fn main() {
         .get("/", hello_world)
         .post("/pets", new_pet)
         .put("/pets/:pet_id", update_pet_info)
-        .put("/pets/{pet_id}/address/{address_id}", update_pet_address_detail)
+        .put("/pets/:pet_id/address/:address_id", update_pet_address_detail)
         .done()
         .serve("0.0.0.0", 8080)
         .await

@@ -19,6 +19,7 @@ struct ParameterOpts {
 struct ParameterStructFieldOpt {
     ident: Option<syn::Ident>,
     ty: syn::Type,
+    attrs: Vec<syn::Attribute>,
     // add more validator
 }
 
@@ -32,11 +33,11 @@ struct ParameterEnumVariantOpt {
 
 pub(crate) fn handler(input: TokenStream2) -> Result<TokenStream2, (Span, &'static str)> {
     let x1 = parse2::<DeriveInput>(input).unwrap();
-    let crud_opts: ParameterOpts = ParameterOpts::from_derive_input(&x1).unwrap();
+    let param_opts: ParameterOpts = ParameterOpts::from_derive_input(&x1).unwrap();
 
-    let ident = crud_opts.ident.clone();
+    let ident = param_opts.ident.clone();
     let ident_string = ident.to_string();
-    let doc = match crud_opts.attrs.get_doc() {
+    let doc = match param_opts.attrs.get_doc() {
         None => {
             quote! { None }
         }
@@ -45,7 +46,7 @@ pub(crate) fn handler(input: TokenStream2) -> Result<TokenStream2, (Span, &'stat
         }
     };
 
-    let impl_stream = match crud_opts.data {
+    let impl_stream = match param_opts.data {
         Data::Enum(enum_variants) => {
             let variant_vec: Vec<TokenStream2> = enum_variants
                 .into_iter()
@@ -73,6 +74,7 @@ pub(crate) fn handler(input: TokenStream2) -> Result<TokenStream2, (Span, &'stat
                             _type: Some(Self::type_().to_string()),
                             format:None,
                             nullable:None,
+                            description: Self::doc(),
                             extras:Default::default()
                         };
                         let enum_variants:Vec<&'static str> = vec![ #(#variant_vec ,)* ];
@@ -89,12 +91,19 @@ pub(crate) fn handler(input: TokenStream2) -> Result<TokenStream2, (Span, &'stat
                 .map(|field| {
                     let field_name = field.ident.unwrap().to_string();
                     let field_ty = field.ty;
+                    let field_description = if let Some(doc) = field.attrs.get_doc() {
+                        quote!{ Some(#doc.to_string()) }
+                    }else {
+                        quote!{None}
+                    };
                     quote! {
-                        properties.insert(#field_name.to_string(), <#field_ty as Schematic>::generate_schema().to_value());
+                        let mut field_schema = <#field_ty as Schematic>::generate_schema();
+                        field_schema.description = #field_description;
+                        properties.insert(#field_name.to_string(), field_schema.to_value());
                     }
                 })
                 .collect();
-            quote! {
+            let ret = quote! {
                 impl Schematic for #ident {
                     fn name() -> &'static str {
                         #ident_string
@@ -115,6 +124,7 @@ pub(crate) fn handler(input: TokenStream2) -> Result<TokenStream2, (Span, &'stat
                             _type: Some(Self::type_().to_string()),
                             format:None,
                             nullable:None,
+                            description: Self::doc(),
                             extras:Default::default()
                         };
                         let mut properties = ::std::collections::HashMap::new();
@@ -125,7 +135,10 @@ pub(crate) fn handler(input: TokenStream2) -> Result<TokenStream2, (Span, &'stat
                         schema
                     }
                 }
-            }
+            };
+
+            // println!("token: {}", &ret);
+            ret
         }
     };
 
