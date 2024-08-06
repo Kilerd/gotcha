@@ -67,7 +67,7 @@ struct Config {}
 
 #[tokio::main]
 async fn main() {
-    GotchaApp::<_, Config>::new()
+    GotchaApp::new()
         .get("/", hello_world)
         .post("/pets", new_pet)
         .put("/pets/:pet_id", update_pet_info)

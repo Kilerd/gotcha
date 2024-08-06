@@ -1,4 +1,4 @@
-use gotcha::{GotchaApp, Responder, State};
+use gotcha::{GotchaApp, GotchaConfigLoader, Responder, State};
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize, Clone)]
@@ -12,6 +12,12 @@ pub async fn hello_world(config: State<(Config,)>) -> impl Responder {
 
 #[tokio::main]
 async fn main() {
-    let app = GotchaApp::<_, Config>::new();
-    app.get("/", hello_world).done().serve("127.0.0.1", 8080).await
+    let config:Config = GotchaConfigLoader::load(None);
+    let app = GotchaApp::new();
+    app
+        .get("/", hello_world)
+        .data((config,))
+        .done()
+        .serve("127.0.0.1", 8080)
+        .await
 }

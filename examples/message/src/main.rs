@@ -35,5 +35,5 @@ pub async fn hello_world() -> impl Responder {
 
 #[tokio::main]
 async fn main() {
-    GotchaApp::<_, Config>::new().get("/", hello_world).done().serve("127.0.0.1", 8080).await
+    GotchaApp::new().get("/", hello_world).done().serve("127.0.0.1", 8080).await
 }
