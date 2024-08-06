@@ -23,13 +23,14 @@ pub use once_cell::sync::Lazy;
 use serde::de::DeserializeOwned;
 use tower_layer::Layer;
 use tower_service::Service;
+use tracing_subscriber::prelude::*;
+use tracing_subscriber::{fmt, EnvFilter};
 pub use {axum, inventory, oas, tracing};
 
 pub use crate::message::{Message, Messager};
 pub use crate::openapi::Operable;
 pub use crate::config::GotchaConfigLoader;
 use crate::state::ExtendableState;
-pub mod cli;
 mod config;
 pub mod message;
 pub mod openapi;
@@ -54,6 +55,18 @@ macro_rules! implement_method {
         }
     };
 }
+
+
+
+pub fn try_init_logger() {
+    tracing_subscriber::registry()
+        .with(fmt::layer())
+        .with(EnvFilter::from_default_env())
+        .try_init()
+        .ok();
+    info!("logger has been initialized");
+}
+
 
 #[doc(hidden)]
 pub fn extract_operable<H, T, State>() -> Option<&'static Operable>

@@ -10,7 +10,6 @@ repository = "https://github.com/Kilerd/gotcha/"
 
 [dependencies]
 async-trait = "0.1.60"
-clap = { version = "4.0.32", features = ["derive"] }
 gotcha_macro = { version = "0.1", path = "../gotcha_macro" }
 gotcha_core = { version = "0.1", path = "../gotcha_core" }
 serde = "1"
