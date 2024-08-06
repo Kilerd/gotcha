@@ -21,30 +21,23 @@ serde = {version="1", features=["derive"]}
 ```rust
 use serde::Deserialize;
 
-use gotcha::{get, GotchaApp, Responder, State};
+use gotcha::{get, GotchaApp, GotchaConfigLoader, Responder, State};
 use gotcha::axum::extract::FromRef;
 
-pub async fn hello_world(state: State<Config>) -> impl Responder {
+pub(crate) async fn hello_world(_state: State<Config>) -> impl Responder {
     "hello world"
 }
 
 #[derive(Debug, Deserialize, Clone)]
-struct Config {}
-
-impl FromRef<(Config,)> for Config {
-    fn from_ref(input: &(Config, )) -> Self {
-        input.0.clone()
-    }
-}
-
+pub(crate) struct Config {}
 
 #[tokio::main]
 async fn main() {
-    GotchaApp::<_, Config>::new()
-        .route("/", get(hello_world))
+    let config: Config = GotchaConfigLoader::load(None);
+    GotchaApp::new().get("/", hello_world)
+        .data(config)
         .done()
-        .serve("127.0.0.1", 8000)
-        .await
+        .serve("127.0.0.1", 8000).await
 }
 
 ```

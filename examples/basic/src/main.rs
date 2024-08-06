@@ -9,12 +9,6 @@ pub(crate) async fn hello_world(_state: State<Config>) -> impl Responder {
 #[derive(Debug, Deserialize, Clone)]
 pub(crate) struct Config {}
 
-impl FromRef<(Config,)> for Config {
-    fn from_ref(input: &(Config,)) -> Self {
-        input.0.clone()
-    }
-}
-
 #[tokio::main]
 async fn main() {
     let config: Config = GotchaConfigLoader::load(None);
