@@ -13,7 +13,6 @@ pub use axum::routing::{delete, patch, post, put};
 use axum::routing::{MethodFilter, MethodRouter, Route};
 use axum::serve::IncomingStream;
 use axum::Router;
-pub use cli::GotchaCli;
 pub use either::Either;
 pub use gotcha_core::{ParameterProvider, Schematic};
 pub use gotcha_macro::*;
