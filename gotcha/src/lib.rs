@@ -9,7 +9,7 @@ pub use axum::extract::{Json, Path, Query, State};
 use axum::handler::Handler;
 pub use axum::response::IntoResponse as Responder;
 use axum::response::Response;
-pub use axum::routing::{delete, patch, post, put};
+pub use axum::routing::{get, delete, patch, post, put};
 use axum::routing::{MethodFilter, MethodRouter, Route};
 use axum::serve::IncomingStream;
 use axum::Router;
@@ -30,6 +30,12 @@ pub use crate::message::{Message, Messager};
 pub use crate::openapi::Operable;
 pub use crate::config::GotchaConfigLoader;
 use crate::state::ExtendableState;
+
+#[cfg(feature = "prometheus")]
+pub mod prometheus {
+    pub use axum_prometheus::metrics::*;
+}
+
 mod config;
 pub mod message;
 pub mod openapi;
@@ -37,7 +43,7 @@ pub mod task;
 
 pub mod state;
 
-pub struct GotchaApp<State=(), const DONE: bool = false, const HAS_STATE: bool = false>
+pub struct GotchaApp<State = (), const DONE: bool = false, const HAS_STATE: bool = false>
 {
     api_endpoint: Option<String>,
     openapi_spec: OpenAPIV3,
@@ -218,7 +224,7 @@ where
     pub fn task<Task, TaskRet>(mut self, t: Task) -> Self
     where
         Task: (Fn() -> TaskRet) + 'static,
-        TaskRet: std::future::Future<Output = ()> + Send + 'static,
+        TaskRet: std::future::Future<Output=()> + Send + 'static,
     {
         self.tasks.push(Box::new(move || {
             tokio::spawn(t());
@@ -226,8 +232,6 @@ where
 
         self
     }
-
-
 }
 
 impl GotchaApp<(), false> {
@@ -255,18 +259,26 @@ impl GotchaApp<(), false> {
 }
 
 
-
 impl<R> GotchaApp<(), true>
 where
-    for<'a> Router<()>: Service<IncomingStream<'a>, Response = R, Error = Infallible> + Send + 'static,
-    for<'a> <Router<()> as Service<IncomingStream<'a>>>::Future: Send,
-    R: Service<Request, Response = Response, Error = Infallible> + Clone + Send + 'static,
-    R::Future: Send,
+        for<'a> Router<()>: Service<IncomingStream<'a>, Response=R, Error=Infallible> + Send + 'static,
+        for<'a> <Router<()> as Service<IncomingStream<'a>>>::Future: Send,
+        R: Service<Request, Response=Response, Error=Infallible> + Clone + Send + 'static,
+        R::Future: Send,
 {
-
-
     pub async fn serve(self, addr: &str, port: u16) {
+        #[cfg(feature = "prometheus")]
+        use axum_prometheus::PrometheusMetricLayer;
+        #[cfg(feature = "prometheus")]
+        let (prometheus_layer, metric_handle) = PrometheusMetricLayer::pair();
+
         let app: Router<_> = self.app;
+
+        #[cfg(feature = "prometheus")]
+        let app = app
+            .route("/metrics", get(|| async move { metric_handle.render() }))
+            .layer(prometheus_layer);
+
         let addr = SocketAddrV4::new(Ipv4Addr::from_str(addr).unwrap(), port);
         let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
         axum::serve(listener, app).await.unwrap();
