@@ -7,7 +7,7 @@ provide a featured web framework
  - [x] built-in message mechanism
  - [x] environment based configuration system, support environment resolver `${ANY_ENV_VAR}` and path variable `${app.database.name}` powered by [yaac](https://crates.io/crates/yaac)
  - [x] logging system
- - [ ] opt-in prometheus integration
+ - [x] opt-in prometheus integration
  - [ ] sqlx based magic ORM
  - [ ] cron-based task system
 
