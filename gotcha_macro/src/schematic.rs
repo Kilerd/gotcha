@@ -92,9 +92,9 @@ pub(crate) fn handler(input: TokenStream2) -> Result<TokenStream2, (Span, &'stat
                     let field_name = field.ident.unwrap().to_string();
                     let field_ty = field.ty;
                     let field_description = if let Some(doc) = field.attrs.get_doc() {
-                        quote!{ Some(#doc.to_string()) }
-                    }else {
-                        quote!{None}
+                        quote! { Some(#doc.to_string()) }
+                    } else {
+                        quote! {None}
                     };
                     quote! {
                         let mut field_schema = <#field_ty as Schematic>::generate_schema();

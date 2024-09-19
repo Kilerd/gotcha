@@ -16,7 +16,6 @@ pub(crate) async fn scalar_html() -> impl Responder {
     Html(include_str!("../statics/scalar.html"))
 }
 
-
 pub type ParamType = Either<Vec<Parameter>, RequestBody>;
 
 pub type ParamConstructor = Box<dyn Fn(String) -> ParamType + Sync + Send + 'static>;

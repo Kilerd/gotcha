@@ -12,8 +12,5 @@ pub(crate) struct Config {}
 #[tokio::main]
 async fn main() {
     let config: Config = GotchaConfigLoader::load(None);
-    GotchaApp::new().get("/", hello_world)
-        .data(config)
-        .done()
-        .serve("127.0.0.1", 8000).await
+    GotchaApp::new().get("/", hello_world).data(config).done().serve("127.0.0.1", 8000).await
 }
