@@ -1,16 +1,32 @@
-use gotcha::axum::extract::FromRef;
-use gotcha::{GotchaApp, GotchaConfigLoader, Responder, State};
-use serde::Deserialize;
+use gotcha::{async_trait, ConfigWrapper, GotchaApp, GotchaContext, GotchaRouter, Responder, State};
+use serde::{Deserialize, Serialize};
 
-pub(crate) async fn hello_world(_state: State<Config>) -> impl Responder {
+pub async fn hello_world(_state: State<ConfigWrapper<Config>>) -> impl Responder {
     "hello world"
 }
 
-#[derive(Debug, Deserialize, Clone)]
-pub(crate) struct Config {}
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct Config {}
+
+pub struct App {}
+
+#[async_trait]
+impl GotchaApp for App {
+    type State = ();
+
+    type Config = Config;
+
+    fn routes(&self, router: GotchaRouter<GotchaContext<Self::State, Self::Config>>) -> GotchaRouter<GotchaContext<Self::State, Self::Config>> {
+        router.get("/", hello_world)
+    }
+
+    async fn state(&self) -> Result<Self::State, Box<dyn std::error::Error>> {
+        Ok(())
+    }
+}
 
 #[tokio::main]
-async fn main() {
-    let config: Config = GotchaConfigLoader::load(None);
-    GotchaApp::new().get("/", hello_world).data(config).done().serve("127.0.0.1", 8000).await
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    App {}.run().await?;
+    Ok(())
 }

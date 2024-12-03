@@ -1,27 +1,26 @@
 use std::convert::Infallible;
-use std::marker::PhantomData;
 use std::net::{Ipv4Addr, SocketAddrV4};
 use std::str::FromStr;
 
 pub use async_trait::async_trait;
-use axum::extract::Request;
+use axum::extract::{FromRef, Request};
 pub use axum::extract::{Json, Path, Query, State};
 use axum::handler::Handler;
 pub use axum::response::IntoResponse as Responder;
-use axum::response::Response;
 pub use axum::routing::{delete, get, patch, post, put};
 use axum::routing::{MethodFilter, MethodRouter, Route};
-use axum::serve::IncomingStream;
 use axum::Router;
+pub use axum_macros::debug_handler;
+pub use config::ConfigWrapper;
 pub use either::Either;
 pub use gotcha_core::{ParameterProvider, Schematic};
 pub use gotcha_macro::*;
-use log::info;
 use oas::{Info, OpenAPIV3, PathItem, Tag};
 pub use once_cell::sync::Lazy;
-use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
 use tower_layer::Layer;
 use tower_service::Service;
+use tracing::info;
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::{fmt, EnvFilter};
 pub use {axum, inventory, oas, tracing};
@@ -29,27 +28,15 @@ pub use {axum, inventory, oas, tracing};
 pub use crate::config::GotchaConfigLoader;
 pub use crate::message::{Message, Messager};
 pub use crate::openapi::Operable;
-use crate::state::ExtendableState;
-
-pub use axum_macros::debug_handler;
-#[cfg(feature = "prometheus")]
-pub mod prometheus {
-    pub use axum_prometheus::metrics::*;
-}
-
 mod config;
 pub mod message;
 pub mod openapi;
+pub mod state;
 pub mod task;
 
-pub mod state;
-
-pub struct GotchaApp<State = (), const DONE: bool = false, const HAS_STATE: bool = false> {
-    api_endpoint: Option<String>,
-    openapi_spec: OpenAPIV3,
-    tasks: Vec<Box<dyn Fn()>>,
-
-    pub app: Router<State>,
+#[cfg(feature = "prometheus")]
+pub mod prometheus {
+    pub use axum_prometheus::metrics::*;
 }
 
 macro_rules! implement_method {
@@ -60,32 +47,26 @@ macro_rules! implement_method {
     };
 }
 
-pub fn try_init_logger() {
-    tracing_subscriber::registry()
-        .with(fmt::layer())
-        .with(EnvFilter::from_default_env())
-        .try_init()
-        .ok();
-    info!("logger has been initialized");
+#[derive(Clone)]
+pub struct GotchaContext<State, Config: Clone + Serialize + for<'de> Deserialize<'de>> {
+    pub config: ConfigWrapper<Config>,
+    pub state: State,
 }
 
-#[doc(hidden)]
-pub fn extract_operable<H, T, State>() -> Option<&'static Operable>
-where
-    H: Handler<T, State>,
-    T: 'static,
-{
-    let handle_name = std::any::type_name::<H>();
-    inventory::iter::<Operable>.into_iter().find(|it| it.type_name.eq(handle_name))
+impl<State, Config: Clone + Serialize + for<'de> Deserialize<'de>> FromRef<GotchaContext<State, Config>> for ConfigWrapper<Config> {
+    fn from_ref(context: &GotchaContext<State, Config>) -> Self {
+        context.config.clone()
+    }
 }
 
-impl<State> GotchaApp<State, false>
-where
-    State: Clone + Send + Sync + 'static,
-{
-    pub fn new() -> GotchaApp<State, false> {
-        GotchaApp {
-            api_endpoint: None,
+pub struct GotchaRouter<State = ()> {
+    openapi_spec: OpenAPIV3,
+    router: Router<State>,
+}
+
+impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
+    pub fn new() -> Self {
+        Self {
             openapi_spec: OpenAPIV3 {
                 openapi: "3.0.0".to_string(),
                 info: Info {
@@ -104,26 +85,13 @@ where
                 external_docs: None,
                 extras: None,
             },
-            tasks: vec![],
-            app: Router::new(),
+            router: Router::new(),
         }
     }
-
-    // todo default service
-
-    pub fn api_endpoint(self, path: impl Into<String>) -> Self {
-        Self {
-            api_endpoint: Some(path.into()),
-            ..self
-        }
-    }
-
     pub fn route(self, path: &str, method_router: MethodRouter<State>) -> Self {
         Self {
-            api_endpoint: self.api_endpoint,
             openapi_spec: self.openapi_spec,
-            tasks: self.tasks,
-            app: self.app.route(path, method_router),
+            router: self.router.route(path, method_router),
         }
     }
 
@@ -176,10 +144,8 @@ where
         let router = MethodRouter::new().on(method, handler);
 
         Self {
-            api_endpoint: self.api_endpoint,
             openapi_spec: self.openapi_spec,
-            tasks: self.tasks,
-            app: self.app.route(path, router),
+            router: self.router.route(path, router),
         }
     }
 
@@ -192,7 +158,7 @@ where
     implement_method!(MethodFilter::OPTIONS, options);
     implement_method!(MethodFilter::TRACE, trace);
 
-    pub fn layer<L>(self, layer: L) -> GotchaApp<State>
+    pub fn layer<L>(self, layer: L) -> Self
     where
         L: Layer<Route> + Clone + Send + 'static,
         L::Service: Service<Request> + Clone + Send + 'static,
@@ -200,80 +166,64 @@ where
         <L::Service as Service<Request>>::Error: Into<Infallible> + 'static,
         <L::Service as Service<Request>>::Future: Send + 'static,
     {
-        GotchaApp {
-            app: self.app.layer(layer),
-            api_endpoint: self.api_endpoint,
+        Self {
             openapi_spec: self.openapi_spec,
-            tasks: self.tasks,
+            router: self.router.layer(layer),
         }
-    }
-    pub fn data(self, data: State) -> GotchaApp<()> {
-        GotchaApp {
-            api_endpoint: self.api_endpoint,
-            openapi_spec: self.openapi_spec,
-            tasks: self.tasks,
-            app: self.app.with_state(data),
-        }
-    }
-
-    pub fn task<Task, TaskRet>(mut self, t: Task) -> Self
-    where
-        Task: (Fn() -> TaskRet) + 'static,
-        TaskRet: std::future::Future<Output = ()> + Send + 'static,
-    {
-        self.tasks.push(Box::new(move || {
-            tokio::spawn(t());
-        }));
-
-        self
     }
 }
 
-impl GotchaApp<(), false> {
-    pub fn done(self) -> GotchaApp<(), true> {
-        let app = self;
-        let router = app.app;
-        let apiv3 = app.openapi_spec;
-        let apiv3_2 = apiv3.clone();
-        let router1: Router<()> = router
-            .route(
-                app.api_endpoint.as_deref().unwrap_or("/openapi.json"),
-                axum::routing::get(|| async move { Json(apiv3.clone()) }),
-            )
+#[async_trait]
+pub trait GotchaApp: Sized {
+    type State: Clone + Send + Sync + 'static;
+    type Config: Clone + Send + Sync + 'static + Serialize + for<'de> Deserialize<'de>;
+
+    fn logger(&self) -> Result<(), Box<dyn std::error::Error>> {
+        tracing_subscriber::registry()
+            .with(fmt::layer())
+            .with(EnvFilter::from_default_env())
+            .try_init()?;
+        Ok(())
+    }
+
+    fn routes(&self, router: GotchaRouter<GotchaContext<Self::State, Self::Config>>) -> GotchaRouter<GotchaContext<Self::State, Self::Config>>;
+    async fn state(&self) -> Result<Self::State, Box<dyn std::error::Error>>;
+
+    async fn run(self) -> Result<(), Box<dyn std::error::Error>> {
+        self.logger()?;
+        info!("logger has been initialized");
+        let config: ConfigWrapper<Self::Config> = GotchaConfigLoader::load::<ConfigWrapper<Self::Config>>(std::env::var("GOTCHA_ACTIVE_PROFILE").ok());
+        let state = self.state().await?;
+        let context = GotchaContext { config: config.clone(), state };
+        let router = GotchaRouter::<GotchaContext<Self::State, Self::Config>>::new();
+        let router = self.routes(router);
+
+        let GotchaRouter {
+            openapi_spec,
+            router: raw_router,
+        } = router;
+
+        let router = raw_router
+            .with_state(context)
+            .route("/openapi.json", axum::routing::get(|| async move { Json(openapi_spec.clone()) }))
             .route("/redoc", axum::routing::get(openapi::openapi_html))
             .route("/scalar", axum::routing::get(openapi::scalar_html));
 
-        GotchaApp {
-            api_endpoint: app.api_endpoint,
-            openapi_spec: apiv3_2,
-            tasks: app.tasks,
-            app: router1,
-        }
+        let addr = SocketAddrV4::new(Ipv4Addr::from_str(&config.basic.host)?, config.basic.port);
+        let listener = tokio::net::TcpListener::bind(addr).await?;
+        axum::serve(listener, router).await?;
+        Ok(())
     }
 }
 
-impl<R> GotchaApp<(), true>
+#[doc(hidden)]
+pub fn extract_operable<H, T, State>() -> Option<&'static Operable>
 where
-    for<'a> Router<()>: Service<IncomingStream<'a>, Response = R, Error = Infallible> + Send + 'static,
-    for<'a> <Router<()> as Service<IncomingStream<'a>>>::Future: Send,
-    R: Service<Request, Response = Response, Error = Infallible> + Clone + Send + 'static,
-    R::Future: Send,
+    H: Handler<T, State>,
+    T: 'static,
 {
-    pub async fn serve(self, addr: &str, port: u16) {
-        #[cfg(feature = "prometheus")]
-        use axum_prometheus::PrometheusMetricLayer;
-        #[cfg(feature = "prometheus")]
-        let (prometheus_layer, metric_handle) = PrometheusMetricLayer::pair();
-
-        let app: Router<_> = self.app;
-
-        #[cfg(feature = "prometheus")]
-        let app = app.route("/metrics", get(|| async move { metric_handle.render() })).layer(prometheus_layer);
-
-        let addr = SocketAddrV4::new(Ipv4Addr::from_str(addr).unwrap(), port);
-        let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
-        axum::serve(listener, app).await.unwrap();
-    }
+    let handle_name = std::any::type_name::<H>();
+    inventory::iter::<Operable>.into_iter().find(|it| it.type_name.eq(handle_name))
 }
 
 #[cfg(test)]

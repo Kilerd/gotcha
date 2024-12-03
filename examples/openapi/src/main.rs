@@ -1,5 +1,5 @@
-use gotcha::{api, GotchaApp, Json, Path, Responder, Schematic};
-use serde::Deserialize;
+use gotcha::{api, GotchaApp, GotchaContext, GotchaRouter, Json, Path, Responder, Schematic};
+use serde::{Deserialize, Serialize};
 
 /// Rust has six types of attributes.
 ///
@@ -62,17 +62,30 @@ pub async fn update_pet_address_detail(_paths: Path<UpdatePetAddressPathArgs>, _
     format!("update pet info: {} {:?}", _payload.name, _payload.pet_type)
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Clone, Serialize)]
 struct Config {}
 
+struct App {}
+
+#[gotcha::async_trait]
+impl GotchaApp for App {
+    type State = ();
+    type Config = Config;
+    fn routes(&self, router: GotchaRouter<GotchaContext<(), Config>>) -> GotchaRouter<GotchaContext<(), Config>> {
+        router
+            .get("/", hello_world)
+            .post("/pets", new_pet)
+            .put("/pets/:pet_id", update_pet_info)
+            .put("/pets/:pet_id/address/:address_id", update_pet_address_detail)
+    }
+
+    async fn state(&self) -> Result<Self::State, Box<dyn std::error::Error>> {
+        Ok(())
+    }
+}
+
 #[tokio::main]
-async fn main() {
-    GotchaApp::new()
-        .get("/", hello_world)
-        .post("/pets", new_pet)
-        .put("/pets/:pet_id", update_pet_info)
-        .put("/pets/:pet_id/address/:address_id", update_pet_address_detail)
-        .done()
-        .serve("0.0.0.0", 8080)
-        .await
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    App {}.run().await?;
+    Ok(())
 }
