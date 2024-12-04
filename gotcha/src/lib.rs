@@ -15,6 +15,7 @@ pub use once_cell::sync::Lazy;
 pub use router::GotchaRouter;
 use serde::{Deserialize, Serialize};
 use tracing::info;
+use tracing::level_filters::LevelFilter;
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::{fmt, EnvFilter};
 pub use {axum, inventory, oas, tracing};
@@ -60,7 +61,10 @@ pub trait GotchaApp: Sized + Send + Sync {
     fn logger(&self) -> Result<(), Box<dyn std::error::Error>> {
         tracing_subscriber::registry()
             .with(fmt::layer())
-            .with(EnvFilter::from_default_env())
+            .with(EnvFilter::builder()
+                .with_default_directive(LevelFilter::INFO.into())
+                .with_env_var("RUST_LOG")
+                .from_env_lossy())
             .try_init()?;
         Ok(())
     }
