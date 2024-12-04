@@ -8,8 +8,7 @@ provide a featured web framework
  - [x] environment based configuration system, support environment resolver `${ANY_ENV_VAR}` and path variable `${app.database.name}` powered by [yaac](https://crates.io/crates/yaac)
  - [x] logging system
  - [x] opt-in prometheus integration
- - [ ] sqlx based magic ORM
- - [ ] cron-based task system
+ - [x] task system with interval and cron
 
 ## get started
 add dependency into `Cargo.toml`
