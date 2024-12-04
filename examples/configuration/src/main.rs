@@ -7,7 +7,7 @@ pub struct Config {
 }
 
 pub async fn hello_world(config: State<ConfigWrapper<Config>>) -> impl Responder {
-    config.0.data.welcome.clone()
+    config.0.application.welcome.clone()
 }
 
 pub struct App;
