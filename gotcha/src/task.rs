@@ -3,59 +3,73 @@ use std::str::FromStr;
 
 use chrono::Utc;
 use cron::Schedule;
+use serde::{Deserialize, Serialize};
 use tracing::info;
 
-pub struct TaskScheduler {}
+use crate::GotchaContext;
 
-impl TaskScheduler {
-    pub fn new() -> Self {
-        Self {}
+pub struct TaskScheduler<T1: Clone + Send + Sync + 'static, T2: Clone + Send + Sync + 'static + Serialize + for<'de> Deserialize<'de>> {
+    context: GotchaContext<T1, T2>,
+}
+
+impl<T1, T2> TaskScheduler<T1, T2>
+where
+    T1: Clone + Send + Sync + 'static,
+    T2: Clone + Send + Sync + 'static + Serialize + for<'de> Deserialize<'de>,
+{
+    pub fn new(context: GotchaContext<T1, T2>) -> Self {
+        Self { context }
     }
 
     pub fn cron<F, FF>(&self, name: impl AsRef<str>, expression: String, task: F)
     where
-        F: Fn() -> FF + Send + 'static,
+        F: Fn(GotchaContext<T1, T2>) -> FF + Send + 'static,
         FF: Future<Output = ()> + Send + 'static,
     {
         info!("starting cron task: {}", name.as_ref());
-        tokio::spawn(cron_proc_macro_wrapper(expression, task));
+        tokio::spawn(cron_proc_macro_wrapper(self.context.clone(), expression, task));
     }
 
     pub fn interval<F, FF>(&self, name: impl AsRef<str>, interval: std::time::Duration, task: F)
     where
-        F: Fn() -> FF + Send + 'static,
+        F: Fn(GotchaContext<T1, T2>) -> FF + Send + 'static,
         FF: Future<Output = ()> + Send + 'static,
     {
         info!("starting interval task: {}", name.as_ref());
-        tokio::spawn(interval_proc_macro_wrapper(interval, task));
+        tokio::spawn(interval_proc_macro_wrapper(self.context.clone(), interval, task));
     }
 }
 
-pub async fn cron_proc_macro_wrapper<F, FF>(expression: String, task: F)
+pub async fn cron_proc_macro_wrapper<T1, T2, F, FF>(context: GotchaContext<T1, T2>, expression: String, task: F)
 where
-    F: Fn() -> FF + Send + 'static,
+    T1: Clone + Send + Sync + 'static,
+    T2: Clone + Send + Sync + 'static + Serialize + for<'de> Deserialize<'de>,
+    F: Fn(GotchaContext<T1, T2>) -> FF + Send + 'static,
     FF: Future<Output = ()> + Send + 'static,
 {
     let schedule: Schedule = Schedule::from_str(&expression).unwrap();
     let scheduler = schedule.upcoming(Utc);
+
     for next_trigger_time in scheduler {
         let now = Utc::now();
         let duration = next_trigger_time - now;
         tokio::time::sleep(duration.to_std().unwrap()).await;
-        let t = task();
+        let t = task(context.clone());
         t.await
     }
 }
 
-pub async fn interval_proc_macro_wrapper<F, FF>(interval: std::time::Duration, task: F)
+pub async fn interval_proc_macro_wrapper<T1, T2, F, FF>(context: GotchaContext<T1, T2>, interval: std::time::Duration, task: F)
 where
-    F: Fn() -> FF + Send + 'static,
+    T1: Clone + Send + Sync + 'static,
+    T2: Clone + Send + Sync + 'static + Serialize + for<'de> Deserialize<'de>,
+    F: Fn(GotchaContext<T1, T2>) -> FF + Send + 'static,
     FF: Future<Output = ()> + Send + 'static,
 {
     let mut interval = tokio::time::interval(interval);
     loop {
         let _tick = interval.tick().await;
-        let t = task();
+        let t = task(context.clone());
         t.await
     }
 }

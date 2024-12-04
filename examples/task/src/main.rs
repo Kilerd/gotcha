@@ -24,13 +24,13 @@ impl GotchaApp for App {
         Ok(())
     }
 
-    async fn tasks(&self, task_scheduler: &mut TaskScheduler) -> Result<(), Box<dyn std::error::Error>> {
+    async fn tasks(&self, task_scheduler: &mut TaskScheduler<Self::State, Self::Config>) -> Result<(), Box<dyn std::error::Error>> {
         task_scheduler.interval("interval task", std::time::Duration::from_secs(1), interval_task);
         Ok(())
     }
 }
 
-async fn interval_task() {
+async fn interval_task(_: GotchaContext<(), Config>) {
     println!("interval task");
 }
 

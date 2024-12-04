@@ -37,12 +37,16 @@ pub mod prometheus {
 pub use task::TaskScheduler;
 
 #[derive(Clone)]
-pub struct GotchaContext<State, Config: Clone + Serialize + for<'de> Deserialize<'de>> {
+pub struct GotchaContext<State: Clone + Send + Sync + 'static, Config: Clone + Send + Sync + 'static + Serialize + for<'de> Deserialize<'de>> {
     pub config: ConfigWrapper<Config>,
     pub state: State,
 }
 
-impl<State, Config: Clone + Serialize + for<'de> Deserialize<'de>> FromRef<GotchaContext<State, Config>> for ConfigWrapper<Config> {
+impl<State, Config> FromRef<GotchaContext<State, Config>> for ConfigWrapper<Config>
+where
+    State: Clone + Send + Sync + 'static,
+    Config: Clone + Send + Sync + 'static + Serialize + for<'de> Deserialize<'de>,
+{
     fn from_ref(context: &GotchaContext<State, Config>) -> Self {
         context.config.clone()
     }
@@ -65,7 +69,7 @@ pub trait GotchaApp: Sized + Send + Sync {
 
     async fn state(&self) -> Result<Self::State, Box<dyn std::error::Error>>;
 
-    async fn tasks(&self, _task_scheduler: &mut TaskScheduler) -> Result<(), Box<dyn std::error::Error>> {
+    async fn tasks(&self, _task_scheduler: &mut TaskScheduler<Self::State, Self::Config>) -> Result<(), Box<dyn std::error::Error>> {
         Ok(())
     }
 
@@ -86,12 +90,12 @@ pub trait GotchaApp: Sized + Send + Sync {
         } = router;
 
         let router = raw_router
-            .with_state(context)
+            .with_state(context.clone())
             .route("/openapi.json", axum::routing::get(|| async move { Json(openapi_spec.clone()) }))
             .route("/redoc", axum::routing::get(openapi::openapi_html))
             .route("/scalar", axum::routing::get(openapi::scalar_html));
 
-        let mut task_scheduler = TaskScheduler::new();
+        let mut task_scheduler = TaskScheduler::new(context.clone());
         self.tasks(&mut task_scheduler).await?;
 
         let addr = SocketAddrV4::new(Ipv4Addr::from_str(&config.basic.host)?, config.basic.port);
