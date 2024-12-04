@@ -9,8 +9,8 @@ use yaac::{ConfigLoader, EnvironmentSource, FileSource};
 pub struct ConfigWrapper<T: DeserializeOwned + Serialize> {
     pub basic: BasicConfig,
 
-    #[serde(bound = "", flatten)]
-    pub data: T,
+    #[serde(bound = "")]
+    pub application: T,
 }
 
 #[derive(Clone, Deserialize, Serialize)]

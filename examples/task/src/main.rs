@@ -1,4 +1,4 @@
-use gotcha::{async_trait, ConfigWrapper, GotchaApp, GotchaContext, GotchaRouter, Responder, State};
+use gotcha::{async_trait, ConfigWrapper, GotchaApp, GotchaContext, GotchaRouter, Responder, State, TaskScheduler};
 use serde::{Deserialize, Serialize};
 
 pub async fn hello_world(_state: State<ConfigWrapper<Config>>) -> impl Responder {
@@ -6,9 +6,7 @@ pub async fn hello_world(_state: State<ConfigWrapper<Config>>) -> impl Responder
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
-pub struct Config {
-    pub name: String,
-}
+pub struct Config {}
 
 pub struct App {}
 
@@ -25,6 +23,15 @@ impl GotchaApp for App {
     async fn state(&self) -> Result<Self::State, Box<dyn std::error::Error>> {
         Ok(())
     }
+
+    async fn tasks(&self, task_scheduler: &mut TaskScheduler) -> Result<(), Box<dyn std::error::Error>> {
+        task_scheduler.interval("interval task", std::time::Duration::from_secs(1), interval_task);
+        Ok(())
+    }
+}
+
+async fn interval_task() {
+    println!("interval task");
 }
 
 #[tokio::main]

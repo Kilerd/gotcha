@@ -10,6 +10,7 @@ repository = "https://github.com/Kilerd/gotcha/"
 [features]
 prometheus = ["dep:axum-prometheus"]
 default = []
+openapi = []
 
 
 [dependencies]
