@@ -2,7 +2,7 @@
 name = "gotcha"
 description = "enhanced web framework based on actix-web"
 edition = "2021"
-version = "0.1.12"
+version = "0.2.0"
 license = "MIT"
 repository = "https://github.com/Kilerd/gotcha/"
 
@@ -15,8 +15,8 @@ openapi = []
 
 [dependencies]
 async-trait = "0.1.60"
-gotcha_macro = { version = "0.1", path = "../gotcha_macro" }
-gotcha_core = { version = "0.1", path = "../gotcha_core" }
+gotcha_macro = { version = "0.2", path = "../gotcha_macro" }
+gotcha_core = { version = "0.2", path = "../gotcha_core" }
 serde = "1"
 tokio = "1"
 tracing = "0.1"
