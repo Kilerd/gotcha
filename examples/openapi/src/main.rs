@@ -1,4 +1,4 @@
-use gotcha::{api, GotchaApp, GotchaContext, GotchaRouter, Json, Path, Responder, Schematic};
+use gotcha::{api, ConfigWrapper, GotchaApp, GotchaContext, GotchaRouter, Json, Path, Responder, Schematic};
 use serde::{Deserialize, Serialize};
 
 /// Rust has six types of attributes.
@@ -79,7 +79,7 @@ impl GotchaApp for App {
             .put("/pets/:pet_id/address/:address_id", update_pet_address_detail)
     }
 
-    async fn state(&self) -> Result<Self::State, Box<dyn std::error::Error>> {
+    async fn state(&self, _config: &ConfigWrapper<Self::Config>) -> Result<Self::State, Box<dyn std::error::Error>> {
         Ok(())
     }
 }

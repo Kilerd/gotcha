@@ -71,7 +71,7 @@ pub trait GotchaApp: Sized + Send + Sync {
 
     fn routes(&self, router: GotchaRouter<GotchaContext<Self::State, Self::Config>>) -> GotchaRouter<GotchaContext<Self::State, Self::Config>>;
 
-    async fn state(&self) -> Result<Self::State, Box<dyn std::error::Error>>;
+    async fn state(&self, config: &ConfigWrapper<Self::Config>) -> Result<Self::State, Box<dyn std::error::Error>>;
 
     async fn tasks(&self, _task_scheduler: &mut TaskScheduler<Self::State, Self::Config>) -> Result<(), Box<dyn std::error::Error>> {
         Ok(())
@@ -81,7 +81,7 @@ pub trait GotchaApp: Sized + Send + Sync {
         self.logger()?;
         info!("logger has been initialized");
         let config: ConfigWrapper<Self::Config> = GotchaConfigLoader::load::<ConfigWrapper<Self::Config>>(std::env::var("GOTCHA_ACTIVE_PROFILE").ok());
-        let state = self.state().await?;
+        let state = self.state(&config).await?;
 
         let context = GotchaContext { config: config.clone(), state };
 

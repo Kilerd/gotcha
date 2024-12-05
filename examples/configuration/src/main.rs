@@ -22,7 +22,7 @@ impl GotchaApp for App {
         router.get("/", hello_world)
     }
 
-    async fn state(&self) -> Result<Self::State, Box<dyn std::error::Error>> {
+    async fn state(&self, _config: &ConfigWrapper<Self::Config>) -> Result<Self::State, Box<dyn std::error::Error>> {
         Ok(())
     }
 }
