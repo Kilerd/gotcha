@@ -13,6 +13,6 @@ syn = "1.0"
 quote = "1.0"
 proc-macro2 = "1.0.47"
 darling = "0.14.2"
-gotcha_core = { version = "0.1", path = "../gotcha_core" }
+gotcha_core = { version = "0.2", path = "../gotcha_core" }
 proc-macro-error = { version = "1", default-features = false }
 uuid = {version =  "1.10.0", features = ["v4"] }
