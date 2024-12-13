@@ -34,6 +34,12 @@ pub mod task;
 pub mod prometheus {
     pub use axum_prometheus::metrics::*;
 }
+
+pub mod layers {
+    #[cfg(feature = "cors")]
+    pub use tower_http::cors::{self, CorsLayer};
+}
+
 // #[cfg(feature = "task")]
 pub use task::TaskScheduler;
 
@@ -61,10 +67,12 @@ pub trait GotchaApp: Sized + Send + Sync {
     fn logger(&self) -> Result<(), Box<dyn std::error::Error>> {
         tracing_subscriber::registry()
             .with(fmt::layer())
-            .with(EnvFilter::builder()
-                .with_default_directive(LevelFilter::INFO.into())
-                .with_env_var("RUST_LOG")
-                .from_env_lossy())
+            .with(
+                EnvFilter::builder()
+                    .with_default_directive(LevelFilter::INFO.into())
+                    .with_env_var("RUST_LOG")
+                    .from_env_lossy(),
+            )
             .try_init()?;
         Ok(())
     }
