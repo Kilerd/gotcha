@@ -5,7 +5,27 @@ import os
 import sys
 
 
-features = ["openapi", "prometheus", "cors"]
+import re
+
+# Load features from Cargo.toml
+def load_features():
+    features = []
+    with open("gotcha/Cargo.toml", "r") as f:
+        cargo_toml = f.read()
+
+        # Extract features from [features] section
+        in_features = False
+        for line in cargo_toml.split('\n'):
+            if line.startswith('[features]'):
+                in_features = True
+                continue
+            elif line.startswith('['):
+                in_features = False
+            elif in_features and '=' in line:
+                feature = line.split('=')[0].strip()
+                if feature != 'default':
+                    features.append(feature)
+    return features
 
 def generate_combinations(features):
     n = len(features)
@@ -20,10 +40,8 @@ def generate_combinations(features):
         combinations.append(" ".join(combo))
         
     return combinations
-
 # Get combinations
-combinations = generate_combinations(features)
-
+combinations = generate_combinations(load_features())
 # Print combination matrix
 print("Feature Combinations:")
 for combo in combinations:
