@@ -1,15 +1,15 @@
-use gotcha::{api, Responder};
+use gotcha::{api};
 
 #[api]
 async fn handler() -> String {
     "Hello world".to_string()
 }
-fn extract<H, T>(handler: H) -> Option<&'static gotcha::openapi::Operable>
+fn extract<H, T>(_handler: H) -> Option<&'static gotcha::openapi::Operable>
 where
     H: gotcha::axum::handler::Handler<T, ()>,
     T: 'static,
 {
-    gotcha::extract_operable::<H, T, ()>()
+    gotcha::router::extract_operable::<H, T, ()>()
 }
 fn main() {
     let operable = extract(handler).unwrap();

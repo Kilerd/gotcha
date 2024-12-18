@@ -7,3 +7,6 @@ members = [
     "gotcha_macro",
     "examples/*"
 ]
+
+[workspace.dependencies]
+cfg-if = "1"

@@ -18,13 +18,17 @@ use tracing::info;
 use tracing::level_filters::LevelFilter;
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::{fmt, EnvFilter};
-pub use {axum, inventory, oas, tracing};
+pub use {axum, inventory, tracing};
 
 pub use crate::config::GotchaConfigLoader;
 pub use crate::message::{Message, Messager};
+#[cfg(feature = "openapi")]
 pub use crate::openapi::Operable;
+#[cfg(feature = "openapi")]
+pub use oas;
 mod config;
 pub mod message;
+#[cfg(feature = "openapi")]
 pub mod openapi;
 pub mod router;
 pub mod state;
@@ -97,17 +101,27 @@ pub trait GotchaApp: Sized + Send + Sync {
         let router = self.routes(router);
 
         let GotchaRouter {
+            #[cfg(feature = "openapi")]
             operations,
             router: raw_router,
         } = router;
 
+        #[cfg(feature = "openapi")]
         let openapi_spec = crate::openapi::generate_openapi(operations);
-        let router = raw_router
-            .with_state(context.clone())
-            .route("/openapi.json", axum::routing::get(|| async move { Json(openapi_spec.clone()) }))
-            .route("/redoc", axum::routing::get(openapi::openapi_html))
-            .route("/scalar", axum::routing::get(openapi::scalar_html));
 
+        cfg_if::cfg_if! {
+            if #[cfg(feature = "openapi")] {
+                let router = raw_router
+                .with_state(context.clone())
+                .route("/openapi.json", axum::routing::get(|| async move { Json(openapi_spec.clone()) }))
+                .route("/redoc", axum::routing::get(openapi::openapi_html))
+                .route("/scalar", axum::routing::get(openapi::scalar_html));
+            }else {
+                let router = raw_router
+                .with_state(context.clone());
+            }
+        }
+        
         let mut task_scheduler = TaskScheduler::new(context.clone());
         self.tasks(&mut task_scheduler).await?;
 
@@ -121,8 +135,9 @@ pub trait GotchaApp: Sized + Send + Sync {
 #[cfg(test)]
 mod test {
     #[test]
+    #[cfg(feature = "openapi")]
     fn pass() {
         let t = trybuild::TestCases::new();
-        t.pass("tests/pass/*.rs");
+        t.pass("tests/pass/openapi/*.rs");
     }
 }

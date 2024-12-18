@@ -7,11 +7,14 @@ pub use axum::response::IntoResponse as Responder;
 use axum::routing::{MethodFilter, MethodRouter, Route};
 use axum::Router;
 use http::Method;
+
+#[cfg(feature = "openapi")]
 use oas::Operation;
 use tower_layer::Layer;
 use tower_service::Service;
 use tracing::info;
 
+#[cfg(feature = "openapi")]
 use crate::Operable;
 
 macro_rules! implement_method {
@@ -23,6 +26,7 @@ macro_rules! implement_method {
 }
 
 pub struct GotchaRouter<State = ()> {
+    #[cfg(feature = "openapi")]
     pub(crate) operations: HashMap<(String, Method), Operation>,
     pub(crate) router: Router<State>,
 }
@@ -30,12 +34,14 @@ pub struct GotchaRouter<State = ()> {
 impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
     pub fn new() -> Self {
         Self {
+            #[cfg(feature = "openapi")]
             operations: Default::default(),
             router: Router::new(),
         }
     }
     pub fn route(self, path: &str, method_router: MethodRouter<State>) -> Self {
         Self {
+            #[cfg(feature = "openapi")]
             operations: self.operations,
             router: self.router.route(path, method_router),
         }
@@ -46,7 +52,9 @@ impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
         H: Handler<T, State>,
         T: 'static,
     {
+        #[cfg(feature = "openapi")]
         let handle_operable = extract_operable::<H, T, State>();
+        #[cfg(feature = "openapi")]
         if let Some(operable) = handle_operable {
             info!("generating openapi spec for {}[{}]", &operable.type_name, &path);
             let operation = operable.generate(path.to_string());
@@ -67,6 +75,7 @@ impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
         let router = MethodRouter::new().on(method, handler);
 
         Self {
+            #[cfg(feature = "openapi")]
             operations: self.operations,
             router: self.router.route(path, router),
         }
@@ -82,6 +91,7 @@ impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
     implement_method!(MethodFilter::TRACE, trace);
 
     pub fn nest(self, path: &str, router: Self) -> Self {
+        #[cfg(feature = "openapi")]
         let operations = router
             .operations
             .into_iter()
@@ -92,6 +102,7 @@ impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
             })
             .collect::<HashMap<(String, Method), Operation>>();
         Self {
+            #[cfg(feature = "openapi")]
             operations: self.operations.into_iter().chain(operations).collect(),
             router: self.router.nest(path, router.router),
         }
@@ -99,6 +110,7 @@ impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
 
     pub fn merge(self, other: Self) -> Self {
         Self {
+            #[cfg(feature = "openapi")]
             operations: self.operations.into_iter().chain(other.operations).collect(),
             router: self.router.merge(other.router),
         }
@@ -113,6 +125,7 @@ impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
         <L::Service as Service<Request>>::Future: Send + 'static,
     {
         Self {
+            #[cfg(feature = "openapi")]
             operations: self.operations,
             router: self.router.layer(layer),
         }
@@ -120,6 +133,7 @@ impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
 }
 
 #[doc(hidden)]
+#[cfg(feature = "openapi")]
 pub fn extract_operable<H, T, State>() -> Option<&'static Operable>
 where
     H: Handler<T, State>,

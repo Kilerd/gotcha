@@ -9,7 +9,7 @@ async fn handler() -> String {
 
 fn extract<H, T>(handler: H) -> Option<&'static Operable> where  H: gotcha::axum::handler::Handler<T, ()>,
 T: 'static, {
-    use gotcha::extract_operable;
+    use gotcha::router::extract_operable;
     extract_operable::<H,T, ()>()
 }
 

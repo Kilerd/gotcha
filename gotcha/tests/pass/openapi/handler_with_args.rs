@@ -36,7 +36,7 @@ where
     H: gotcha::axum::handler::Handler<T, ()>,
     T: 'static,
 {
-    gotcha::extract_operable::<H, T, ()>()
+    gotcha::router::extract_operable::<H, T, ()>()
 }
 
 
@@ -45,7 +45,7 @@ where
     H: gotcha::axum::handler::Handler<T, AppData>,
     T: 'static,
 {
-    gotcha::extract_operable::<H, T, AppData>()
+    gotcha::router::extract_operable::<H, T, AppData>()
 }
 fn main() {
     let operable = extract(path_tuple).unwrap();
