@@ -18,6 +18,7 @@ jobs:
       features: ${{ steps.features.outputs.features }}
 
     steps:
+      - uses: actions/checkout@v3
       - name: Install Python
         uses: actions/setup-python@v4
         with:
