@@ -45,7 +45,6 @@ def generate_combinations(features):
 if __name__ == "__main__":
 
     if len(sys.argv) > 1 and sys.argv[1] == "echo":
-        print("Feature Combinations:")
         features = load_features()
         combinations = generate_combinations(load_features())
         print(f"features={json.dumps(combinations)}")

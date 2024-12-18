@@ -27,7 +27,7 @@ jobs:
       - name: Define Features
         id: features
         run: |
-          python3 test-feature-matrix.py echo > "$GITHUB_OUTPUT"
+          python3 test-feature-matrix.py echo >> "$GITHUB_OUTPUT"
 
   gotcha-test:
     runs-on: ubuntu-latest
