@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 # Define feature list
+import json
 import os
 import sys
 
@@ -40,15 +41,24 @@ def generate_combinations(features):
         combinations.append(" ".join(combo))
         
     return combinations
-# Get combinations
-combinations = generate_combinations(load_features())
-# Print combination matrix
-print("Feature Combinations:")
-for combo in combinations:
-    command = f"cargo test --package gotcha --no-default-features --features \"{combo}\""
-    print(command)
-    result = os.system(command)
-    if result != 0:
-        print(f"Test failed for features: {combo}")
-        sys.exit(-1)
-        break
+
+if __name__ == "__main__":
+
+    if len(sys.argv) > 1 and sys.argv[1] == "echo":
+        print("Feature Combinations:")
+        features = load_features()
+        combinations = generate_combinations(load_features())
+        print(f"features={json.dumps(combinations)}")
+    else:
+        # Get combinations
+        combinations = generate_combinations(load_features())
+        # Print combination matrix
+        print("Feature Combinations:")
+        for combo in combinations:
+            command = f"cargo test --package gotcha --no-default-features --features \"{combo}\""
+            print(command)
+            result = os.system(command)
+            if result != 0:
+                print(f"Test failed for features: {combo}")
+                sys.exit(-1)
+                break

@@ -10,6 +10,43 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+
+  define-matrix:
+    runs-on: ubuntu-latest
+
+    outputs:
+      features: ${{ steps.features.outputs.features }}
+
+    steps:
+      - name: Install Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.x'
+
+      - name: Define Features
+        id: features
+        run: |
+          python3 test-feature-matrix.py echo > "$GITHUB_OUTPUT"
+
+  gotcha-test:
+    runs-on: ubuntu-latest
+    needs: define-matrix
+    strategy:
+      matrix:
+        features: ${{ fromJSON(needs.define-matrix.outputs.features) }}
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run tests
+        run: cargo test --package gotcha --no-default-features  --features ${{ matrix.features }}
+  
   test:
     name: Test
     runs-on: ubuntu-latest
@@ -22,14 +59,6 @@ jobs:
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
 
-      - name: Install Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.x'
-
-      - name: Run feature matrix tests
-        run: python3 test-feature-matrix.py
-      
       - name: Run tests (gotcha_macro and gotcha_core)
         run: |
           cargo test -p gotcha_macro --all-features
