@@ -1,9 +1,10 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 use axum::response::Html;
 use convert_case::{Case, Casing};
 use either::Either;
-use oas::{Operation, Parameter, Referenceable, RequestBody, Response, Responses};
+use http::Method;
+use oas::{Info, OpenAPIV3, Operation, Parameter, PathItem, Referenceable, RequestBody, Response, Responses, Tag};
 use once_cell::sync::Lazy;
 
 use crate::Responder;
@@ -70,3 +71,62 @@ impl Operable {
 }
 
 inventory::collect!(Operable);
+
+pub fn generate_openapi(operations: HashMap<(String, Method), Operation>) -> OpenAPIV3 {
+    let mut spec = OpenAPIV3 {
+        info: Info {
+            title: "Gotcha".to_string(),
+            description: Some("Gotcha is a framework for building microservices".to_string()),
+            terms_of_service: None,
+            contact: None,
+            license: None,
+            version: "1.0.0".to_string(),
+        },
+        paths: BTreeMap::default(),
+        servers: None,
+        components: None,
+        security: None,
+        tags: None,
+        openapi: "3.0.0".to_string(),
+        external_docs: None,
+        extras: None,
+    };
+    for ((path, method), operation) in operations {
+        if let Some(added_tags) = &operation.tags {
+            added_tags.iter().for_each(|tag| {
+                if let Some(tags) = &mut spec.tags {
+                    if !tags.iter().any(|each| each.name.eq(tag)) {
+                        tags.push(Tag::new(tag, None))
+                    }
+                }
+            })
+        }
+        let entry = spec.paths.entry(path.to_string()).or_insert_with(|| PathItem {
+            _ref: None,
+            summary: None,
+            description: None,
+            get: None,
+            put: None,
+            post: None,
+            delete: None,
+            options: None,
+            head: None,
+            patch: None,
+            trace: None,
+            servers: None,
+            parameters: None,
+        });
+        match method {
+            Method::GET => entry.get = Some(operation),
+            Method::POST => entry.post = Some(operation),
+            Method::PUT => entry.put = Some(operation),
+            Method::DELETE => entry.delete = Some(operation),
+            Method::HEAD => entry.head = Some(operation),
+            Method::OPTIONS => entry.options = Some(operation),
+            Method::PATCH => entry.patch = Some(operation),
+            Method::TRACE => entry.trace = Some(operation),
+            _ => {}
+        }
+    }
+    spec
+}

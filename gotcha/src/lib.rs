@@ -97,10 +97,11 @@ pub trait GotchaApp: Sized + Send + Sync {
         let router = self.routes(router);
 
         let GotchaRouter {
-            openapi_spec,
+            operations,
             router: raw_router,
         } = router;
 
+        let openapi_spec = crate::openapi::generate_openapi(operations);
         let router = raw_router
             .with_state(context.clone())
             .route("/openapi.json", axum::routing::get(|| async move { Json(openapi_spec.clone()) }))
