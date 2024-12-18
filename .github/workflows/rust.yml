@@ -46,7 +46,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Run tests
-        run: cargo test --package gotcha --no-default-features  --features ${{ matrix.features }}
+        run: cargo test --package gotcha --no-default-features  --features "${{ matrix.features }}"
   
   test:
     name: Test
