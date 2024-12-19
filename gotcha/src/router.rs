@@ -30,15 +30,19 @@ pub struct GotchaRouter<State = ()> {
     pub(crate) operations: HashMap<(String, Method), Operation>,
     pub(crate) router: Router<State>,
 }
-
-impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
-    pub fn new() -> Self {
+impl<State: Clone + Send + Sync + 'static> Default for GotchaRouter<State> {
+    fn default() -> Self {
         Self {
             #[cfg(feature = "openapi")]
             operations: Default::default(),
             router: Router::new(),
         }
     }
+}
+
+impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
+    
+
     pub fn route(self, path: &str, method_router: MethodRouter<State>) -> Self {
         Self {
             #[cfg(feature = "openapi")]

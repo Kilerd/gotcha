@@ -100,7 +100,7 @@ pub trait GotchaApp: Sized + Send + Sync {
 
         let context = GotchaContext { config: config.clone(), state };
 
-        let router = GotchaRouter::<GotchaContext<Self::State, Self::Config>>::new();
+        let router = GotchaRouter::<GotchaContext<Self::State, Self::Config>>::default();
         let router = self.routes(router);
 
         let GotchaRouter {
@@ -124,7 +124,6 @@ pub trait GotchaApp: Sized + Send + Sync {
                 .with_state(context.clone());
             }
         }
-        
         let mut task_scheduler = TaskScheduler::new(context.clone());
         self.tasks(&mut task_scheduler).await?;
 
