@@ -5,9 +5,6 @@ import json
 import os
 import sys
 
-
-import re
-
 # Load features from Cargo.toml
 def load_features():
     features = []

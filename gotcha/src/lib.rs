@@ -44,6 +44,9 @@ pub mod layers {
     pub use tower_http::cors::{self, CorsLayer};
 }
 
+#[cfg(feature = "static_files")]
+pub use tower_http::fs::{ServeDir, ServeFile};
+
 // #[cfg(feature = "task")]
 pub use task::TaskScheduler;
 
