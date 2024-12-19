@@ -45,7 +45,7 @@ pub mod layers {
 }
 
 #[cfg(feature = "static_files")]
-pub use tower_http::fs::{ServeDir, ServeFile};
+pub use tower_http::services::{ServeDir, ServeFile};
 
 // #[cfg(feature = "task")]
 pub use task::TaskScheduler;
