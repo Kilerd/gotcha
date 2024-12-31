@@ -1,3 +1,14 @@
+//! # Message Module
+//! 
+//! This module provides a message handling system for Gotcha web applications.
+//! It allows for the asynchronous handling of messages and the spawning of tasks to handle them.
+//!
+//! ## Features
+//!
+//! - Asynchronous message handling
+//! - Task spawning for message processing
+//! - Type-safe message handling
+//!
 use std::sync::Arc;
 
 use async_trait::async_trait;

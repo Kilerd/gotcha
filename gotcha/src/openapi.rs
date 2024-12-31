@@ -1,3 +1,35 @@
+//! # OpenAPI Module
+//! 
+//! This module provides OpenAPI documentation generation capabilities for Gotcha web applications.
+//! It is enabled by default but can be disabled by opting out of the "openapi" feature.
+//!
+//! ## Features
+//!
+//! - Automatic OpenAPI spec generation from route definitions
+//! - Support for operation parameters, request bodies, and responses
+//! - Built-in Redoc and Scalar UI for API documentation viewing
+//! - Grouping operations by tags
+//! - Parameter validation and type information
+//!
+//! ## Example
+//!
+//! ```rust,no_run
+//! use gotcha::{GotchaRouter, Operable};
+//!
+//! #[openapi(group = "Users")]
+//! async fn get_user() -> impl Responder {
+//!     // Handler implementation
+//! }
+//!
+//! fn routes(router: GotchaRouter) -> GotchaRouter {
+//!     router.get("/users/:id", get_user)
+//! }
+//! ```
+//!
+//! The OpenAPI documentation will be automatically generated and served at `/docs` 
+//! and `/docs/scalar` endpoints when the feature is enabled.
+
+
 use std::collections::{BTreeMap, HashMap};
 
 use axum::response::Html;
@@ -8,6 +40,7 @@ use oas::{Info, OpenAPIV3, Operation, Parameter, PathItem, Referenceable, Reques
 use once_cell::sync::Lazy;
 
 use crate::Responder;
+
 
 pub(crate) async fn openapi_html() -> impl Responder {
     Html(include_str!("../statics/redoc.html"))

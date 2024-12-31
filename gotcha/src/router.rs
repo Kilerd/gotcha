@@ -19,14 +19,31 @@ use crate::Operable;
 
 macro_rules! implement_method {
     ($method:expr, $fn_name: tt ) => {
+        /// quick way to add a method route to the router
+        /// # Examples
+        ///
+        /// ```rust,no_run
+        /// use gotcha::{GotchaRouter, Responder};
+        ///
+        /// async fn hello_world() -> impl Responder {
+        ///     "Hello World!"
+        /// }
+        ///
+        /// let router = GotchaRouter::default()
+        ///     .$fn_name("/", hello_world);
+        /// ```
         pub fn $fn_name<H: Handler<T, State>, T: 'static>(self, path: &str, handler: H) -> Self {
             self.method_route(path, $method, handler)
         }
     };
 }
 
+/// # GotchaRouter
+/// 
+/// A router for Gotcha web applications.
 pub struct GotchaRouter<State = ()> {
     #[cfg(feature = "openapi")]
+    /// The operations for the router.
     pub(crate) operations: HashMap<(String, Method), Operation>,
     pub(crate) router: Router<State>,
 }
@@ -43,6 +60,19 @@ impl<State: Clone + Send + Sync + 'static> Default for GotchaRouter<State> {
 impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
     
 
+    /// add a route to the router
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use gotcha::{GotchaRouter, Responder};
+    ///
+    /// async fn hello_world() -> impl Responder {
+    ///     "Hello World!"
+    /// }
+    ///
+    /// let router = GotchaRouter::default()
+    ///     .route("/", get(hello_world));
+    /// ```
     pub fn route(self, path: &str, method_router: MethodRouter<State>) -> Self {
         Self {
             #[cfg(feature = "openapi")]
@@ -51,6 +81,19 @@ impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
         }
     }
 
+    /// add a method route to the router
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use gotcha::{GotchaRouter, Responder};
+    ///
+    /// async fn hello_world() -> impl Responder {
+    ///     "Hello World!"
+    /// }
+    ///
+    /// let router = GotchaRouter::default()
+    ///     .method_route("/", MethodFilter::GET, hello_world);
+    /// ```
     pub fn method_route<H, T>(mut self, path: &str, method: MethodFilter, handler: H) -> Self
     where
         H: Handler<T, State>,
@@ -94,6 +137,15 @@ impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
     implement_method!(MethodFilter::OPTIONS, options);
     implement_method!(MethodFilter::TRACE, trace);
 
+    /// nest a router inside another router
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use gotcha::{GotchaRouter, Responder};
+    ///
+    /// let router = GotchaRouter::default()
+    ///     .nest("/users", GotchaRouter::default());
+    /// ```
     pub fn nest(self, path: &str, router: Self) -> Self {
         #[cfg(feature = "openapi")]
         let operations = router
@@ -112,6 +164,15 @@ impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
         }
     }
 
+    /// merge two routers
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use gotcha::{GotchaRouter};
+    ///
+    /// let router = GotchaRouter::default()
+    ///     .merge(GotchaRouter::default());
+    /// ```
     pub fn merge(self, other: Self) -> Self {
         Self {
             #[cfg(feature = "openapi")]
@@ -120,6 +181,15 @@ impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
         }
     }
 
+    /// add a layer to the router
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use gotcha::{GotchaRouter};
+    ///
+    /// let router = GotchaRouter::default()
+    ///     .layer(MyLayer::default());
+    /// ```
     pub fn layer<L>(self, layer: L) -> Self
     where
         L: Layer<Route> + Clone + Send + 'static,

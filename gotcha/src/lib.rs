@@ -1,3 +1,66 @@
+//! # Gotcha
+//! 
+//! Gotcha is an enhanced web framework based on Axum, providing additional features and conveniences
+//! for building web applications in Rust.
+//! 
+//! ## Features
+//! 
+//! - Built on top of Axum for high performance and reliability
+//! - OpenAPI documentation generation (optional)
+//! - Prometheus metrics integration (optional) 
+//! - CORS support (optional)
+//! - Static file serving (optional)
+//! - Task scheduling
+//! - Configuration management
+//! - Message system
+//! - State management
+//! 
+//! ## Example
+//! 
+//! ```no_run
+//! use gotcha::{async_trait, ConfigWrapper, GotchaApp, GotchaContext, GotchaRouter, Responder, State};
+//! use serde::{Deserialize, Serialize};
+//! 
+//! pub async fn hello_world(_state: State<ConfigWrapper<Config>>) -> impl Responder {
+//!     "hello world"
+//! }
+//! 
+//! #[derive(Debug, Deserialize, Serialize, Clone)]
+//! pub struct Config {
+//!     pub name: String,
+//! }
+//! 
+//! pub struct App {}
+//! 
+//! #[async_trait]
+//! impl GotchaApp for App {
+//!     type State = ();
+//!     type Config = Config;
+//! 
+//!     fn routes(&self, router: GotchaRouter<GotchaContext<Self::State, Self::Config>>) -> GotchaRouter<GotchaContext<Self::State, Self::Config>> {
+//!         router.get("/", hello_world)
+//!     }
+//! 
+//!     async fn state(&self, _config: &ConfigWrapper<Self::Config>) -> Result<Self::State, Box<dyn std::error::Error>> {
+//!         Ok(())
+//!     }
+//! }
+//! 
+//! #[tokio::main]
+//! async fn main() -> Result<(), Box<dyn std::error::Error>> {
+//!     App {}.run().await?;
+//!     Ok(())
+//! }
+//! ```
+//! 
+//! ## Optional Features
+//! 
+//! - `openapi` - Enables OpenAPI documentation generation
+//! - `prometheus` - Enables Prometheus metrics
+//! - `cors` - Enables CORS support
+//! - `static_files` - Enables static file serving capabilities
+//!
+
 use std::net::{Ipv4Addr, SocketAddrV4};
 use std::str::FromStr;
 

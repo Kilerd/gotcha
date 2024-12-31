@@ -1,3 +1,44 @@
+//! # Task Module
+//! 
+//! This module provides task scheduling capabilities for Gotcha web applications.
+//! It supports both cron-based and interval-based task scheduling.
+//!
+//! ## Features
+//!
+//! - Cron expression based scheduling
+//! - Fixed interval scheduling
+//! - Async task execution
+//! - Access to application context in tasks
+//!
+//! ## Examples
+//!
+//! ```rust,no_run
+//! use gotcha::{GotchaContext, TaskScheduler};
+//! use std::time::Duration;
+//!
+//! // Create a task scheduler
+//! let scheduler = TaskScheduler::new(context);
+//!
+//! // Schedule a cron task
+//! scheduler.cron("daily-cleanup", "0 0 * * *", |ctx| async move {
+//!     // Task implementation
+//! });
+//!
+//! // Schedule an interval task
+//! scheduler.interval("heartbeat", Duration::from_secs(60), |ctx| async move {
+//!     // Task implementation  
+//! });
+//! ```
+//!
+//! Tasks have access to the application context and can be used for:
+//! - Periodic cleanup jobs
+//! - Data synchronization
+//! - Health checks
+//! - Background processing
+//! - Scheduled notifications
+//!
+
+
 use std::future::Future;
 use std::str::FromStr;
 
