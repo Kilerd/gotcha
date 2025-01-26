@@ -6,9 +6,13 @@ version = "0.2.2"
 license = "MIT"
 repository = "https://github.com/Kilerd/gotcha/"
 
+[lib]
+doctest = false
+
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [features]
-default = ["openapi"]
+default = ["http1"]
+http1 = ["axum/http1", "axum/tokio"]
 prometheus = ["dep:axum-prometheus"]
 openapi = ["dep:oas"]
 cors = ["dep:tower-http"]

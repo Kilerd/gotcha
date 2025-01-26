@@ -19,19 +19,6 @@ use crate::Operable;
 
 macro_rules! implement_method {
     ($method:expr, $fn_name: tt ) => {
-        /// quick way to add a method route to the router
-        /// # Examples
-        ///
-        /// ```rust,no_run
-        /// use gotcha::{GotchaRouter, Responder};
-        ///
-        /// async fn hello_world() -> impl Responder {
-        ///     "Hello World!"
-        /// }
-        ///
-        /// let router = GotchaRouter::default()
-        ///     .$fn_name("/", hello_world);
-        /// ```
         pub fn $fn_name<H: Handler<T, State>, T: 'static>(self, path: &str, handler: H) -> Self {
             self.method_route(path, $method, handler)
         }
@@ -70,8 +57,8 @@ impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
     ///     "Hello World!"
     /// }
     ///
-    /// let router = GotchaRouter::default()
-    ///     .route("/", get(hello_world));
+    /// let router: GotchaRouter<()> = GotchaRouter::default()
+    ///     .route("/", axum::routing::get(hello_world));
     /// ```
     pub fn route(self, path: &str, method_router: MethodRouter<State>) -> Self {
         Self {
@@ -91,7 +78,7 @@ impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
     ///     "Hello World!"
     /// }
     ///
-    /// let router = GotchaRouter::default()
+    /// let router: GotchaRouter<()> = GotchaRouter::default()
     ///     .method_route("/", MethodFilter::GET, hello_world);
     /// ```
     pub fn method_route<H, T>(mut self, path: &str, method: MethodFilter, handler: H) -> Self
@@ -143,7 +130,7 @@ impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
     /// ```rust,no_run
     /// use gotcha::{GotchaRouter, Responder};
     ///
-    /// let router = GotchaRouter::default()
+    /// let router: GotchaRouter<()> = GotchaRouter::default()
     ///     .nest("/users", GotchaRouter::default());
     /// ```
     pub fn nest(self, path: &str, router: Self) -> Self {
@@ -170,7 +157,7 @@ impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
     /// ```rust,no_run
     /// use gotcha::{GotchaRouter};
     ///
-    /// let router = GotchaRouter::default()
+    /// let router: GotchaRouter<()> = GotchaRouter::default()
     ///     .merge(GotchaRouter::default());
     /// ```
     pub fn merge(self, other: Self) -> Self {
@@ -187,7 +174,7 @@ impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
     /// ```rust,no_run
     /// use gotcha::{GotchaRouter};
     ///
-    /// let router = GotchaRouter::default()
+    /// let router: GotchaRouter<()> = GotchaRouter::default()
     ///     .layer(MyLayer::default());
     /// ```
     pub fn layer<L>(self, layer: L) -> Self
