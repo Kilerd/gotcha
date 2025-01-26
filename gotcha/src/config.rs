@@ -5,11 +5,16 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use yaac::{ConfigLoader, EnvironmentSource, FileSource};
 
+use crate::error::GotchaError;
+
+
+
 #[derive(Clone, Serialize, Deserialize)]
-pub struct ConfigWrapper<T: DeserializeOwned + Serialize> {
+pub struct ConfigWrapper<T: DeserializeOwned + Serialize + Default> {
+    #[cfg(not(feature = "cloudflare_worker"))]
     pub basic: BasicConfig,
 
-    #[serde(bound = "")]
+    #[serde(bound = "", default)]
     pub application: T,
 }
 
@@ -34,5 +39,11 @@ impl GotchaConfigLoader {
         loader.enable_path_variable_processor();
         loader.enable_environment_variable_processor();
         loader.construct().unwrap()
+    }
+    #[cfg(feature = "cloudflare_worker")]
+    pub fn load_from_env<T: for<'de> Deserialize<'de>>(env: worker::Env) -> Result<T, GotchaError> {
+        let mut loader = ConfigLoader::new();
+        loader.enable_path_variable_processor();
+        loader.construct().map_err(|e| GotchaError::ConfigError(e.to_string()))
     }
 }

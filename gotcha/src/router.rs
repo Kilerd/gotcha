@@ -206,6 +206,18 @@ impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
     }
 }
 
+
+
+#[cfg(feature = "cloudflare_worker")]
+impl GotchaRouter<()> {
+    
+    pub async fn call(&self, request: crate::worker::Request) -> Result<worker::Response, Box<dyn std::error::Error>> {
+        Ok(worker::Response::ok("Hello, World!").unwrap())
+    }
+}
+
+
+
 #[doc(hidden)]
 #[cfg(feature = "openapi")]
 pub fn extract_operable<H, T, State>() -> Option<&'static Operable>

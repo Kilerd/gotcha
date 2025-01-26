@@ -62,7 +62,7 @@ pub async fn update_pet_address_detail(_paths: Path<UpdatePetAddressPathArgs>, _
     format!("update pet info: {} {:?}", _payload.name, _payload.pet_type)
 }
 
-#[derive(Debug, Deserialize, Clone, Serialize)]
+#[derive(Debug, Deserialize, Clone, Serialize, Default)]
 struct Config {}
 
 struct App {}
