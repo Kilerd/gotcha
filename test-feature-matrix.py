@@ -47,9 +47,10 @@ if __name__ == "__main__":
         combinations = generate_combinations(features)
         print(f"features={json.dumps(combinations)}")
     elif len(sys.argv) > 1 and sys.argv[1] == "echo-cf-worker":
-        features = ["cors", "openapi", "cloudflare_worker"]
+        features = ["cors", "openapi"]
         combinations = generate_combinations(features)
-        print(f"features={json.dumps(combinations)}")
+        cf_combinations = [["cloudflare_worker"] + f for f in combinations]
+        print(f"features={json.dumps(cf_combinations)}")
     else:
         # Get combinations
         combinations = generate_combinations(features)
