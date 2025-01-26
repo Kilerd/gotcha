@@ -84,13 +84,18 @@ use tracing_subscriber::{fmt, EnvFilter};
 pub use {axum, inventory, tracing};
 
 pub use crate::config::GotchaConfigLoader;
+
+#[cfg(feature = "message")]
+pub mod message;
+#[cfg(feature = "message")]
 pub use crate::message::{Message, Messager};
+
 #[cfg(feature = "openapi")]
 pub use crate::openapi::Operable;
 #[cfg(feature = "openapi")]
 pub use oas;
 mod config;
-pub mod message;
+
 #[cfg(feature = "openapi")]
 pub mod openapi;
 pub mod router;
@@ -222,7 +227,11 @@ pub trait GotchaApp: Sized + Send + Sync {
 
         let router = self.build_router(context.clone()).await?;
  
-        Ok(GotchaRouter { operations: Default::default(), router })
+        Ok(GotchaRouter { 
+            #[cfg(feature = "openapi")]
+            operations: Default::default(), 
+            router 
+        })
     }
 }
 

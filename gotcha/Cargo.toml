@@ -18,6 +18,7 @@ openapi = ["dep:oas"]
 cors = ["dep:tower-http"]
 static_files = ["dep:tower-http", "tower-http/fs"]
 task = ["dep:cron", "tokio/time"]
+message = ["tokio/rt"]
 cloudflare_worker = ["dep:worker"]
 
 

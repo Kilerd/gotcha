@@ -48,12 +48,29 @@ jobs:
       - name: Run tests
         run: cargo test --package gotcha  --features "${{ matrix.features }}"
   
+  define-cf-matrix:
+    runs-on: ubuntu-latest
+
+    outputs:
+      features: ${{ steps.features.outputs.features }}
+
+    steps:
+      - uses: actions/checkout@v3
+      - name: Install Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.x'
+
+      - name: Define Features
+        id: features
+        run: |
+          python3 test-feature-matrix.py echo-cf-worker >> "$GITHUB_OUTPUT"
   gotcha-cf-worker-test:
     runs-on: ubuntu-latest
-    needs: define-matrix
+    needs: define-cf-matrix
     strategy:
       matrix:
-        features: ${{ fromJSON(needs.define-matrix.outputs.features) }}
+        features: ${{ fromJSON(needs.define-cf-matrix.outputs.features) }}
     steps:
       - uses: actions/checkout@v3
 
@@ -64,7 +81,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Run tests
-        run: cargo test --package gotcha --no-default-features --features "cloudflare_worker ${{ matrix.features }}"
+        run: cargo test --package gotcha --no-default-features --features "${{ matrix.features }}"
 
   test:
     name: Test
