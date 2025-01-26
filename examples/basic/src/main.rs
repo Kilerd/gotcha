@@ -5,7 +5,7 @@ pub async fn hello_world(_state: State<ConfigWrapper<Config>>) -> impl Responder
     "hello world"
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default)]
 pub struct Config {
     pub name: String,
 }

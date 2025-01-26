@@ -2,13 +2,14 @@ use gotcha::router::GotchaRouter;
 use gotcha::{async_trait, ConfigWrapper, GotchaApp, GotchaContext, Responder, State};
 use serde::{Deserialize, Serialize};
 
+
 #[derive(Debug, Deserialize, Clone, Serialize, Default)]
 pub struct Config {
-    welcome: String,
+    // welcome: String,
 }
 
 pub async fn hello_world(config: State<ConfigWrapper<Config>>) -> impl Responder {
-    config.0.application.welcome.clone()
+    "hello world"
 }
 
 pub struct App;
@@ -27,9 +28,20 @@ impl GotchaApp for App {
     }
 }
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let app = App {};
-    app.run().await?;
-    Ok(())
+
+
+#[worker::event(fetch)]
+async fn handle_fetch(request: worker::Request, env: worker::Env, ctx: worker::Context) -> worker::Result<worker::Response> {
+    
+    let app = App{};
+    let router = match app.worker_router(env).await {
+        Ok(router) => router,
+        Err(e) => return worker::Response::error(e.to_string(), 500)
+    };
+    let res = match router.call(request).await {
+        Ok(res) => res,
+        Err(e) => return worker::Response::error(e.to_string(), 500)
+    };
+    Ok(res)
+    // worker::Response::ok("Hello, World!")
 }

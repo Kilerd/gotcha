@@ -49,14 +49,14 @@ use tracing::info;
 
 use crate::GotchaContext;
 
-pub struct TaskScheduler<T1: Clone + Send + Sync + 'static, T2: Clone + Send + Sync + 'static + Serialize + for<'de> Deserialize<'de>> {
+pub struct TaskScheduler<T1: Clone + Send + Sync + 'static, T2: Clone + Send + Sync + 'static + Serialize + for<'de> Deserialize<'de> + Default> {
     context: GotchaContext<T1, T2>,
 }
 
 impl<T1, T2> TaskScheduler<T1, T2>
 where
     T1: Clone + Send + Sync + 'static,
-    T2: Clone + Send + Sync + 'static + Serialize + for<'de> Deserialize<'de>,
+    T2: Clone + Send + Sync + 'static + Serialize + for<'de> Deserialize<'de> + Default,
 {
     pub fn new(context: GotchaContext<T1, T2>) -> Self {
         Self { context }
@@ -84,7 +84,7 @@ where
 pub async fn cron_proc_macro_wrapper<T1, T2, F, FF>(context: GotchaContext<T1, T2>, expression: String, task: F)
 where
     T1: Clone + Send + Sync + 'static,
-    T2: Clone + Send + Sync + 'static + Serialize + for<'de> Deserialize<'de>,
+    T2: Clone + Send + Sync + 'static + Serialize + for<'de> Deserialize<'de> + Default,
     F: Fn(GotchaContext<T1, T2>) -> FF + Send + 'static,
     FF: Future<Output = ()> + Send + 'static,
 {
@@ -103,7 +103,7 @@ where
 pub async fn interval_proc_macro_wrapper<T1, T2, F, FF>(context: GotchaContext<T1, T2>, interval: std::time::Duration, task: F)
 where
     T1: Clone + Send + Sync + 'static,
-    T2: Clone + Send + Sync + 'static + Serialize + for<'de> Deserialize<'de>,
+    T2: Clone + Send + Sync + 'static + Serialize + for<'de> Deserialize<'de> + Default,
     F: Fn(GotchaContext<T1, T2>) -> FF + Send + 'static,
     FF: Future<Output = ()> + Send + 'static,
 {

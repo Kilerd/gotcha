@@ -40,18 +40,24 @@ def generate_combinations(features):
     return combinations
 
 if __name__ == "__main__":
+    features = load_features()
+    features = [feature for feature in features if feature not in ["cloudflare_worker", "http1"]]
 
     if len(sys.argv) > 1 and sys.argv[1] == "echo":
-        features = load_features()
-        combinations = generate_combinations(load_features())
+        combinations = generate_combinations(features)
         print(f"features={json.dumps(combinations)}")
+    elif len(sys.argv) > 1 and sys.argv[1] == "echo-cf-worker":
+        features = ["cors", "openapi"]
+        combinations = generate_combinations(features)
+        cf_combinations = [f"cloudflare_worker {f}" for f in combinations]
+        print(f"features={json.dumps(cf_combinations)}")
     else:
         # Get combinations
-        combinations = generate_combinations(load_features())
+        combinations = generate_combinations(features)
         # Print combination matrix
         print("Feature Combinations:")
         for combo in combinations:
-            command = f"cargo test --package gotcha --no-default-features --features \"{combo}\""
+            command = f"cargo test --package gotcha --features \"{combo}\""
             print(command)
             result = os.system(command)
             if result != 0:

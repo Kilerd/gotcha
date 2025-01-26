@@ -6,13 +6,20 @@ version = "0.2.2"
 license = "MIT"
 repository = "https://github.com/Kilerd/gotcha/"
 
+[lib]
+doctest = false
+
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [features]
-default = ["openapi"]
+default = ["http1"]
+http1 = ["axum/http1", "axum/tokio"]
 prometheus = ["dep:axum-prometheus"]
 openapi = ["dep:oas"]
 cors = ["dep:tower-http"]
 static_files = ["dep:tower-http", "tower-http/fs"]
+task = ["dep:cron", "tokio/time"]
+message = ["tokio/rt"]
+cloudflare_worker = ["dep:worker"]
 
 
 [dependencies]
@@ -20,16 +27,16 @@ async-trait = "0.1.60"
 gotcha_macro = { version = "0.2", path = "../gotcha_macro" }
 gotcha_core = { version = "0.2", path = "../gotcha_core" }
 serde = "1"
-tokio = "1"
+tokio = {version = "1"}
 tracing = "0.1"
 tracing-subscriber = {version="0.3", features=["env-filter"]}
 log = "0.4"
-cron = "0.12.0"
+cron = {version = "0.12.0", optional = true}
 chrono = "0.4.23"
 http = "0.2"
 oas = { version = "0.1", optional = true }
 yaac = "0.1"
-axum = "0.7.5"
+axum = {version = "0.7", default-features = false, features = ["form", "json", "query"]}
 tower-layer = "0.3.2"
 tower-service = "0.3.2"
 inventory = "0.3.15"
@@ -40,7 +47,8 @@ axum-prometheus = { version = "0.7.0", optional = true }
 axum-macros = "0.4"
 tower-http = { version = "0.6", optional = true, features = ["cors", "fs"] }
 cfg-if = { workspace = true }
-
+worker = {version = "0.5.0", features = ["http"], optional = true}
+thiserror = "1.0"
 [dev-dependencies]
 trybuild = "1.0"
 serde_json = "1"

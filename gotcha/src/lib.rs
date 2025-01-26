@@ -25,7 +25,7 @@
 //!     "hello world"
 //! }
 //! 
-//! #[derive(Debug, Deserialize, Serialize, Clone)]
+//! #[derive(Debug, Deserialize, Serialize, Clone, Default)]
 //! pub struct Config {
 //!     pub name: String,
 //! }
@@ -84,18 +84,29 @@ use tracing_subscriber::{fmt, EnvFilter};
 pub use {axum, inventory, tracing};
 
 pub use crate::config::GotchaConfigLoader;
+
+#[cfg(feature = "message")]
+pub mod message;
+#[cfg(feature = "message")]
 pub use crate::message::{Message, Messager};
+
 #[cfg(feature = "openapi")]
 pub use crate::openapi::Operable;
 #[cfg(feature = "openapi")]
 pub use oas;
 mod config;
-pub mod message;
+
 #[cfg(feature = "openapi")]
 pub mod openapi;
 pub mod router;
 pub mod state;
+pub mod error;
+
+#[cfg(feature = "task")]
 pub mod task;
+
+#[cfg(feature = "cloudflare_worker")]
+pub use worker;
 
 #[cfg(feature = "prometheus")]
 pub mod prometheus {
@@ -110,11 +121,11 @@ pub mod layers {
 #[cfg(feature = "static_files")]
 pub use tower_http::services::{ServeDir, ServeFile};
 
-// #[cfg(feature = "task")]
+#[cfg(feature = "task")]
 pub use task::TaskScheduler;
 
 #[derive(Clone)]
-pub struct GotchaContext<State: Clone + Send + Sync + 'static, Config: Clone + Send + Sync + 'static + Serialize + for<'de> Deserialize<'de>> {
+pub struct GotchaContext<State: Clone + Send + Sync + 'static, Config: Clone + Send + Sync + 'static + Serialize + for<'de> Deserialize<'de> + Default> {
     pub config: ConfigWrapper<Config>,
     pub state: State,
 }
@@ -122,7 +133,7 @@ pub struct GotchaContext<State: Clone + Send + Sync + 'static, Config: Clone + S
 impl<State, Config> FromRef<GotchaContext<State, Config>> for ConfigWrapper<Config>
 where
     State: Clone + Send + Sync + 'static,
-    Config: Clone + Send + Sync + 'static + Serialize + for<'de> Deserialize<'de>,
+    Config: Clone + Send + Sync + 'static + Serialize + for<'de> Deserialize<'de> + Default,
 {
     fn from_ref(context: &GotchaContext<State, Config>) -> Self {
         context.config.clone()
@@ -132,7 +143,7 @@ where
 #[async_trait]
 pub trait GotchaApp: Sized + Send + Sync {
     type State: Clone + Send + Sync + 'static;
-    type Config: Clone + Send + Sync + 'static + Serialize + for<'de> Deserialize<'de>;
+    type Config: Clone + Send + Sync + 'static + Serialize + for<'de> Deserialize<'de> + Default;
 
     fn logger(&self) -> Result<(), Box<dyn std::error::Error>> {
         tracing_subscriber::registry()
@@ -151,18 +162,12 @@ pub trait GotchaApp: Sized + Send + Sync {
 
     async fn state(&self, config: &ConfigWrapper<Self::Config>) -> Result<Self::State, Box<dyn std::error::Error>>;
 
+    #[cfg(feature = "task")]
     async fn tasks(&self, _task_scheduler: &mut TaskScheduler<Self::State, Self::Config>) -> Result<(), Box<dyn std::error::Error>> {
         Ok(())
     }
 
-    async fn run(self) -> Result<(), Box<dyn std::error::Error>> {
-        self.logger()?;
-        info!("logger has been initialized");
-        let config: ConfigWrapper<Self::Config> = GotchaConfigLoader::load::<ConfigWrapper<Self::Config>>(std::env::var("GOTCHA_ACTIVE_PROFILE").ok());
-        let state = self.state(&config).await?;
-
-        let context = GotchaContext { config: config.clone(), state };
-
+    async fn build_router(&self, context: GotchaContext<Self::State, Self::Config>) -> Result<axum::Router, Box<dyn std::error::Error>> {
         let router = GotchaRouter::<GotchaContext<Self::State, Self::Config>>::default();
         let router = self.routes(router);
 
@@ -187,13 +192,46 @@ pub trait GotchaApp: Sized + Send + Sync {
                 .with_state(context.clone());
             }
         }
-        let mut task_scheduler = TaskScheduler::new(context.clone());
-        self.tasks(&mut task_scheduler).await?;
+        Ok(router)
+    }
+
+    #[cfg(not(feature = "cloudflare_worker"))]
+    async fn run(self) -> Result<(), Box<dyn std::error::Error>> {
+        self.logger()?;
+        info!("logger has been initialized");
+        let config: ConfigWrapper<Self::Config> = GotchaConfigLoader::load::<ConfigWrapper<Self::Config>>(std::env::var("GOTCHA_ACTIVE_PROFILE").ok());
+        let state = self.state(&config).await?;
+
+        let context = GotchaContext { config: config.clone(), state };
+
+        let router = self.build_router(context.clone()).await?;
+        
+        cfg_if::cfg_if! {
+            if #[cfg(feature = "task")] {
+                let mut task_scheduler = TaskScheduler::new(context.clone());
+                self.tasks(&mut task_scheduler).await?;
+            }
+        }
 
         let addr = SocketAddrV4::new(Ipv4Addr::from_str(&config.basic.host)?, config.basic.port);
         let listener = tokio::net::TcpListener::bind(addr).await?;
         axum::serve(listener, router).await?;
         Ok(())
+    }
+
+    #[cfg(feature = "cloudflare_worker")]
+    async fn worker_router(self, worker_env: worker::Env) -> Result<GotchaRouter<()>, Box<dyn std::error::Error>> {
+        let config: ConfigWrapper<Self::Config> = GotchaConfigLoader::load_from_env::<ConfigWrapper<Self::Config>>(worker_env)?;
+        let state = self.state(&config).await?;
+        let context = GotchaContext { config: config.clone(), state };
+
+        let router = self.build_router(context.clone()).await?;
+ 
+        Ok(GotchaRouter { 
+            #[cfg(feature = "openapi")]
+            operations: Default::default(), 
+            router 
+        })
     }
 }
 
