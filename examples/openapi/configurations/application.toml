@@ -1,0 +1,7 @@
+[basic]
+host= "localhost"
+port= 8080
+
+
+[application]
+name = "openapi"

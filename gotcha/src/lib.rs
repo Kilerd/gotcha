@@ -94,6 +94,10 @@ pub use crate::message::{Message, Messager};
 pub use crate::openapi::Operable;
 #[cfg(feature = "openapi")]
 pub use oas;
+
+#[cfg(feature = "openapi")]
+pub use gotcha_macro::api;
+
 mod config;
 
 #[cfg(feature = "openapi")]
@@ -140,7 +144,6 @@ where
     }
 }
 
-#[async_trait]
 pub trait GotchaApp: Sized + Send + Sync {
     type State: Clone + Send + Sync + 'static;
     type Config: Clone + Send + Sync + 'static + Serialize + for<'de> Deserialize<'de> + Default;
@@ -160,14 +163,14 @@ pub trait GotchaApp: Sized + Send + Sync {
 
     fn routes(&self, router: GotchaRouter<GotchaContext<Self::State, Self::Config>>) -> GotchaRouter<GotchaContext<Self::State, Self::Config>>;
 
-    async fn state(&self, config: &ConfigWrapper<Self::Config>) -> Result<Self::State, Box<dyn std::error::Error>>;
+    fn state(&self, config: &ConfigWrapper<Self::Config>) -> impl std::future::Future<Output = Result<Self::State, Box<dyn std::error::Error>>> + Send;
 
     #[cfg(feature = "task")]
-    async fn tasks(&self, _task_scheduler: &mut TaskScheduler<Self::State, Self::Config>) -> Result<(), Box<dyn std::error::Error>> {
+    fn tasks(&self, _task_scheduler: &mut TaskScheduler<Self::State, Self::Config>) -> impl std::future::Future<Output = Result<(), Box<dyn std::error::Error>>> + Send {async {
         Ok(())
-    }
+    } }
 
-    async fn build_router(&self, context: GotchaContext<Self::State, Self::Config>) -> Result<axum::Router, Box<dyn std::error::Error>> {
+    fn build_router(&self, context: GotchaContext<Self::State, Self::Config>) -> impl std::future::Future<Output = Result<axum::Router, Box<dyn std::error::Error>>> + Send {async move {
         let router = GotchaRouter::<GotchaContext<Self::State, Self::Config>>::default();
         let router = self.routes(router);
 
@@ -193,10 +196,10 @@ pub trait GotchaApp: Sized + Send + Sync {
             }
         }
         Ok(router)
-    }
+    } }
 
     #[cfg(not(feature = "cloudflare_worker"))]
-    async fn run(self) -> Result<(), Box<dyn std::error::Error>> {
+    fn run(self) -> impl std::future::Future<Output = Result<(), Box<dyn std::error::Error>>> + Send {async move {
         self.logger()?;
         info!("logger has been initialized");
         let config: ConfigWrapper<Self::Config> = GotchaConfigLoader::load::<ConfigWrapper<Self::Config>>(std::env::var("GOTCHA_ACTIVE_PROFILE").ok());
@@ -217,10 +220,10 @@ pub trait GotchaApp: Sized + Send + Sync {
         let listener = tokio::net::TcpListener::bind(addr).await?;
         axum::serve(listener, router).await?;
         Ok(())
-    }
+    } }
 
     #[cfg(feature = "cloudflare_worker")]
-    async fn worker_router(self, worker_env: worker::Env) -> Result<GotchaRouter<()>, Box<dyn std::error::Error>> {
+    fn worker_router(self, worker_env: worker::Env) -> impl std::future::Future<Output = Result<GotchaRouter<()>, Box<dyn std::error::Error>>> + Send {async move {
         let config: ConfigWrapper<Self::Config> = GotchaConfigLoader::load_from_env::<ConfigWrapper<Self::Config>>(worker_env)?;
         let state = self.state(&config).await?;
         let context = GotchaContext { config: config.clone(), state };
@@ -232,7 +235,7 @@ pub trait GotchaApp: Sized + Send + Sync {
             operations: Default::default(), 
             router 
         })
-    }
+    } }
 }
 
 #[cfg(test)]

@@ -67,7 +67,6 @@ struct Config {}
 
 struct App {}
 
-#[gotcha::async_trait]
 impl GotchaApp for App {
     type State = ();
     type Config = Config;

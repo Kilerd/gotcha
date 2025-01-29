@@ -6,7 +6,7 @@ version = "0.1.0"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-gotcha = {version="0.2", path = "../../gotcha"}
+gotcha = {version="0.2", path = "../../gotcha", features = ["openapi"]}
 tokio = {version = "1", features = ["macros", 'rt-multi-thread']}
 serde = {version="1", features=["derive"]}
 serde_json = "1"
