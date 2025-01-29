@@ -1,7 +1,8 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 
 use axum::extract::{Json, Path, Query, Request, State};
 use bigdecimal::BigDecimal;
+use chrono::{DateTime, Utc};
 use either::Either;
 use oas::{MediaType, Parameter, ParameterIn, Referenceable, RequestBody, Schema};
 
@@ -125,6 +126,46 @@ impl<T: Schematic> Schematic for Vec<T> {
 
 
 impl Schematic for BigDecimal {
+    fn name() -> &'static str {
+        "string"
+    }
+
+    fn required() -> bool {
+        true
+    }
+
+    fn type_() -> &'static str {
+        "string"
+    }
+}
+
+impl<T: Schematic> Schematic for HashSet<T> {
+    fn name() -> &'static str {
+        T::name()
+    }
+
+    fn required() -> bool {
+       true
+    }
+
+    fn type_() -> &'static str {
+        "array"
+    }
+
+    fn generate_schema() -> Schema {
+        let mut schema = Schema {
+            _type: Some(Self::type_().to_string()),
+            format: None,
+            nullable: None,
+            description: Self::doc(),
+            extras: Default::default(),
+        };
+        schema.extras.insert("items".to_string(), T::generate_schema().to_value());
+        schema
+    }
+}
+
+impl Schematic for DateTime<Utc> {
     fn name() -> &'static str {
         "string"
     }
