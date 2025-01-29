@@ -5,7 +5,7 @@ provide a featured web framework
  - [x] everything of axum
  - [ ] automatically swagger api generation
  - [x] built-in message mechanism
- - [x] environment based configuration system, support environment resolver `${ANY_ENV_VAR}` and path variable `${app.database.name}` powered by [yaac](https://crates.io/crates/yaac)
+ - [x] environment based configuration system, support environment resolver `${ANY_ENV_VAR}` and path variable `${app.database.name}` powered by [mofa](https://crates.io/crates/mofa)
  - [x] logging system
  - [x] opt-in prometheus integration
  - [x] task system with interval and cron

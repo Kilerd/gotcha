@@ -3,7 +3,7 @@ use std::str::FromStr;
 
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
-use yaac::{ConfigLoader, EnvironmentSource, FileSource};
+use mofa::{ConfigLoader, EnvironmentSource, FileSource};
 
 use crate::error::GotchaError;
 
