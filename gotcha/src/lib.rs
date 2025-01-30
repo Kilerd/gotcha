@@ -148,6 +148,11 @@ pub trait GotchaApp: Sized + Send + Sync {
     type State: Clone + Send + Sync + 'static;
     type Config: Clone + Send + Sync + 'static + Serialize + for<'de> Deserialize<'de> + Default;
 
+    fn config(&self) -> impl std::future::Future<Output = Result<ConfigWrapper<Self::Config>, Box<dyn std::error::Error>>> + Send {async move  {
+        let config = GotchaConfigLoader::load::<ConfigWrapper<Self::Config>>(std::env::var("GOTCHA_ACTIVE_PROFILE").ok());
+        Ok(config)
+    } }
+
     fn logger(&self) -> Result<(), Box<dyn std::error::Error>> {
         tracing_subscriber::registry()
             .with(fmt::layer())
@@ -202,7 +207,7 @@ pub trait GotchaApp: Sized + Send + Sync {
     fn run(self) -> impl std::future::Future<Output = Result<(), Box<dyn std::error::Error>>> + Send {async move {
         self.logger()?;
         info!("logger has been initialized");
-        let config: ConfigWrapper<Self::Config> = GotchaConfigLoader::load::<ConfigWrapper<Self::Config>>(std::env::var("GOTCHA_ACTIVE_PROFILE").ok());
+        let config: ConfigWrapper<Self::Config> = self.config().await?;
         let state = self.state(&config).await?;
 
         let context = GotchaContext { config: config.clone(), state };
@@ -224,7 +229,7 @@ pub trait GotchaApp: Sized + Send + Sync {
 
     #[cfg(feature = "cloudflare_worker")]
     fn worker_router(self, worker_env: worker::Env) -> impl std::future::Future<Output = Result<GotchaRouter<()>, Box<dyn std::error::Error>>> + Send {async move {
-        let config: ConfigWrapper<Self::Config> = GotchaConfigLoader::load_from_env::<ConfigWrapper<Self::Config>>(worker_env)?;
+        let config: ConfigWrapper<Self::Config> = self.config().await?;
         let state = self.state(&config).await?;
         let context = GotchaContext { config: config.clone(), state };
 
