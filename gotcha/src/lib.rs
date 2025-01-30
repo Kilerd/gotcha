@@ -162,7 +162,7 @@ pub trait GotchaApp: Sized + Send + Sync {
                     .with_env_var("RUST_LOG")
                     .from_env_lossy(),
             )
-            .try_init()?;
+            .try_init().ok();
         Ok(())
     }
 
