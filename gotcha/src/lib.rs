@@ -98,7 +98,7 @@ pub use oas;
 #[cfg(feature = "openapi")]
 pub use gotcha_macro::api;
 
-mod config;
+pub mod config;
 
 #[cfg(feature = "openapi")]
 pub mod openapi;
