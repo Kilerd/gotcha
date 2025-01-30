@@ -191,6 +191,18 @@ impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
             router: self.router.layer(layer),
         }
     }
+
+    pub fn fallback<H, T>(self, handler: H) -> Self
+    where
+        H: Handler<T, State>,
+        T: 'static,
+    {
+        Self {
+            #[cfg(feature = "openapi")]
+            operations: self.operations,
+            router: self.router.fallback(handler),
+        }
+    }
 }
 
 
