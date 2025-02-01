@@ -10,7 +10,6 @@ pub struct Config {}
 
 pub struct App {}
 
-#[async_trait]
 impl GotchaApp for App {
     type State = ();
 
@@ -20,7 +19,7 @@ impl GotchaApp for App {
         router.get("/", hello_world)
     }
 
-    async fn state(&self, _config: &ConfigWrapper<Self::Config>) -> Result<Self::State, Box<dyn std::error::Error>> {
+    async fn state<'a, 'b>(&'a self, _config: &'b ConfigWrapper<Self::Config>) -> Result<Self::State, Box<dyn std::error::Error>> {
         Ok(())
     }
 

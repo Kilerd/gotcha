@@ -1,6 +1,14 @@
 use gotcha::{api, ConfigWrapper, GotchaApp, GotchaContext, GotchaRouter, Json, Path, Responder, Schematic};
 use serde::{Deserialize, Serialize};
 
+
+#[derive(Schematic, Serialize, Deserialize, Debug)]
+pub struct Pet {
+    pub id: i32,
+    pub name: String,
+    pub pet_type: PetType,
+}
+
 /// Rust has six types of attributes.
 ///
 /// - Outer attributes like `#[repr(transparent)]`. These appear outside or in front of the item they describe.
@@ -18,19 +26,28 @@ use serde::{Deserialize, Serialize};
 ///   path  tokens                 path        tokens
 /// ```
 #[api(id = "index", group = "hello")]
-pub async fn hello_world() -> impl Responder {
+pub async fn hello_world() -> &'static str {
     "hello world"
 }
 
 /// Add new pet to the store inventory.
 #[api]
-pub async fn new_pet() -> impl Responder {
+pub async fn new_pet() -> &'static str {
     "new pet"
 }
 
+#[api]
+pub async fn get_pet(_paths: Path<(i32,)>) -> Json<Pet> {
+    Json(Pet {
+        id: 1,
+        name: "dog".to_string(),
+        pet_type: PetType::Cat,
+    })
+}
+
 /// Update specific pet's info
-#[api()]
-pub async fn update_pet_info(_paths: Path<(i32,)>) -> impl Responder {
+#[api]
+pub async fn update_pet_info(_paths: Path<(i32,)>) -> &'static str {
     "update pet info"
 }
 
@@ -41,7 +58,7 @@ pub struct UpdatePetAddressPathArgs {
 }
 
 /// the world belongs to cat
-#[derive(Schematic, Deserialize, Debug)]
+#[derive(Schematic, Serialize, Deserialize, Debug)]
 pub enum PetType {
     Cat,
     OtherCat,
@@ -58,7 +75,7 @@ pub struct PetUpdateJson {
 
 /// Update specific pet's address
 #[api]
-pub async fn update_pet_address_detail(_paths: Path<UpdatePetAddressPathArgs>, _payload: Json<PetUpdateJson>) -> impl Responder {
+pub async fn update_pet_address_detail(_paths: Path<UpdatePetAddressPathArgs>, _payload: Json<PetUpdateJson>) -> String {
     format!("update pet info: {} {:?}", _payload.name, _payload.pet_type)
 }
 
@@ -74,11 +91,12 @@ impl GotchaApp for App {
         router
             .get("/", hello_world)
             .post("/pets", new_pet)
+            .get("/pets/:pet_id", get_pet)
             .put("/pets/:pet_id", update_pet_info)
             .put("/pets/:pet_id/address/:address_id", update_pet_address_detail)
     }
 
-    async fn state(&self, _config: &ConfigWrapper<Self::Config>) -> Result<Self::State, Box<dyn std::error::Error>> {
+    async fn state<'a, 'b>(&'a self, _config: &'b ConfigWrapper<Self::Config>) -> Result<Self::State, Box<dyn std::error::Error>> {
         Ok(())
     }
 }

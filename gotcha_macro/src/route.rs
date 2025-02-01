@@ -1,6 +1,6 @@
 use proc_macro::TokenStream;
 use quote::{format_ident, quote};
-use syn::{parse_macro_input, AttributeArgs, FnArg, ItemFn};
+use syn::{parse_macro_input, AttributeArgs, FnArg, ItemFn, ReturnType};
 use uuid::Uuid;
 
 use crate::utils::AttributesExt;
@@ -56,6 +56,7 @@ pub(crate) fn request_handler(args: TokenStream, input_stream: TokenStream) -> T
 
     let random_uuid = Uuid::new_v4().simple().to_string();
     let uuid_ident = format_ident!("__PARAM_{}", random_uuid);
+    let ret_uuid_ident = format_ident!("__RET_{}", random_uuid);
     let params_token: Vec<proc_macro2::TokenStream> = input
         .sig
         .inputs
@@ -68,6 +69,20 @@ pub(crate) fn request_handler(args: TokenStream, input_stream: TokenStream) -> T
             }
         })
         .collect();
+    let ret_pos = &input.sig.output;
+    let ret_schematic = match ret_pos {
+        ReturnType::Default => {
+            quote! {
+                Box::new(|| { ( () as ::gotcha::Responsable).response() })
+            }
+        },
+        
+        ReturnType::Type(_, ty) => {
+            quote! {
+                Box::new(|| {<#ty as ::gotcha::Responsable>::response()})
+            }
+        }
+    };
 
     let ret = quote! {
 
@@ -78,6 +93,9 @@ pub(crate) fn request_handler(args: TokenStream, input_stream: TokenStream) -> T
                     #( #params_token , )*
                 ]
                 });
+        static #ret_uuid_ident : ::gotcha::Lazy<Box<dyn Fn() -> ::gotcha::oas::Responses + Send + Sync + 'static>> = ::gotcha::Lazy::new(||{
+            #ret_schematic
+        });
         ::gotcha::inventory::submit! {
             ::gotcha::Operable {
                 type_name: concat!(module_path!(), "::", #fn_ident_string),
@@ -85,8 +103,8 @@ pub(crate) fn request_handler(args: TokenStream, input_stream: TokenStream) -> T
                 group: #group,
                 description: #docs,
                 deprecated: false,
-                parameters: &#uuid_ident
-
+                parameters: &#uuid_ident,
+                responses: &#ret_uuid_ident,
             }
         }
     };

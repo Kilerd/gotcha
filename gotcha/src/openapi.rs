@@ -36,7 +36,7 @@ use axum::response::Html;
 use convert_case::{Case, Casing};
 use either::Either;
 use http::Method;
-use oas::{Info, OpenAPIV3, Operation, Parameter, PathItem, Referenceable, RequestBody, Response, Responses, Tag};
+use oas::{Info, MediaType, OpenAPIV3, Operation, Parameter, PathItem, Referenceable, RequestBody, Response, Responses, Schema, Tag};
 use once_cell::sync::Lazy;
 
 use crate::Responder;
@@ -62,6 +62,7 @@ pub struct Operable {
     pub description: Option<&'static str>,
     pub deprecated: bool,
     pub parameters: &'static Lazy<Vec<ParamConstructor>>,
+    pub responses: &'static Lazy<Box<dyn Fn() -> Responses + Sync + Send + 'static>>,
 }
 
 impl Operable {
@@ -78,6 +79,8 @@ impl Operable {
                 Either::Right(req_body) => request_body = Some(Referenceable::Data(req_body.clone())),
             }
         }
+        let responses  = (self.responses)();
+        
         Operation {
             tags,
             summary: Some(self.id.to_case(Case::Title)),
@@ -86,15 +89,7 @@ impl Operable {
             operation_id: Some(self.id.to_string()),
             parameters: Some(params),
             request_body,
-            responses: Responses {
-                default: Some(Referenceable::Data(Response {
-                    description: "default return".to_string(),
-                    headers: None,
-                    content: None,
-                    links: None,
-                })),
-                data: BTreeMap::default(),
-            },
+            responses,
             callbacks: None,
             deprecated: Some(self.deprecated),
             security: None,

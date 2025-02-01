@@ -93,6 +93,9 @@ pub use crate::message::{Message, Messager};
 #[cfg(feature = "openapi")]
 pub use crate::openapi::Operable;
 #[cfg(feature = "openapi")]
+pub use gotcha_core::responsable::Responsable;
+
+#[cfg(feature = "openapi")]
 pub use oas;
 
 #[cfg(feature = "openapi")]

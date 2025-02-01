@@ -6,13 +6,21 @@ use chrono::{DateTime, Utc};
 use either::Either;
 use oas::{MediaType, Parameter, ParameterIn, Referenceable, RequestBody, Schema};
 
+pub mod responsable;
+
+/// Schematic is a trait that defines the schema of a type.
 pub trait Schematic {
+    /// The name of the type.
     fn name() -> &'static str;
+    /// Whether the type is required.
     fn required() -> bool;
+    /// The type of the type.
     fn type_() -> &'static str;
+    /// The documentation of the type.
     fn doc() -> Option<String> {
         None
     }
+    /// Generate the schema of the type.
     fn generate_schema() -> Schema {
         Schema {
             _type: Some(Self::type_().to_string()),
@@ -24,8 +32,11 @@ pub trait Schematic {
     }
 }
 
+/// ParameterProvider is a trait that defines the value which can be used as a parameter.
 pub trait ParameterProvider {
-    fn generate(url: String) -> Either<Vec<Parameter>, RequestBody>;
+    fn generate(url: String) -> Either<Vec<Parameter>, RequestBody> {
+        Either::Left(vec![])
+    }
 }
 
 macro_rules! impl_primitive_type {
@@ -56,6 +67,20 @@ impl_primitive_type! { u64, "u64", "number"}
 impl_primitive_type! { usize, "usize", "number"}
 impl_primitive_type! { String, "string", "string"}
 impl_primitive_type! { bool, "string", "boolean"}
+
+impl Schematic for &str {
+    fn name() -> &'static str {
+        "string"
+    }
+    
+    fn required() -> bool {
+        true
+    }
+
+    fn type_() -> &'static str {
+        "string"
+    }
+}
 
 impl<T: Schematic> Schematic for Option<T> {
     fn name() -> &'static str {
@@ -215,7 +240,7 @@ impl<T1: Schematic> ParameterProvider for Path<(T1,)> {
 
 impl<T1: Schematic, T2: Schematic> ParameterProvider for Path<(T1, T2)> {
     fn generate(url: String) -> Either<Vec<Parameter>, RequestBody> {
-        let pattern = regex::Regex::new(r"\{([^\}]+)\}").unwrap();
+        let pattern = regex::Regex::new(r":([^/]+)").unwrap();
         let param_names_in_path: Vec<String> = pattern.captures_iter(&url).map(|digits| digits.get(1).unwrap().as_str().to_string()).collect();
 
         let t1_param = build_param(
@@ -294,16 +319,6 @@ impl<T: Schematic> ParameterProvider for Query<T> {
     }
 }
 
-impl<T> ParameterProvider for State<T> {
-    fn generate(_url: String) -> Either<Vec<Parameter>, RequestBody> {
-        Either::Left(vec![])
-    }
-}
+impl<T> ParameterProvider for State<T> {}
 
-impl ParameterProvider for Request {
-    fn generate(_url: String) -> Either<Vec<Parameter>, RequestBody> {
-        Either::Left(vec![])
-    }
-}
-
-
+impl ParameterProvider for Request {}

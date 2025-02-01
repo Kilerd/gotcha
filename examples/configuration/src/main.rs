@@ -13,7 +13,6 @@ pub async fn hello_world(config: State<ConfigWrapper<Config>>) -> impl Responder
 
 pub struct App;
 
-#[async_trait]
 impl GotchaApp for App {
     type State = ();
     type Config = Config;
@@ -22,7 +21,7 @@ impl GotchaApp for App {
         router.get("/", hello_world)
     }
 
-    async fn state(&self, _config: &ConfigWrapper<Self::Config>) -> Result<Self::State, Box<dyn std::error::Error>> {
+    async fn state<'a, 'b>(&'a self, _config: &'b ConfigWrapper<Self::Config>) -> Result<Self::State, Box<dyn std::error::Error>> {
         Ok(())
     }
 }
