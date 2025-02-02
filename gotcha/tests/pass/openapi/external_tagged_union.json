@@ -8,9 +8,15 @@
                 "inner": {
                     "type": "string"
                 }
-            }
+            },
+            "required": [
+                "inner"
+            ]
         }
       },
+      "required": [
+        "One"
+      ],
       "type": "object"
     },
     {
@@ -21,9 +27,15 @@
                 "ohter": {
                     "type": "integer"
                 }
-            }
+            },
+            "required": [
+                "ohter"
+            ]
         }
       },
+      "required": [
+        "Two"
+      ],
       "type": "object"
     }
   ]

@@ -26,28 +26,33 @@ pub(crate) fn handler(ident: syn::Ident, doc: TokenStream2, variants: Vec<Parame
                         let mut field_schema = <#field_ty as Schematic>::generate_schema();
                         field_schema.description = #field_description;
                         properties.insert(#field_name.to_string(), field_schema.to_value());
+
+                        if <#field_ty as Schematic>::required() {
+                            properties_required_fields.push(#field_name.to_string());
+                        }
                     }
                 })
                 .collect();
 
             quote! {
 
-                   let mut variant_object = ::std::collections::HashMap::new();
-                   variant_object.insert("type".to_string(), ::serde_json::to_value("object").expect("cannot convert type to value"));
-
+                   
                     let mut single_enum = ::std::collections::HashMap::new();
                     single_enum.insert("type".to_string(), ::serde_json::to_value("enum").expect("cannot convert type to value"));
                     single_enum.insert("values".to_string(), ::serde_json::to_value(vec![#varient_string.to_string()]).expect("cannot convert values to value"));
 
                    let mut properties = ::std::collections::HashMap::new();
+                   let mut properties_required_fields = vec![];
                    properties.insert("type".to_string(), ::serde_json::to_value(single_enum).expect("cannot convert type to value"));
+                   properties_required_fields.push("type".to_string());
                    #(
                        #fields_stream
                    )*
-
+                
+                   let mut variant_object = ::std::collections::HashMap::new();
+                   variant_object.insert("type".to_string(), ::serde_json::to_value("object").expect("cannot convert type to value"));
                    variant_object.insert("properties".to_string(), ::serde_json::to_value(properties).expect("cannot convert root properties to value"));
-
-
+                   variant_object.insert("required".to_string(), ::serde_json::to_value(properties_required_fields).expect("cannot convert root required fields to value"));
             }
         })
         .collect();
