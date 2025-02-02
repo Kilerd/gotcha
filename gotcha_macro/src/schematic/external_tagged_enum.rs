@@ -3,15 +3,13 @@ use crate::utils::AttributesExt;
 use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::quote;
 
-pub fn handler(ident: syn::Ident, doc: TokenStream2, variants: Vec<ParameterEnumVariantOpt>) -> Result<TokenStream2, (Span, &'static str)> {
+pub(crate) fn handler(ident: syn::Ident, doc: TokenStream2, variants: Vec<ParameterEnumVariantOpt>) -> Result<TokenStream2, (Span, &'static str)> {
     let ident_string = ident.to_string();
 
     let variants_codegen: Vec<TokenStream2> = variants
         .into_iter()
         .map(|variant| {
             let varient_string = variant.ident.to_string();
-            let combined_ident = format!("{}__{}",   ident_string, &variant.ident);
-            let combined_ident_string = combined_ident.to_string();
 
             let fields_stream: Vec<TokenStream2> = variant
                 .fields
@@ -57,7 +55,6 @@ pub fn handler(ident: syn::Ident, doc: TokenStream2, variants: Vec<ParameterEnum
         })
         .collect();
 
-    println!("{:?}", &variants_codegen);
 
     let ret = quote! {
         impl Schematic for #ident {

@@ -36,7 +36,7 @@ use axum::response::Html;
 use convert_case::{Case, Casing};
 use either::Either;
 use http::Method;
-use oas::{Info, MediaType, OpenAPIV3, Operation, Parameter, PathItem, Referenceable, RequestBody, Response, Responses, Schema, Tag};
+use oas::{Info, OpenAPIV3, Operation, Parameter, PathItem, Referenceable, RequestBody, Responses, Tag};
 use once_cell::sync::Lazy;
 
 use crate::Responder;

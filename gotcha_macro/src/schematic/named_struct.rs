@@ -5,7 +5,7 @@ use crate::schematic::ParameterStructFieldOpt;
 use quote::quote;
 use crate::utils::AttributesExt;
 
-pub fn handler( ident: syn::Ident, doc: TokenStream2, generics: syn::Generics, where_clause: Option<syn::WhereClause>, fields: darling::ast::Fields<ParameterStructFieldOpt>) -> Result<TokenStream2, (Span, &'static str)> {
+pub(crate) fn handler( ident: syn::Ident, doc: TokenStream2, generics: syn::Generics, where_clause: Option<syn::WhereClause>, fields: darling::ast::Fields<ParameterStructFieldOpt>) -> Result<TokenStream2, (Span, &'static str)> {
     let ident_string = ident.to_string();
     let generics_params = generics.params.iter().map(|p| quote! { #p }).collect::<Vec<TokenStream2>>();
     let generics_single =  generics.params.iter().map(|p| {
@@ -45,14 +45,21 @@ pub fn handler( ident: syn::Ident, doc: TokenStream2, generics: syn::Generics, w
                 quote! {None}
             };
             quote! {
+
+                // handle properties
                 let mut field_schema = <#field_ty as Schematic>::generate_schema();
                 field_schema.description = #field_description;
                 properties.insert(#field_name.to_string(), field_schema.to_value());
+
+                // handle required
+                if <#field_ty as Schematic>::required() {
+                    required_fields.push(#field_name.to_string());
+                }
             }
         })
         .collect();
     let ret = quote! {
-        impl #generics Schematic for #ident #generics_single {
+        impl #generics Schematic for #ident #generics_single #where_clause {
             fn name() -> &'static str {
                 #ident_string
             }
@@ -75,11 +82,14 @@ pub fn handler( ident: syn::Ident, doc: TokenStream2, generics: syn::Generics, w
                     description: Self::doc(),
                     extras:Default::default()
                 };
+                
+                let mut required_fields = vec![];
                 let mut properties = ::std::collections::HashMap::new();
                 #(
                     #fields_stream
                 )*
                 schema.extras.insert("properties".to_string(), ::serde_json::to_value(properties).unwrap());
+                schema.extras.insert("required".to_string(), ::serde_json::to_value(required_fields).unwrap());
                 schema
             }
         }

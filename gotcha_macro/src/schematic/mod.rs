@@ -2,8 +2,7 @@ use darling::ast::Data;
 use darling::{FromDeriveInput, FromField, FromVariant};
 use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::quote;
-use syn::{parse2, DeriveInput, GenericParam};
-use darling::FromMeta;
+use syn::{parse2, DeriveInput};
 
 
 pub mod named_struct;
@@ -59,7 +58,7 @@ impl ParameterExtraField {
 
 #[derive(Debug, FromDeriveInput)]
 #[darling(attributes(parameter), forward_attrs(allow, doc, cfg, serde))]
-struct ParameterOpts {
+pub(crate) struct ParameterOpts {
     ident: syn::Ident,
     generics: syn::Generics,
     where_clause: Option<syn::WhereClause>,
@@ -70,7 +69,7 @@ struct ParameterOpts {
 
 #[derive(Debug, FromField)]
 #[darling(attributes(parameter), forward_attrs(allow, doc, cfg, serde))]
-struct ParameterStructFieldOpt {
+pub(crate) struct ParameterStructFieldOpt {
     ident: Option<syn::Ident>,
     ty: syn::Type,
     attrs: Vec<syn::Attribute>,
@@ -79,7 +78,7 @@ struct ParameterStructFieldOpt {
 
 #[derive(Debug, FromVariant)]
 #[darling(attributes(parameter), forward_attrs(allow, doc, cfg, serde))]
-struct ParameterEnumVariantOpt {
+pub(crate) struct ParameterEnumVariantOpt {
     ident: syn::Ident,
     #[allow(dead_code)]
     attrs: Vec<syn::Attribute>,
@@ -91,7 +90,6 @@ pub(crate) fn handler(input: TokenStream2) -> Result<TokenStream2, (Span, &'stat
     let param_opts: ParameterOpts = ParameterOpts::from_derive_input(&x1).unwrap();
     let extra_field = ParameterExtraField::from_attr(&param_opts.attrs);
     let ident = param_opts.ident.clone();
-    let ident_string = ident.to_string();
     let doc = match param_opts.attrs.get_doc() {
         None => {
             quote! { None }
@@ -125,6 +123,5 @@ pub(crate) fn handler(input: TokenStream2) -> Result<TokenStream2, (Span, &'stat
             named_struct::handler(ident, doc, param_opts.generics, param_opts.where_clause, fields)?
         }
     };
-    println!("{}", &impl_stream);
     Ok(impl_stream)
 }

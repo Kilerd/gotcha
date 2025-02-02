@@ -1,4 +1,4 @@
-use gotcha::{async_trait, ConfigWrapper, GotchaApp, GotchaContext, GotchaRouter, Responder, State};
+use gotcha::{ConfigWrapper, GotchaApp, GotchaContext, GotchaRouter, State};
 use serde::{Deserialize, Serialize};
 
 pub async fn hello_world(_state: State<ConfigWrapper<Config>>) -> impl Responder {

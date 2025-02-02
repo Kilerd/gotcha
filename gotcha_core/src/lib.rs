@@ -54,18 +54,20 @@ macro_rules! impl_primitive_type {
     };
 }
 
-impl_primitive_type! { i8, "i32", "number"}
-impl_primitive_type! { i16, "i16", "number"}
-impl_primitive_type! { i32, "i32", "number"}
-impl_primitive_type! { i64, "i64", "number"}
-impl_primitive_type! { isize, "isize", "number"}
-impl_primitive_type! { u8, "u8", "number"}
-impl_primitive_type! { u16, "u16", "number"}
-impl_primitive_type! { u32, "u32", "number"}
-impl_primitive_type! { u64, "u64", "number"}
-impl_primitive_type! { usize, "usize", "number"}
+impl_primitive_type! { i8, "i32", "integer"}
+impl_primitive_type! { i16, "i16", "integer"}
+impl_primitive_type! { i32, "i32", "integer"}
+impl_primitive_type! { i64, "i64", "integer"}
+impl_primitive_type! { isize, "isize", "integer"}
+impl_primitive_type! { u8, "u8", "integer"}
+impl_primitive_type! { u16, "u16", "integer"}
+impl_primitive_type! { u32, "u32", "integer"}
+impl_primitive_type! { u64, "u64", "integer"}
+impl_primitive_type! { usize, "usize", "integer"}
 impl_primitive_type! { String, "string", "string"}
 impl_primitive_type! { bool, "string", "boolean"}
+impl_primitive_type! { f32, "string", "number"}
+impl_primitive_type! { f64, "string", "number"}
 
 impl Schematic for &str {
     fn name() -> &'static str {

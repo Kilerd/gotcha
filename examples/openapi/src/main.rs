@@ -1,4 +1,4 @@
-use gotcha::{api, ConfigWrapper, GotchaApp, GotchaContext, GotchaRouter, Json, Path, Responder, Schematic};
+use gotcha::{api, ConfigWrapper, GotchaApp, GotchaContext, GotchaRouter, Json, Path, Schematic};
 use serde::{Deserialize, Serialize};
 
 

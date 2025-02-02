@@ -19,7 +19,7 @@
             "type": "object",
             "properties": {
                 "ohter": {
-                    "type": "number"
+                    "type": "integer"
                 }
             }
         }

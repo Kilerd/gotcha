@@ -12,7 +12,6 @@ use http::Method;
 use oas::Operation;
 use tower_layer::Layer;
 use tower_service::Service;
-use tracing::info;
 
 #[cfg(feature = "openapi")]
 use crate::Operable;
@@ -90,7 +89,7 @@ impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
         let handle_operable = extract_operable::<H, T, State>();
         #[cfg(feature = "openapi")]
         if let Some(operable) = handle_operable {
-            info!("generating openapi spec for {}[{}]", &operable.type_name, &path);
+            tracing::info!("generating openapi spec for {}[{}]", &operable.type_name, &path);
             let operation = operable.generate(path.to_string());
             let method = match method {
                 MethodFilter::DELETE => Method::DELETE,

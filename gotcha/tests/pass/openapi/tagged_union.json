@@ -23,7 +23,7 @@
                     ]
                 },
                 "ohter": {
-                    "type": "number"
+                    "type": "integer"
                 }
             },
             "type": "object"

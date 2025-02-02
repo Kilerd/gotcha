@@ -61,8 +61,6 @@
 //! - `static_files` - Enables static file serving capabilities
 //!
 
-use std::net::{Ipv4Addr, SocketAddrV4};
-use std::str::FromStr;
 
 pub use async_trait::async_trait;
 use axum::extract::FromRef;
@@ -77,7 +75,6 @@ pub use gotcha_macro::*;
 pub use once_cell::sync::Lazy;
 pub use router::GotchaRouter;
 use serde::{Deserialize, Serialize};
-use tracing::info;
 use tracing::level_filters::LevelFilter;
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::{fmt, EnvFilter};
@@ -208,8 +205,11 @@ pub trait GotchaApp: Sized + Send + Sync {
 
     #[cfg(not(feature = "cloudflare_worker"))]
     fn run(self) -> impl std::future::Future<Output = Result<(), Box<dyn std::error::Error>>> + Send {async move {
+        use std::net::Ipv4Addr;
+        use std::str::FromStr;
+        use std::net::SocketAddrV4;
         self.logger()?;
-        info!("logger has been initialized");
+        tracing::info!("logger has been initialized");
         let config: ConfigWrapper<Self::Config> = self.config().await?;
         let state = self.state(&config).await?;
 

@@ -1,5 +1,5 @@
 use gotcha::router::GotchaRouter;
-use gotcha::{async_trait, ConfigWrapper, GotchaApp, GotchaContext, Responder, State};
+use gotcha::{ConfigWrapper, GotchaApp, GotchaContext, State};
 use serde::{Deserialize, Serialize};
 
 

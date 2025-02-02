@@ -1,6 +1,6 @@
 use gotcha::Schematic;
 use serde::Serialize;
-use assert_json_diff::assert_json_include;
+use assert_json_diff::assert_json_eq;
 
 #[derive(Schematic)]
 pub enum Union {
@@ -15,5 +15,5 @@ fn main() {
 
     let schema_json = serde_json::to_value(&schema).unwrap();
     let expected_json: serde_json::Value = serde_json::from_str(include_str!("external_tagged_union.json")).unwrap();
-    assert_json_include!(actual: schema_json, expected: expected_json);
+    assert_json_eq!(schema_json,expected_json);
 }
