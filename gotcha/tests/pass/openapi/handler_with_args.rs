@@ -20,15 +20,21 @@ pub struct RequestPayload {
 
 
 #[api]
-async fn path_tuple(_tuple_path: Path<(i32,)>) -> impl Responder {
+async fn path_tuple(_tuple_path: Path<(i32,)>) -> String {
     "Hello world".to_string()
 }
 #[api]
-async fn query_params(_struct_path: Query<QueryArgs>) -> impl Responder {}
+async fn query_params(_struct_path: Query<QueryArgs>) -> String {
+    "Hello world".to_string()
+}
 #[api]
-async fn json_payload(_payload: Json<RequestPayload>) -> impl Responder {}
+async fn json_payload(_payload: Json<RequestPayload>) -> String {
+    "Hello world".to_string()
+}
 #[api]
-async fn state_extract(_data: State<AppData>) -> impl Responder {}
+async fn state_extract(_data: State<AppData>) -> String {
+    "Hello world".to_string()
+}
 
 
 fn extract<H, T>(handler: H) -> Option<&'static gotcha::openapi::Operable>

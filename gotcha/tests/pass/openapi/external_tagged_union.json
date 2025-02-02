@@ -1,0 +1,30 @@
+{
+  "oneOf": [
+    {
+      "properties": {
+        "One": {
+            "type": "object",
+            "properties": {
+                "inner": {
+                    "type": "string"
+                }
+            }
+        }
+      },
+      "type": "object"
+    },
+    {
+      "properties": {
+        "Two": {
+            "type": "object",
+            "properties": {
+                "ohter": {
+                    "type": "number"
+                }
+            }
+        }
+      },
+      "type": "object"
+    }
+  ]
+}

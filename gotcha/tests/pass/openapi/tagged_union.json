@@ -1,0 +1,32 @@
+{
+    "oneOf": [
+        {
+            "properties": {
+                "type": {
+                    "type": "enum",
+                    "values": [
+                        "One"
+                    ]
+                },
+                "inner": {
+                    "type": "string"
+                }
+            },
+            "type": "object"
+        },
+        {
+            "properties": {
+                "type": {
+                    "type": "enum",
+                    "values": [
+                        "Two"
+                    ]
+                },
+                "ohter": {
+                    "type": "number"
+                }
+            },
+            "type": "object"
+        }
+    ]
+}

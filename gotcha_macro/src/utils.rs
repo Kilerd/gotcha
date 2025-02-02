@@ -8,7 +8,7 @@ impl AttributesExt for Vec<Attribute> {
     fn get_doc(&self) -> Option<String> {
         let docs: Vec<String> = self
             .iter()
-            .filter_map(|attr| match attr.parse_meta().unwrap() {
+            .filter_map(|attr| match attr.parse_meta().expect("Failed to parse attribute to get doc") {
                 Meta::NameValue(doc) => {
                     if doc.path.is_ident("doc") {
                         Some(doc)
