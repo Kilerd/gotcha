@@ -2,13 +2,15 @@ use darling::ast::Data;
 use darling::{FromDeriveInput, FromField, FromVariant};
 use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::quote;
-use syn::{parse2, DeriveInput};
+use syn::{parse2, DeriveInput, GenericParam};
 
 use crate::utils::AttributesExt;
 #[derive(Debug, FromDeriveInput)]
 #[darling(attributes(parameter), forward_attrs(allow, doc, cfg))]
 struct ParameterOpts {
     ident: syn::Ident,
+    generics: syn::Generics,
+    where_clause: Option<syn::WhereClause>,
     // fall over the serde info
     data: Data<ParameterEnumVariantOpt, ParameterStructFieldOpt>,
     attrs: Vec<syn::Attribute>,
@@ -85,6 +87,35 @@ pub(crate) fn handler(input: TokenStream2) -> Result<TokenStream2, (Span, &'stat
             }
         }
         Data::Struct(fields) => {
+            dbg!(&fields);
+            dbg!(&param_opts.generics);
+
+            let generics_params = param_opts.generics.params.iter().map(|p| quote! { #p }).collect::<Vec<TokenStream2>>();
+            let generics_single =  param_opts.generics.params.iter().map(|p| {
+                match p {
+                    GenericParam::Type(ty) => {
+                        let ident = ty.ident.clone();
+                        quote! { #ident }
+                    },
+                    GenericParam::Lifetime(lt) => quote! { #lt },
+                    GenericParam::Const(c) => quote! { #c },
+                }
+            }).collect::<Vec<TokenStream2>>();
+            let generics = if generics_params.is_empty() {
+                quote! { }
+            } else {
+                quote! {<#(#generics_params),*> }
+            };
+            let generics_single = if generics_single.is_empty() {
+                quote! { }
+            } else {
+                quote! {<#(#generics_single),*> }
+            };
+            let where_clause = if let Some(where_clause) = param_opts.where_clause {
+                quote! { where #where_clause }
+            } else {
+                quote! { }
+            };
             let fields_stream: Vec<TokenStream2> = fields
                 .fields
                 .into_iter()
@@ -104,7 +135,7 @@ pub(crate) fn handler(input: TokenStream2) -> Result<TokenStream2, (Span, &'stat
                 })
                 .collect();
             let ret = quote! {
-                impl Schematic for #ident {
+                impl #generics Schematic for #ident #generics_single {
                     fn name() -> &'static str {
                         #ident_string
                     }
@@ -137,7 +168,7 @@ pub(crate) fn handler(input: TokenStream2) -> Result<TokenStream2, (Span, &'stat
                 }
             };
 
-            // println!("token: {}", &ret);
+            debug_print::debug_print!("token: {}", &ret);
             ret
         }
     };

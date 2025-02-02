@@ -5,7 +5,6 @@ use bigdecimal::BigDecimal;
 use chrono::{DateTime, Utc};
 use either::Either;
 use oas::{MediaType, Parameter, ParameterIn, Referenceable, RequestBody, Schema};
-
 pub mod responsable;
 
 /// Schematic is a trait that defines the schema of a type.

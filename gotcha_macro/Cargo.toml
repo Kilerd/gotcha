@@ -16,3 +16,4 @@ darling = "0.14.2"
 gotcha_core = { version = "0.2", path = "../gotcha_core" }
 proc-macro-error = { version = "1", default-features = false }
 uuid = {version =  "1.10.0", features = ["v4"] }
+debug_print = "0.1.0"

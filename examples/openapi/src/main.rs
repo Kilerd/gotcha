@@ -3,6 +3,13 @@ use serde::{Deserialize, Serialize};
 
 
 #[derive(Schematic, Serialize, Deserialize, Debug)]
+pub struct ResponseWrapper<T: Schematic> {
+    pub code: i32,
+    pub message: String,
+    pub data: T,
+}
+
+#[derive(Schematic, Serialize, Deserialize, Debug)]
 pub struct Pet {
     pub id: i32,
     pub name: String,
