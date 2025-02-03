@@ -7,4 +7,10 @@ pub struct ResponseWrapper<T: Schematic> {
     pub data: T,
 }
 
+#[derive(Schematic)]
+pub enum Either<A: Schematic, B: Schematic> {
+    Left{left_data: A},
+    Right{right_data: B},
+}
+
 fn main() {}

@@ -64,40 +64,38 @@ pub(crate) fn handler(ident: syn::Ident, doc: TokenStream2, variants: Vec<Parame
 
 
     let ret = quote! {
-        impl Schematic for #ident {
-            fn name() -> &'static str {
-                #ident_string
-            }
-
-            fn required() -> bool {
-                true
-            }
-
-            fn type_() -> &'static str {
-                "union"
-            }
-            fn doc() -> Option<String> {
-                #doc
-            }
-            fn generate_schema() -> ::gotcha::oas::Schema {
-                let mut schema = ::gotcha::oas::Schema {
-                    _type: None,
-                    format:None,
-                    nullable:None,
-                    description: Self::doc(),
-                    extras:Default::default()
-                };
-                let mut branches = vec![];
-
-                #(
-                    #variants_codegen
-                    branches.push(variant_object);
-                )* 
-
-                schema.extras.insert("oneOf".to_string(), ::serde_json::to_value(branches).unwrap());
-                schema
-            } 
+        fn name() -> &'static str {
+            #ident_string
         }
+
+        fn required() -> bool {
+            true
+        }
+
+        fn type_() -> &'static str {
+            "union"
+        }
+        fn doc() -> Option<String> {
+            #doc
+        }
+        fn generate_schema() -> ::gotcha::oas::Schema {
+            let mut schema = ::gotcha::oas::Schema {
+                _type: None,
+                format:None,
+                nullable:None,
+                description: Self::doc(),
+                extras:Default::default()
+            };
+            let mut branches = vec![];
+
+            #(
+                #variants_codegen
+                branches.push(variant_object);
+            )* 
+
+            schema.extras.insert("oneOf".to_string(), ::serde_json::to_value(branches).unwrap());
+            schema
+        } 
     };
 
     Ok(ret)

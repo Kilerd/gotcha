@@ -3,6 +3,7 @@ use darling::{FromDeriveInput, FromField, FromVariant};
 use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::quote;
 use syn::{parse2, DeriveInput};
+use syn::{GenericParam};
 
 
 pub mod named_struct;
@@ -99,19 +100,47 @@ pub(crate) fn handler(input: TokenStream2) -> Result<TokenStream2, (Span, &'stat
         }
     };
 
+    let generics_params = param_opts.generics.params.iter().map(|p| quote! { #p }).collect::<Vec<TokenStream2>>();
+    let generics_single =  param_opts.generics.params.iter().map(|p| {
+        match p {
+            GenericParam::Type(ty) => {
+                let ident = ty.ident.clone();
+                quote! { #ident }
+            },
+            GenericParam::Lifetime(lt) => quote! { #lt },
+            GenericParam::Const(c) => quote! { #c },
+        }
+    }).collect::<Vec<TokenStream2>>();
+    let generics = if generics_params.is_empty() {
+        quote! { }
+    } else {
+        quote! {<#(#generics_params),*> }
+    };
+    let generics_single = if generics_single.is_empty() {
+        quote! { }
+    } else {
+        quote! {<#(#generics_single),*> }
+    };
+    let where_clause = if let Some(where_clause) = param_opts.where_clause {
+        quote! { where #where_clause }
+    } else {
+        quote! { }
+    };
+
+
     let impl_stream = match param_opts.data {
         Data::Enum(enum_variants) => {
             // Check if all enum variants have empty fields
             let is_simple_enum = enum_variants.iter().all(|variant| variant.fields.is_empty());
             if is_simple_enum {
-                simple_enum::handler(ident, doc, enum_variants)?
+                simple_enum::handler(ident.clone(), doc, enum_variants)?
             }
         else {
             if extra_field.tag ==None {
-                external_tagged_enum::handler(ident, doc, enum_variants)?
+                external_tagged_enum::handler(ident.clone(), doc, enum_variants)?
             }
             else if extra_field.tag == Some(SerdeTag::Type) {
-                tagged_enum::handler(ident, doc, enum_variants)?
+                tagged_enum::handler(ident.clone(), doc, enum_variants)?
             } else {
                 return Err((
                     Span::call_site(),
@@ -120,8 +149,16 @@ pub(crate) fn handler(input: TokenStream2) -> Result<TokenStream2, (Span, &'stat
             }
         }},
         Data::Struct(fields) => {
-            named_struct::handler(ident, doc, param_opts.generics, param_opts.where_clause, fields)?
+            named_struct::handler(ident.clone(), doc, fields)?
         }
     };
-    Ok(impl_stream)
+
+
+    let ret = quote! {
+        impl #generics Schematic for #ident #generics_single #where_clause {
+            #impl_stream
+        }
+    };
+
+    Ok(ret)
 }
