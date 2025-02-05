@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use axum::extract::{Json, Path, Query, Request, State};
 use bigdecimal::BigDecimal;
@@ -189,6 +189,37 @@ impl<T: Schematic> Schematic for HashSet<T> {
         schema.extras.insert("items".to_string(), T::generate_schema().to_value());
         schema
     }
+}
+
+impl<T: Schematic> Schematic for HashMap<String, T> {
+    fn name() -> &'static str {
+        T::name()
+    }
+
+    fn required() -> bool {
+        true
+    }
+
+    fn type_() -> &'static str {
+        "object"
+    }
+
+    fn generate_schema() -> Schema {
+        let mut schema = Schema {
+            _type: Some(Self::type_().to_string()),
+            format: None,
+            nullable: None,
+            description: Self::doc(),
+            extras: Default::default(),
+        };
+        let mut properties = BTreeMap::new();
+        properties.insert("type".to_string(), "string".to_string());
+        properties.insert("format".to_string(), T::type_().to_string());
+        schema.extras.insert("additionalProperties".to_string(), ::serde_json::to_value(properties).unwrap());
+        schema
+    }
+    
+    
 }
 
 impl Schematic for DateTime<Utc> {
