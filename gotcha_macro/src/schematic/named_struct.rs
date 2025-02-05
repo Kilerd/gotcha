@@ -62,8 +62,8 @@ pub(crate) fn handler( ident: syn::Ident, doc: TokenStream2, fields: darling::as
             #(
                 #fields_stream
             )*
-            schema.extras.insert("properties".to_string(), ::serde_json::to_value(properties).unwrap());
-            schema.extras.insert("required".to_string(), ::serde_json::to_value(required_fields).unwrap());
+            schema.extras.insert("properties".to_string(), ::gotcha::serde_json::to_value(properties).unwrap());
+            schema.extras.insert("required".to_string(), ::gotcha::serde_json::to_value(required_fields).unwrap());
             schema
         }
     };

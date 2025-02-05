@@ -36,7 +36,7 @@ pub(crate) fn handler( ident: syn::Ident, doc: TokenStream2, variants: Vec<Param
                 extras:Default::default()
             };
             let enum_variants:Vec<&'static str> = vec![ #(#variant_vec ,)* ];
-            schema.extras.insert("enum".to_string(), ::serde_json::to_value(enum_variants).unwrap());
+            schema.extras.insert("enum".to_string(), ::gotcha::serde_json::to_value(enum_variants).unwrap());
             schema
         }
     };

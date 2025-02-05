@@ -44,18 +44,18 @@ pub(crate) fn handler(ident: syn::Ident, doc: TokenStream2, variants: Vec<Parame
                    )*
 
                    let mut second_properties = ::std::collections::HashMap::new();
-                   second_properties.insert("type".to_string(), ::serde_json::to_value("object").expect("cannot convert type to value"));
-                   second_properties.insert("properties".to_string(), ::serde_json::to_value(properties).expect("cannot convert properties to value"));
-                   second_properties.insert("required".to_string(), ::serde_json::to_value(properties_required_fields).expect("cannot convert properties required fields to value"));
+                   second_properties.insert("type".to_string(), ::gotcha::serde_json::to_value("object").expect("cannot convert type to value"));
+                   second_properties.insert("properties".to_string(), ::gotcha::serde_json::to_value(properties).expect("cannot convert properties to value"));
+                   second_properties.insert("required".to_string(), ::gotcha::serde_json::to_value(properties_required_fields).expect("cannot convert properties required fields to value"));
 
                    let mut root_properties = ::std::collections::HashMap::new();
                    let mut root_required_fields = vec![ #varient_string.to_string() ];
-                   root_properties.insert(#varient_string.to_string(), ::serde_json::to_value(second_properties).expect("cannot convert properties to value"));
+                   root_properties.insert(#varient_string.to_string(), ::gotcha::serde_json::to_value(second_properties).expect("cannot convert properties to value"));
                    
                    let mut variant_object = ::std::collections::HashMap::new();
-                   variant_object.insert("type".to_string(), ::serde_json::to_value("object").expect("cannot convert type to value"));
-                   variant_object.insert("properties".to_string(), ::serde_json::to_value(root_properties).expect("cannot convert root properties to value"));
-                   variant_object.insert("required".to_string(), ::serde_json::to_value(root_required_fields).expect("cannot convert root properties required fields to value"));
+                   variant_object.insert("type".to_string(), ::gotcha::serde_json::to_value("object").expect("cannot convert type to value"));
+                   variant_object.insert("properties".to_string(), ::gotcha::serde_json::to_value(root_properties).expect("cannot convert root properties to value"));
+                   variant_object.insert("required".to_string(), ::gotcha::serde_json::to_value(root_required_fields).expect("cannot convert root properties required fields to value"));
 
 
             }
@@ -93,7 +93,7 @@ pub(crate) fn handler(ident: syn::Ident, doc: TokenStream2, variants: Vec<Parame
                 branches.push(variant_object);
             )* 
 
-            schema.extras.insert("oneOf".to_string(), ::serde_json::to_value(branches).unwrap());
+            schema.extras.insert("oneOf".to_string(), ::gotcha::serde_json::to_value(branches).unwrap());
             schema
         } 
     };

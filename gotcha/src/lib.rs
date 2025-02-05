@@ -128,6 +128,8 @@ pub use tower_http::services::{ServeDir, ServeFile};
 #[cfg(feature = "task")]
 pub use task::TaskScheduler;
 
+pub use serde_json;
+
 #[derive(Clone)]
 pub struct GotchaContext<State: Clone + Send + Sync + 'static, Config: Clone + Send + Sync + 'static + Serialize + for<'de> Deserialize<'de> + Default> {
     pub config: ConfigWrapper<Config>,
