@@ -1,16 +1,16 @@
 use proc_macro2::{Span, TokenStream as TokenStream2};
-use crate::schematic::ParameterEnumVariantOpt;
 use quote::quote;
 
-pub(crate) fn handler( ident: syn::Ident, doc: TokenStream2, variants: Vec<ParameterEnumVariantOpt>) -> Result<TokenStream2, (Span, &'static str)> {
+use crate::schematic::ParameterEnumVariantOpt;
 
+pub(crate) fn handler(ident: syn::Ident, doc: TokenStream2, variants: Vec<ParameterEnumVariantOpt>) -> Result<TokenStream2, (Span, &'static str)> {
     let ident_string = ident.to_string();
 
     let variant_vec: Vec<TokenStream2> = variants
-    .into_iter()
-    .map(|variant| variant.ident.to_string())
-    .map(|variant_str| quote! { #variant_str })
-    .collect();
+        .into_iter()
+        .map(|variant| variant.ident.to_string())
+        .map(|variant_str| quote! { #variant_str })
+        .collect();
 
     let ret = quote! {
         fn name() -> &'static str {

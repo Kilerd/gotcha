@@ -1,7 +1,6 @@
 use gotcha::{api, ConfigWrapper, GotchaApp, GotchaContext, GotchaRouter, Json, Path, Schematic};
 use serde::{Deserialize, Serialize};
 
-
 #[derive(Schematic, Serialize, Deserialize, Debug)]
 pub struct ResponseWrapper<T: Schematic> {
     pub code: i32,

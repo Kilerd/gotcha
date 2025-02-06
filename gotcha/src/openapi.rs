@@ -1,5 +1,5 @@
 //! # OpenAPI Module
-//! 
+//!
 //! This module provides OpenAPI documentation generation capabilities for Gotcha web applications.
 //! It is enabled by default but can be disabled by opting out of the "openapi" feature.
 //!
@@ -26,9 +26,8 @@
 //! }
 //! ```
 //!
-//! The OpenAPI documentation will be automatically generated and served at `/docs` 
+//! The OpenAPI documentation will be automatically generated and served at `/docs`
 //! and `/docs/scalar` endpoints when the feature is enabled.
-
 
 use std::collections::{BTreeMap, HashMap};
 
@@ -40,7 +39,6 @@ use oas::{Info, OpenAPIV3, Operation, Parameter, PathItem, Referenceable, Reques
 use once_cell::sync::Lazy;
 
 use crate::Responder;
-
 
 pub(crate) async fn openapi_html() -> impl Responder {
     Html(include_str!("../statics/redoc.html"))
@@ -79,8 +77,8 @@ impl Operable {
                 Either::Right(req_body) => request_body = Some(Referenceable::Data(req_body.clone())),
             }
         }
-        let responses  = (self.responses)();
-        
+        let responses = (self.responses)();
+
         Operation {
             tags,
             summary: Some(self.id.to_case(Case::Title)),

@@ -1,13 +1,11 @@
 use std::path::PathBuf;
 use std::str::FromStr;
 
+use mofa::{ConfigLoader, EnvironmentSource, FileSource};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
-use mofa::{ConfigLoader, EnvironmentSource, FileSource};
 
 use crate::error::GotchaError;
-
-
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct ConfigWrapper<T: DeserializeOwned + Serialize + Default> {

@@ -75,8 +75,8 @@ pub(crate) fn request_handler(args: TokenStream, input_stream: TokenStream) -> T
             quote! {
                 Box::new(|| { ( () as ::gotcha::Responsable).response() })
             }
-        },
-        
+        }
+
         ReturnType::Type(_, ty) => {
             quote! {
                 Box::new(|| {<#ty as ::gotcha::Responsable>::response()})

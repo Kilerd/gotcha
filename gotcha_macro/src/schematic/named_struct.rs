@@ -1,13 +1,15 @@
-use proc_macro2::TokenStream as TokenStream2;
-use syn::{GenericParam};
-use proc_macro2::Span;
-use crate::schematic::ParameterStructFieldOpt;
+use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::quote;
+use syn::GenericParam;
+
+use crate::schematic::ParameterStructFieldOpt;
 use crate::utils::AttributesExt;
 
-pub(crate) fn handler( ident: syn::Ident, doc: TokenStream2, fields: darling::ast::Fields<ParameterStructFieldOpt>) -> Result<TokenStream2, (Span, &'static str)> {
+pub(crate) fn handler(
+    ident: syn::Ident, doc: TokenStream2, fields: darling::ast::Fields<ParameterStructFieldOpt>,
+) -> Result<TokenStream2, (Span, &'static str)> {
     let ident_string = ident.to_string();
-    
+
     let fields_stream: Vec<TokenStream2> = fields
         .fields
         .into_iter()
@@ -22,7 +24,7 @@ pub(crate) fn handler( ident: syn::Ident, doc: TokenStream2, fields: darling::as
             quote! {
                 (
                     #field_name,
-                    
+
                     // handle properties
                     {
                         let mut field_schema = <#field_ty as Schematic>::generate_schema();
@@ -66,7 +68,7 @@ pub(crate) fn handler( ident: syn::Ident, doc: TokenStream2, fields: darling::as
                 },
                 required: Self::required(),
             };
-            
+
             let mut required_fields = vec![];
             let mut properties = ::std::collections::HashMap::new();
 
@@ -84,5 +86,4 @@ pub(crate) fn handler( ident: syn::Ident, doc: TokenStream2, fields: darling::as
     };
 
     Ok(ret)
-
 }

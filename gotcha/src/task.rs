@@ -1,5 +1,5 @@
 //! # Task Module
-//! 
+//!
 //! This module provides task scheduling capabilities for Gotcha web applications.
 //! It supports both cron-based and interval-based task scheduling.
 //!
@@ -37,7 +37,6 @@
 //! - Background processing
 //! - Scheduled notifications
 //!
-
 
 use std::future::Future;
 use std::str::FromStr;

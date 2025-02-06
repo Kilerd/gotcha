@@ -2,7 +2,6 @@ use gotcha::router::GotchaRouter;
 use gotcha::{ConfigWrapper, GotchaApp, GotchaContext, State};
 use serde::{Deserialize, Serialize};
 
-
 #[derive(Debug, Deserialize, Clone, Serialize, Default)]
 pub struct Config {
     // welcome: String,
@@ -27,19 +26,16 @@ impl GotchaApp for App {
     }
 }
 
-
-
 #[worker::event(fetch)]
 async fn handle_fetch(request: worker::Request, env: worker::Env, ctx: worker::Context) -> worker::Result<worker::Response> {
-    
-    let app = App{};
+    let app = App {};
     let router = match app.worker_router(env).await {
         Ok(router) => router,
-        Err(e) => return worker::Response::error(e.to_string(), 500)
+        Err(e) => return worker::Response::error(e.to_string(), 500),
     };
     let res = match router.call(request).await {
         Ok(res) => res,
-        Err(e) => return worker::Response::error(e.to_string(), 500)
+        Err(e) => return worker::Response::error(e.to_string(), 500),
     };
     Ok(res)
     // worker::Response::ok("Hello, World!")

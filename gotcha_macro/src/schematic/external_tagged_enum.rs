@@ -1,7 +1,8 @@
-use crate::schematic::ParameterEnumVariantOpt;
-use crate::utils::AttributesExt;
 use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::quote;
+
+use crate::schematic::ParameterEnumVariantOpt;
+use crate::utils::AttributesExt;
 
 pub(crate) fn handler(ident: syn::Ident, doc: TokenStream2, variants: Vec<ParameterEnumVariantOpt>) -> Result<TokenStream2, (Span, &'static str)> {
     let ident_string = ident.to_string();
@@ -22,13 +23,12 @@ pub(crate) fn handler(ident: syn::Ident, doc: TokenStream2, variants: Vec<Parame
                         quote! {None}
                     };
                      if let Some(ident) = field.ident {
-                        
                         let field_name = ident.to_string();
                         quote! {
                             let mut field_schema = <#field_ty as Schematic>::generate_schema();
                             field_schema.schema.description = #field_description;
                             properties.insert(#field_name.to_string(), field_schema.schema.to_value());
-    
+
                             if field_schema.required {
                                 properties_required_fields.push(#field_name.to_string());
                             }
@@ -40,20 +40,16 @@ pub(crate) fn handler(ident: syn::Ident, doc: TokenStream2, variants: Vec<Parame
 
                             for (inner_field_name, inner_field_schema) in varient_fields {
                                 properties.insert(inner_field_name.to_string(), inner_field_schema.schema.to_value());
-    
                                 if inner_field_schema.required {
                                     properties_required_fields.push(inner_field_name.to_string());
                                 }
                             }
                         }
                     }
-                    
                 })
                 .collect();
 
             quote! {
-
-                   
                    let mut properties = ::std::collections::HashMap::new();
                    let mut properties_required_fields = vec![];
                    #(
@@ -68,7 +64,7 @@ pub(crate) fn handler(ident: syn::Ident, doc: TokenStream2, variants: Vec<Parame
                    let mut root_properties = ::std::collections::HashMap::new();
                    let mut root_required_fields = vec![ #varient_string.to_string() ];
                    root_properties.insert(#varient_string.to_string(), ::gotcha::serde_json::to_value(second_properties).expect("cannot convert properties to value"));
-                   
+
                    let mut variant_object = ::std::collections::HashMap::new();
                    variant_object.insert("type".to_string(), ::gotcha::serde_json::to_value("object").expect("cannot convert type to value"));
                    variant_object.insert("properties".to_string(), ::gotcha::serde_json::to_value(root_properties).expect("cannot convert root properties to value"));
@@ -78,7 +74,6 @@ pub(crate) fn handler(ident: syn::Ident, doc: TokenStream2, variants: Vec<Parame
             }
         })
         .collect();
-
 
     let ret = quote! {
         fn name() -> &'static str {
@@ -111,11 +106,11 @@ pub(crate) fn handler(ident: syn::Ident, doc: TokenStream2, variants: Vec<Parame
             #(
                 #variants_codegen
                 branches.push(variant_object);
-            )* 
+            )*
 
             schema.schema.extras.insert("oneOf".to_string(), ::gotcha::serde_json::to_value(branches).unwrap());
             schema
-        } 
+        }
     };
 
     Ok(ret)

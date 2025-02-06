@@ -1,5 +1,5 @@
 //! # Message Module
-//! 
+//!
 //! This module provides a message handling system for Gotcha web applications.
 //! It allows for the asynchronous handling of messages and the spawning of tasks to handle them.
 //!

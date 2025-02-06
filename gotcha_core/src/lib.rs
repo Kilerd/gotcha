@@ -1,4 +1,5 @@
-use std::{collections::{BTreeMap, HashMap, HashSet}, hash::Hash};
+use std::collections::{BTreeMap, HashMap, HashSet};
+use std::hash::Hash;
 
 use axum::extract::{Json, Path, Query, Request, State};
 use bigdecimal::BigDecimal;
@@ -6,7 +7,6 @@ use chrono::{DateTime, Utc};
 use either::Either;
 use oas::{MediaType, Parameter, ParameterIn, Referenceable, RequestBody, Schema};
 pub mod responsable;
-
 
 pub struct EnhancedSchema {
     pub schema: Schema,
@@ -89,7 +89,7 @@ impl Schematic for &str {
     fn name() -> &'static str {
         "string"
     }
-    
+
     fn required() -> bool {
         true
     }
@@ -169,7 +169,6 @@ impl<T: Schematic> Schematic for Vec<T> {
     }
 }
 
-
 impl Schematic for BigDecimal {
     fn name() -> &'static str {
         "string"
@@ -190,7 +189,7 @@ impl<T: Schematic> Schematic for HashSet<T> {
     }
 
     fn required() -> bool {
-       true
+        true
     }
 
     fn type_() -> &'static str {
@@ -204,7 +203,7 @@ impl<T: Schematic> Schematic for HashSet<T> {
                 format: None,
                 nullable: None,
                 description: Self::doc(),
-            extras: Default::default(),
+                extras: Default::default(),
             },
             required: Self::required(),
         };
@@ -240,7 +239,10 @@ impl<K: ToString, V: Schematic> Schematic for HashMap<K, V> {
         let mut properties = BTreeMap::new();
         properties.insert("type".to_string(), "string".to_string());
         properties.insert("format".to_string(), V::type_().to_string());
-        schema.schema.extras.insert("additionalProperties".to_string(), ::serde_json::to_value(properties).unwrap());
+        schema
+            .schema
+            .extras
+            .insert("additionalProperties".to_string(), ::serde_json::to_value(properties).unwrap());
         schema
     }
 }

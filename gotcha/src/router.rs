@@ -7,7 +7,6 @@ pub use axum::response::IntoResponse as Responder;
 use axum::routing::{MethodFilter, MethodRouter, Route};
 use axum::Router;
 use http::Method;
-
 #[cfg(feature = "openapi")]
 use oas::Operation;
 use tower_layer::Layer;
@@ -25,7 +24,7 @@ macro_rules! implement_method {
 }
 
 /// # GotchaRouter
-/// 
+///
 /// A router for Gotcha web applications.
 pub struct GotchaRouter<State = ()> {
     #[cfg(feature = "openapi")]
@@ -44,8 +43,6 @@ impl<State: Clone + Send + Sync + 'static> Default for GotchaRouter<State> {
 }
 
 impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
-    
-
     /// add a route to the router
     /// # Examples
     ///
@@ -204,17 +201,12 @@ impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
     }
 }
 
-
-
 #[cfg(feature = "cloudflare_worker")]
 impl GotchaRouter<()> {
-    
     pub async fn call(&self, request: crate::worker::Request) -> Result<worker::Response, Box<dyn std::error::Error>> {
         Ok(worker::Response::ok("Hello, World!").unwrap())
     }
 }
-
-
 
 #[doc(hidden)]
 #[cfg(feature = "openapi")]
