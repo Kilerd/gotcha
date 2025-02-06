@@ -15,22 +15,39 @@ pub(crate) fn handler(ident: syn::Ident, doc: TokenStream2, variants: Vec<Parame
                 .fields
                 .into_iter()
                 .map(|field| {
-                    let field_name = field.ident.as_ref().expect("cannot get field ident").to_string();
                     let field_ty = field.ty;
                     let field_description = if let Some(doc) = field.attrs.get_doc() {
                         quote! { Some(#doc.to_string()) }
                     } else {
                         quote! {None}
                     };
-                    quote! {
-                        let mut field_schema = <#field_ty as Schematic>::generate_schema();
-                        field_schema.schema.description = #field_description;
-                        properties.insert(#field_name.to_string(), field_schema.schema.to_value());
+                     if let Some(ident) = field.ident {
+                        
+                        let field_name = ident.to_string();
+                        quote! {
+                            let mut field_schema = <#field_ty as Schematic>::generate_schema();
+                            field_schema.schema.description = #field_description;
+                            properties.insert(#field_name.to_string(), field_schema.schema.to_value());
+    
+                            if field_schema.required {
+                                properties_required_fields.push(#field_name.to_string());
+                            }
+                        }
 
-                        if field_schema.required {
-                            properties_required_fields.push(#field_name.to_string());
+                    } else {
+                        quote! {
+                            let mut varient_fields = <#field_ty as Schematic>::fields();
+
+                            for (inner_field_name, inner_field_schema) in varient_fields {
+                                properties.insert(inner_field_name.to_string(), inner_field_schema.schema.to_value());
+    
+                                if inner_field_schema.required {
+                                    properties_required_fields.push(inner_field_name.to_string());
+                                }
+                            }
                         }
                     }
+                    
                 })
                 .collect();
 
