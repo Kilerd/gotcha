@@ -129,6 +129,8 @@ pub use tower_http::services::{ServeDir, ServeFile};
 pub use task::TaskScheduler;
 
 pub use serde_json;
+pub use gotcha_core;
+pub use gotcha_core::EnhancedSchema;
 
 #[derive(Clone)]
 pub struct GotchaContext<State: Clone + Send + Sync + 'static, Config: Clone + Send + Sync + 'static + Serialize + for<'de> Deserialize<'de> + Default> {

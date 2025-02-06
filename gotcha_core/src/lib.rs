@@ -7,26 +7,42 @@ use either::Either;
 use oas::{MediaType, Parameter, ParameterIn, Referenceable, RequestBody, Schema};
 pub mod responsable;
 
+
+pub struct EnhancedSchema {
+    pub schema: Schema,
+    pub required: bool,
+}
+
 /// Schematic is a trait that defines the schema of a type.
 pub trait Schematic {
     /// The name of the type.
     fn name() -> &'static str;
     /// Whether the type is required.
     fn required() -> bool;
+    /// Whether the type is nullable.
+    fn nullable() -> Option<bool> {
+        None
+    }
     /// The type of the type.
     fn type_() -> &'static str;
     /// The documentation of the type.
     fn doc() -> Option<String> {
         None
     }
+    fn fields() -> Vec<(&'static str, EnhancedSchema)> {
+        vec![]
+    }
     /// Generate the schema of the type.
-    fn generate_schema() -> Schema {
-        Schema {
-            _type: Some(Self::type_().to_string()),
-            format: None,
-            nullable: None,
-            description: Self::doc(),
-            extras: Default::default(),
+    fn generate_schema() -> EnhancedSchema {
+        EnhancedSchema {
+            schema: Schema {
+                _type: Some(Self::type_().to_string()),
+                format: None,
+                nullable: Self::nullable(),
+                description: Self::doc(),
+                extras: Default::default(),
+            },
+            required: Self::required(),
         }
     }
 }
@@ -99,7 +115,7 @@ impl<T: Schematic> Schematic for Option<T> {
     fn doc() -> Option<String> {
         T::doc()
     }
-    fn generate_schema() -> Schema {
+    fn generate_schema() -> EnhancedSchema {
         T::generate_schema()
     }
 }
@@ -119,7 +135,7 @@ impl<T: Schematic> Schematic for &T {
     fn doc() -> Option<String> {
         T::doc()
     }
-    fn generate_schema() -> Schema {
+    fn generate_schema() -> EnhancedSchema {
         T::generate_schema()
     }
 }
@@ -137,15 +153,18 @@ impl<T: Schematic> Schematic for Vec<T> {
         "array"
     }
 
-    fn generate_schema() -> Schema {
-        let mut schema = Schema {
-            _type: Some(Self::type_().to_string()),
-            format: None,
-            nullable: None,
-            description: Self::doc(),
-            extras: Default::default(),
+    fn generate_schema() -> EnhancedSchema {
+        let mut schema = EnhancedSchema {
+            schema: Schema {
+                _type: Some(Self::type_().to_string()),
+                format: None,
+                nullable: None,
+                description: Self::doc(),
+                extras: Default::default(),
+            },
+            required: Self::required(),
         };
-        schema.extras.insert("items".to_string(), T::generate_schema().to_value());
+        schema.schema.extras.insert("items".to_string(), T::generate_schema().schema.to_value());
         schema
     }
 }
@@ -178,15 +197,18 @@ impl<T: Schematic> Schematic for HashSet<T> {
         "array"
     }
 
-    fn generate_schema() -> Schema {
-        let mut schema = Schema {
-            _type: Some(Self::type_().to_string()),
-            format: None,
-            nullable: None,
-            description: Self::doc(),
+    fn generate_schema() -> EnhancedSchema {
+        let mut schema = EnhancedSchema {
+            schema: Schema {
+                _type: Some(Self::type_().to_string()),
+                format: None,
+                nullable: None,
+                description: Self::doc(),
             extras: Default::default(),
+            },
+            required: Self::required(),
         };
-        schema.extras.insert("items".to_string(), T::generate_schema().to_value());
+        schema.schema.extras.insert("items".to_string(), T::generate_schema().schema.to_value());
         schema
     }
 }
@@ -204,18 +226,21 @@ impl<K: ToString, V: Schematic> Schematic for HashMap<K, V> {
         "object"
     }
 
-    fn generate_schema() -> Schema {
-        let mut schema = Schema {
-            _type: Some(Self::type_().to_string()),
-            format: None,
-            nullable: None,
-            description: Self::doc(),
-            extras: Default::default(),
+    fn generate_schema() -> EnhancedSchema {
+        let mut schema = EnhancedSchema {
+            schema: Schema {
+                _type: Some(Self::type_().to_string()),
+                format: None,
+                nullable: None,
+                description: Self::doc(),
+                extras: Default::default(),
+            },
+            required: Self::required(),
         };
         let mut properties = BTreeMap::new();
         properties.insert("type".to_string(), "string".to_string());
         properties.insert("format".to_string(), V::type_().to_string());
-        schema.extras.insert("additionalProperties".to_string(), ::serde_json::to_value(properties).unwrap());
+        schema.schema.extras.insert("additionalProperties".to_string(), ::serde_json::to_value(properties).unwrap());
         schema
     }
 }
@@ -261,7 +286,7 @@ impl<T1: Schematic> ParameterProvider for Path<(T1,)> {
             param_names_in_path.first().cloned().expect("cannot get param in path"),
             ParameterIn::Path,
             T1::required(),
-            T1::generate_schema(),
+            T1::generate_schema().schema,
             T1::doc(),
         );
         Either::Left(vec![t1_param])
@@ -277,14 +302,14 @@ impl<T1: Schematic, T2: Schematic> ParameterProvider for Path<(T1, T2)> {
             param_names_in_path.first().cloned().expect("cannot get param in path"),
             ParameterIn::Path,
             T1::required(),
-            T1::generate_schema(),
+            T1::generate_schema().schema,
             T1::doc(),
         );
         let t2_param = build_param(
             param_names_in_path.get(1).cloned().expect("cannot get param in path"),
             ParameterIn::Path,
             T2::required(),
-            T2::generate_schema(),
+            T2::generate_schema().schema,
             T2::doc(),
         );
 
@@ -296,7 +321,7 @@ impl<T: Schematic> ParameterProvider for Path<T> {
     fn generate(_url: String) -> Either<Vec<Parameter>, RequestBody> {
         let mut ret = vec![];
         let mut schema = T::generate_schema();
-        if let Some(mut properties) = schema.extras.remove("properties") {
+        if let Some(mut properties) = schema.schema.extras.remove("properties") {
             if let Some(properties) = properties.as_object_mut() {
                 properties.iter_mut().for_each(|(key, value)| {
                     let schema = serde_json::from_value(value.clone()).unwrap();
@@ -317,7 +342,7 @@ impl<T: Schematic> ParameterProvider for Json<T> {
         contents.insert(
             "application/json".to_owned(),
             MediaType {
-                schema: Some(Referenceable::Data(schema)),
+                schema: Some(Referenceable::Data(schema.schema)),
                 example: None,
                 examples: None,
                 encoding: None,
@@ -336,7 +361,7 @@ impl<T: Schematic> ParameterProvider for Query<T> {
     fn generate(_url: String) -> Either<Vec<Parameter>, RequestBody> {
         let mut ret = vec![];
         let mut schema = T::generate_schema();
-        if let Some(mut properties) = schema.extras.remove("properties") {
+        if let Some(mut properties) = schema.schema.extras.remove("properties") {
             if let Some(properties) = properties.as_object_mut() {
                 properties.iter_mut().for_each(|(key, value)| {
                     let schema = serde_json::from_value(value.clone()).unwrap();

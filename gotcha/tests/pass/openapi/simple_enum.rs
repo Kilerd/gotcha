@@ -10,8 +10,8 @@ pub enum MyType {
 }
 
 fn main() {
-    let schema: Schema = MyType::generate_schema();
+    let schema = MyType::generate_schema();
     assert!(MyType::name().eq("MyType"));
     assert!(MyType::type_().eq("string"));
-    assert!(schema.extras.get("enum").unwrap().as_array().unwrap().len() == 3);
+    assert!(schema.schema.extras.get("enum").unwrap().as_array().unwrap().len() == 3);
 }

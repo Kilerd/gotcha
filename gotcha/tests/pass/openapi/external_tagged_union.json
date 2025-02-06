@@ -24,12 +24,12 @@
         "Two": {
             "type": "object",
             "properties": {
-                "ohter": {
+                "other": {
                     "type": "integer"
                 }
             },
             "required": [
-                "ohter"
+                "other"
             ]
         }
       },

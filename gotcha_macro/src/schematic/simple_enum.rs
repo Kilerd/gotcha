@@ -27,16 +27,19 @@ pub(crate) fn handler( ident: syn::Ident, doc: TokenStream2, variants: Vec<Param
         fn doc() -> Option<String> {
             #doc
         }
-        fn generate_schema() -> ::gotcha::oas::Schema {
-            let mut schema = ::gotcha::oas::Schema {
-                _type: Some(Self::type_().to_string()),
-                format:None,
-                nullable:None,
-                description: Self::doc(),
-                extras:Default::default()
+        fn generate_schema() -> ::gotcha::EnhancedSchema {
+            let mut schema = ::gotcha::EnhancedSchema {
+                schema: ::gotcha::oas::Schema {
+                    _type: Some(Self::type_().to_string()),
+                    format:None,
+                    nullable:None,
+                    description: Self::doc(),
+                    extras:Default::default()
+                },
+                required: Self::required(),
             };
             let enum_variants:Vec<&'static str> = vec![ #(#variant_vec ,)* ];
-            schema.extras.insert("enum".to_string(), ::gotcha::serde_json::to_value(enum_variants).unwrap());
+            schema.schema.extras.insert("enum".to_string(), ::gotcha::serde_json::to_value(enum_variants).unwrap());
             schema
         }
     };

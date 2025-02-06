@@ -20,16 +20,16 @@ pub(crate) fn handler( ident: syn::Ident, doc: TokenStream2, fields: darling::as
                 quote! {None}
             };
             quote! {
-
-                // handle properties
-                let mut field_schema = <#field_ty as Schematic>::generate_schema();
-                field_schema.description = #field_description;
-                properties.insert(#field_name.to_string(), field_schema.to_value());
-
-                // handle required
-                if <#field_ty as Schematic>::required() {
-                    required_fields.push(#field_name.to_string());
-                }
+                (
+                    #field_name,
+                    
+                    // handle properties
+                    {
+                        let mut field_schema = <#field_ty as Schematic>::generate_schema();
+                        field_schema.schema.description = #field_description;
+                        field_schema
+                    }
+                )
             }
         })
         .collect();
@@ -48,22 +48,37 @@ pub(crate) fn handler( ident: syn::Ident, doc: TokenStream2, fields: darling::as
         fn doc() -> Option<String> {
             #doc
         }
-        fn generate_schema() -> ::gotcha::oas::Schema {
-            let mut schema = ::gotcha::oas::Schema {
-                _type: Some(Self::type_().to_string()),
-                format:None,
-                nullable:None,
-                description: Self::doc(),
-                extras:Default::default()
+        fn fields() -> Vec<(&'static str, ::gotcha::EnhancedSchema)> {
+            vec![
+                #(
+                    #fields_stream ,
+                )*
+            ]
+        }
+        fn generate_schema() -> ::gotcha::EnhancedSchema {
+            let mut schema = ::gotcha::EnhancedSchema {
+                schema: ::gotcha::oas::Schema {
+                    _type: Some(Self::type_().to_string()),
+                    format:None,
+                    nullable:Self::nullable(),
+                    description: Self::doc(),
+                    extras:Default::default()
+                },
+                required: Self::required(),
             };
             
             let mut required_fields = vec![];
             let mut properties = ::std::collections::HashMap::new();
-            #(
-                #fields_stream
-            )*
-            schema.extras.insert("properties".to_string(), ::gotcha::serde_json::to_value(properties).unwrap());
-            schema.extras.insert("required".to_string(), ::gotcha::serde_json::to_value(required_fields).unwrap());
+
+            let fields = Self::fields();
+            for (field_name, field_schema) in fields {
+                properties.insert(field_name.to_string(), field_schema.schema.to_value());
+                if field_schema.required {
+                    required_fields.push(field_name.to_string());
+                }
+            }
+            schema.schema.extras.insert("properties".to_string(), ::gotcha::serde_json::to_value(properties).unwrap());
+            schema.schema.extras.insert("required".to_string(), ::gotcha::serde_json::to_value(required_fields).unwrap());
             schema
         }
     };

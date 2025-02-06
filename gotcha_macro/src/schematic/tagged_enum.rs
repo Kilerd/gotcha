@@ -15,20 +15,37 @@ pub(crate) fn handler(ident: syn::Ident, doc: TokenStream2, variants: Vec<Parame
                 .fields
                 .into_iter()
                 .map(|field| {
-                    let field_name = field.ident.as_ref().expect("cannot get field ident").to_string();
-                    let field_ty = field.ty;
+                    
+                    // doc code gen
                     let field_description = if let Some(doc) = field.attrs.get_doc() {
                         quote! { Some(#doc.to_string()) }
                     } else {
                         quote! {None}
                     };
-                    quote! {
-                        let mut field_schema = <#field_ty as Schematic>::generate_schema();
-                        field_schema.description = #field_description;
-                        properties.insert(#field_name.to_string(), field_schema.to_value());
+                    let field_ty = field.ty;
 
-                        if <#field_ty as Schematic>::required() {
-                            properties_required_fields.push(#field_name.to_string());
+                    if let Some(ident) = field.ident.as_ref() {
+                        // named variant
+                        let field_name = ident.to_string();
+                        quote! {
+                            let mut field_schema = <#field_ty as Schematic>::generate_schema();
+                            field_schema.schema.description = #field_description;
+                            properties.insert(#field_name.to_string(), field_schema.schema.to_value());
+    
+                            if field_schema.required {
+                                properties_required_fields.push(#field_name.to_string());
+                            }
+                        }
+                    } else {
+                        // unnamed variant
+                        quote! {
+                            let inner_fields = <#field_ty as Schematic>::fields();
+                            for (field_name, field_schema) in inner_fields {
+                                properties.insert(field_name.to_string(), field_schema.schema.to_value());
+                                if field_schema.required {
+                                    properties_required_fields.push(field_name.to_string());
+                                }
+                            }
                         }
                     }
                 })
@@ -73,13 +90,16 @@ pub(crate) fn handler(ident: syn::Ident, doc: TokenStream2, variants: Vec<Parame
         fn doc() -> Option<String> {
             #doc
         }
-        fn generate_schema() -> ::gotcha::oas::Schema {
-            let mut schema = ::gotcha::oas::Schema {
-                _type: None,
-                format:None,
-                nullable:None,
-                description: Self::doc(),
-                extras:Default::default()
+        fn generate_schema() -> ::gotcha::EnhancedSchema {
+            let mut schema = ::gotcha::EnhancedSchema {
+                schema: ::gotcha::oas::Schema {
+                    _type: None,
+                    format:None,
+                    nullable:None,
+                    description: Self::doc(),
+                    extras:Default::default()
+                },
+                required: Self::required(),
             };
             let mut branches = vec![];
 
@@ -88,7 +108,7 @@ pub(crate) fn handler(ident: syn::Ident, doc: TokenStream2, variants: Vec<Parame
                 branches.push(variant_object);
             )* 
 
-            schema.extras.insert("oneOf".to_string(), ::gotcha::serde_json::to_value(branches).unwrap());
+            schema.schema.extras.insert("oneOf".to_string(), ::gotcha::serde_json::to_value(branches).unwrap());
             schema
         } 
     };

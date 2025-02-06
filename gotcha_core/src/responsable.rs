@@ -22,7 +22,7 @@ impl<T> Responsable for Json<T> where T: Schematic {
             content: Some(BTreeMap::from([(
                 "application/json".to_string(),
                 MediaType {
-                    schema: Some(Referenceable::Data(response_schema)),
+                    schema: Some(Referenceable::Data(response_schema.schema)),
                     example: None,
                     examples: None,
                     encoding: None,
@@ -47,7 +47,7 @@ impl<T> Responsable for T where T: Schematic {
             content: Some(BTreeMap::from([(
                 "application/json".to_string(),
                 MediaType {
-                    schema: Some(Referenceable::Data(response_schema)),
+                    schema: Some(Referenceable::Data(response_schema.schema)),
                     example: None,
                     examples: None,
                     encoding: None,

@@ -24,10 +24,10 @@ pub(crate) fn handler(ident: syn::Ident, doc: TokenStream2, variants: Vec<Parame
                     };
                     quote! {
                         let mut field_schema = <#field_ty as Schematic>::generate_schema();
-                        field_schema.description = #field_description;
-                        properties.insert(#field_name.to_string(), field_schema.to_value());
+                        field_schema.schema.description = #field_description;
+                        properties.insert(#field_name.to_string(), field_schema.schema.to_value());
 
-                        if <#field_ty as Schematic>::required() {
+                        if field_schema.required {
                             properties_required_fields.push(#field_name.to_string());
                         }
                     }
@@ -78,13 +78,16 @@ pub(crate) fn handler(ident: syn::Ident, doc: TokenStream2, variants: Vec<Parame
         fn doc() -> Option<String> {
             #doc
         }
-        fn generate_schema() -> ::gotcha::oas::Schema {
-            let mut schema = ::gotcha::oas::Schema {
-                _type: None,
-                format:None,
-                nullable:None,
-                description: Self::doc(),
-                extras:Default::default()
+        fn generate_schema() -> ::gotcha::EnhancedSchema {
+            let mut schema = ::gotcha::EnhancedSchema {
+                schema: ::gotcha::oas::Schema {
+                    _type: None,
+                    format:None,
+                    nullable:None,
+                    description: Self::doc(),
+                    extras:Default::default()
+                },
+                required: Self::required(),
             };
             let mut branches = vec![];
 
@@ -93,7 +96,7 @@ pub(crate) fn handler(ident: syn::Ident, doc: TokenStream2, variants: Vec<Parame
                 branches.push(variant_object);
             )* 
 
-            schema.extras.insert("oneOf".to_string(), ::gotcha::serde_json::to_value(branches).unwrap());
+            schema.schema.extras.insert("oneOf".to_string(), ::gotcha::serde_json::to_value(branches).unwrap());
             schema
         } 
     };
