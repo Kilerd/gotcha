@@ -170,6 +170,24 @@ impl Schematic for chrono::NaiveDate {
     }
 }
 
+impl Schematic for serde_json::Value {
+    fn name() -> &'static str {
+        "object"
+    }
+
+    fn required() -> bool {
+        true
+    }
+
+    fn type_() -> &'static str {
+        "object"
+    }
+
+    fn format() -> Option<String> {
+        Some("json".to_string())
+    }
+}
+
 impl<T: Schematic> Schematic for Option<T> {
     fn name() -> &'static str {
         T::name()
