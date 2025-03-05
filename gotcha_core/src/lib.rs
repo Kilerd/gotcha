@@ -118,7 +118,24 @@ impl Schematic for uuid::Uuid {
     fn type_() -> &'static str {
         "string"
     }
+}
 
+impl Schematic for chrono::NaiveDateTime {
+    fn name() -> &'static str {
+        "datetime"
+    }
+
+    fn required() -> bool {
+        true
+    }
+
+    fn type_() -> &'static str {
+        "string"
+    }
+
+    fn format() -> Option<String> {
+        Some("date-time".to_string())
+    }
 }
 
 impl<T: Schematic> Schematic for Option<T> {
