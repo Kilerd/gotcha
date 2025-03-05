@@ -90,6 +90,20 @@ impl_primitive_type! { bool, "string", "boolean"}
 impl_primitive_type! { f32, "string", "number"}
 impl_primitive_type! { f64, "string", "number"}
 
+impl Schematic for () {
+    fn name() -> &'static str {
+        "void"
+    }
+
+    fn required() -> bool {
+        false
+    }  
+
+    fn type_() -> &'static str {
+        "void"
+    }
+}
+
 impl Schematic for &str {
     fn name() -> &'static str {
         "string"
