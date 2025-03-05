@@ -138,6 +138,24 @@ impl Schematic for chrono::NaiveDateTime {
     }
 }
 
+impl Schematic for chrono::NaiveDate {
+    fn name() -> &'static str {
+        "date"
+    }
+
+    fn required() -> bool {
+        true
+    }
+
+    fn type_() -> &'static str {
+        "string"
+    }
+
+    fn format() -> Option<String> {
+        Some("date".to_string())
+    }
+}
+
 impl<T: Schematic> Schematic for Option<T> {
     fn name() -> &'static str {
         T::name()
