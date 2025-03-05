@@ -29,6 +29,11 @@ pub trait Schematic {
     fn doc() -> Option<String> {
         None
     }
+    /// The format of the type.
+    fn format() -> Option<String> {
+        None
+    }
+    
     fn fields() -> Vec<(&'static str, EnhancedSchema)> {
         vec![]
     }
@@ -37,7 +42,7 @@ pub trait Schematic {
         EnhancedSchema {
             schema: Schema {
                 _type: Some(Self::type_().to_string()),
-                format: None,
+                format: Self::format(),
                 nullable: Self::nullable(),
                 description: Self::doc(),
                 extras: Default::default(),
@@ -97,6 +102,23 @@ impl Schematic for &str {
     fn type_() -> &'static str {
         "string"
     }
+}
+
+impl Schematic for uuid::Uuid {
+    fn name() -> &'static str {
+        "uuid"
+    }
+    fn required() -> bool {
+        true
+    }
+    fn format() -> Option<String> {
+        Some("uuid".to_string())
+    }
+
+    fn type_() -> &'static str {
+        "string"
+    }
+
 }
 
 impl<T: Schematic> Schematic for Option<T> {
