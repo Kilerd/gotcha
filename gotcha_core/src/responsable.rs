@@ -9,6 +9,8 @@ pub trait Responsable {
     fn response() -> Responses;
 }
 
+// todo: add response for ()
+
 impl<T> Responsable for Json<T>
 where
     T: Schematic,
@@ -71,24 +73,7 @@ where
     }
 }
 
-impl Responsable for () {
-    fn response() -> Responses {
-        let mut response = Responses {
-            default: None,
-            data: BTreeMap::default(),
-        };
-        response.data.insert(
-            "204".to_string(),
-            Referenceable::Data(Response {
-                description: "no content".to_string(),
-                headers: None,
-                content: None,
-                links: None,
-            }),
-        );
-        response
-    }
-}
+
 
 impl<T, E> Responsable for Result<T, E>
 where
