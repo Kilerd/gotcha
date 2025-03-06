@@ -468,3 +468,27 @@ impl<T: Schematic> ParameterProvider for Query<T> {
 impl<T> ParameterProvider for State<T> {}
 
 impl ParameterProvider for Request {}
+
+impl ParameterProvider for axum::extract::multipart::Multipart {
+    fn generate(_url: String) -> Either<Vec<Parameter>, RequestBody> {
+        let mut contents = BTreeMap::new();
+        
+        contents.insert(
+            "multipart/form-data".to_owned(),
+            MediaType {
+                schema: None,
+                example: None,
+                examples: None,
+                encoding: None,
+            },
+        );
+        
+        let req_body = RequestBody {
+            description: Some("Multipart form data".to_owned()),
+            required: Some(true),
+            content: contents,
+        };
+        
+        Either::Right(req_body)
+    }
+}
