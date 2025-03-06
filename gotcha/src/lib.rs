@@ -269,4 +269,11 @@ mod test {
         let t = trybuild::TestCases::new();
         t.pass("tests/pass/openapi/*.rs");
     }
+
+    #[test]
+    #[cfg(feature = "openapi")]
+    fn test_handler() {
+        let t = trybuild::TestCases::new();
+        t.pass("tests/pass/handler/*.rs");
+    }
 }

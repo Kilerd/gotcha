@@ -6,22 +6,10 @@ use uuid::Uuid;
 use crate::utils::AttributesExt;
 use crate::FromMeta;
 
-#[derive(Debug)]
-pub struct RouteMeta {
-    extra: RouteExtraMeta,
-}
-
 #[derive(Debug, FromMeta)]
-struct RouteExtraMeta {
+pub struct RouteMeta {
     group: Option<String>,
     id: Option<String>,
-}
-
-impl FromMeta for RouteMeta {
-    fn from_list(items: &[syn::NestedMeta]) -> darling::Result<Self> {
-        let extra_meta = RouteExtraMeta::from_list(items)?;
-        Ok(RouteMeta { extra: extra_meta })
-    }
 }
 
 pub(crate) fn request_handler(args: TokenStream, input_stream: TokenStream) -> TokenStream {
@@ -34,16 +22,17 @@ pub(crate) fn request_handler(args: TokenStream, input_stream: TokenStream) -> T
         }
     };
     let meta = args;
-    let group = if let Some(group_name) = meta.extra.group {
+    let group = if let Some(group_name) = meta.group {
         quote! { Some(#group_name) }
     } else {
         quote! { None }
     };
-    let input = parse_macro_input!(input_stream as ItemFn);
+    let mut input = parse_macro_input!(input_stream as ItemFn);
+
     let fn_ident = input.sig.ident.clone();
     let fn_ident_string = fn_ident.to_string();
 
-    let operation_id = meta.extra.id.unwrap_or(fn_ident_string.clone());
+    let operation_id = meta.id.unwrap_or(fn_ident_string.clone());
 
     let docs = match input.attrs.get_doc() {
         None => {
@@ -64,6 +53,29 @@ pub(crate) fn request_handler(args: TokenStream, input_stream: TokenStream) -> T
         .flat_map(|param| match param {
             FnArg::Receiver(_) => None,
             FnArg::Typed(typed) => {
+                // TODO: typed parse attribute
+
+                // Check if the parameter has the #[api(skip)] attribute
+                let should_skip = typed.attrs.iter().any(|attr| {
+                    if let Ok(meta) = attr.parse_meta() {
+                        if let syn::Meta::List(meta_list) = meta {
+                            if meta_list.path.is_ident("api") {
+                                return meta_list.nested.iter().any(|nested_meta| {
+                                    if let syn::NestedMeta::Meta(syn::Meta::Path(path)) = nested_meta {
+                                        path.is_ident("skip")
+                                    } else {
+                                        false
+                                    }
+                                });
+                            }
+                        }
+                    }
+                    false
+                });
+
+                if should_skip {
+                    return None;
+                }
                 let ty = &typed.ty;
                 Some(quote! { Box::new(|path:String| {<#ty as ::gotcha::ParameterProvider>::generate(path) }) })
             }
@@ -83,6 +95,12 @@ pub(crate) fn request_handler(args: TokenStream, input_stream: TokenStream) -> T
             }
         }
     };
+
+    input.sig.inputs.iter_mut().for_each(|param| {
+        if let FnArg::Typed(typed) = param {
+            typed.attrs = vec![];
+        }
+    });
 
     let ret = quote! {
 
