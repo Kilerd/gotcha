@@ -69,7 +69,7 @@ pub use axum::routing::{delete, get, patch, post, put};
 pub use axum_macros::debug_handler;
 pub use config::ConfigWrapper;
 pub use either::Either;
-pub use gotcha_core::{ParameterProvider, Schematic};
+
 pub use gotcha_macro::*;
 pub use once_cell::sync::Lazy;
 pub use router::GotchaRouter;
@@ -84,11 +84,14 @@ pub use crate::config::GotchaConfigLoader;
 #[cfg(feature = "message")]
 pub mod message;
 #[cfg(feature = "openapi")]
-pub use gotcha_core::responsable::Responsable;
+pub use crate::openapi::responsable::Responsable;
+
 #[cfg(feature = "openapi")]
 pub use gotcha_macro::api;
 #[cfg(feature = "openapi")]
 pub use oas;
+#[cfg(feature = "openapi")]
+pub use crate::openapi::schematic::{ParameterProvider, Schematic};
 
 #[cfg(feature = "message")]
 pub use crate::message::{Message, Messager};
@@ -119,12 +122,14 @@ pub mod layers {
     pub use tower_http::cors::{self, CorsLayer};
 }
 
-pub use gotcha_core::EnhancedSchema;
+#[cfg(feature = "openapi")]
+pub use crate::openapi::schematic::EnhancedSchema;
+
 #[cfg(feature = "task")]
 pub use task::TaskScheduler;
 #[cfg(feature = "static_files")]
 pub use tower_http::services::{ServeDir, ServeFile};
-pub use {gotcha_core, serde_json};
+pub use {serde_json};
 
 #[derive(Clone)]
 pub struct GotchaContext<State: Clone + Send + Sync + 'static, Config: Clone + Send + Sync + 'static + Serialize + for<'de> Deserialize<'de> + Default> {

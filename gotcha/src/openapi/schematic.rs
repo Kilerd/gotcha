@@ -6,7 +6,6 @@ use bigdecimal::BigDecimal;
 use chrono::{DateTime, Utc};
 use either::Either;
 use oas::{MediaType, Parameter, ParameterIn, Referenceable, RequestBody, Schema};
-pub mod responsable;
 
 pub struct EnhancedSchema {
     pub schema: Schema,

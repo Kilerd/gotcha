@@ -95,15 +95,13 @@ jobs:
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
 
-      - name: Run tests (gotcha_macro and gotcha_core)
+      - name: Run tests (gotcha_macro)
         run: |
           cargo test -p gotcha_macro --all-features
-          cargo test -p gotcha_core --all-features
 
-      - name: Run tests (gotcha_macro and gotcha_core, no default features)
+      - name: Run tests (gotcha_macro no default features)
         run: |
           cargo test -p gotcha_macro --no-default-features
-          cargo test -p gotcha_core --no-default-features
 
   clippy:
     name: Clippy

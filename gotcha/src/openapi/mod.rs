@@ -40,12 +40,16 @@ use once_cell::sync::Lazy;
 
 use crate::Responder;
 
+pub mod schematic;
+pub mod responsable;
+
+
 pub(crate) async fn openapi_html() -> impl Responder {
-    Html(include_str!("../statics/redoc.html"))
+    Html(include_str!("../../statics/redoc.html"))
 }
 
 pub(crate) async fn scalar_html() -> impl Responder {
-    Html(include_str!("../statics/scalar.html"))
+    Html(include_str!("../../statics/scalar.html"))
 }
 
 pub type ParamType = Either<Vec<Parameter>, RequestBody>;

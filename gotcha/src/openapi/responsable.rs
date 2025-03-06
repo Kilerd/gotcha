@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use axum::Json;
 use oas::{MediaType, Referenceable, Response, Responses};
 
-use crate::Schematic;
+use crate::openapi::schematic::Schematic;
 
 pub trait Responsable {
     fn response() -> Responses;
