@@ -32,7 +32,7 @@ pub trait Schematic {
     fn format() -> Option<String> {
         None
     }
-    
+
     fn fields() -> Vec<(&'static str, EnhancedSchema)> {
         vec![]
     }
@@ -96,7 +96,7 @@ impl Schematic for () {
 
     fn required() -> bool {
         false
-    }  
+    }
 
     fn type_() -> &'static str {
         "void"
@@ -449,18 +449,33 @@ impl<T: Schematic> ParameterProvider for Json<T> {
 
 impl<T: Schematic> ParameterProvider for Query<T> {
     fn generate(_url: String) -> Either<Vec<Parameter>, RequestBody> {
-        let mut ret = vec![];
-        let mut schema = T::generate_schema();
-        if let Some(mut properties) = schema.schema.extras.remove("properties") {
-            if let Some(properties) = properties.as_object_mut() {
-                properties.iter_mut().for_each(|(key, value)| {
-                    let schema = serde_json::from_value(value.clone()).unwrap();
-                    let param = build_param(key.to_string(), ParameterIn::Path, T::required(), schema, T::doc());
-                    ret.push(param);
-                })
+        let fields = T::fields();
+        if fields.len() == 0 {
+            let mut ret = vec![];
+
+            let mut schema = T::generate_schema();
+
+            if let Some(mut properties) = schema.schema.extras.remove("properties") {
+                if let Some(properties) = properties.as_object_mut() {
+                    properties.iter_mut().for_each(|(key, value)| {
+                        let schema = serde_json::from_value(value.clone()).unwrap();
+                        let param = build_param(key.to_string(), ParameterIn::Query, T::required(), schema, T::doc());
+                        ret.push(param);
+                    })
+                }
             }
+            Either::Left(ret)
+        } else {
+            Either::Left(
+                fields
+                    .into_iter()
+                    .map(|(name, schema)| {
+                        let desc = schema.schema.description.clone();
+                        build_param(name.to_string(), ParameterIn::Query, schema.required, schema.schema, desc)
+                    })
+                    .collect(),
+            )
         }
-        Either::Left(ret)
     }
 }
 
@@ -471,7 +486,7 @@ impl ParameterProvider for Request {}
 impl ParameterProvider for axum::extract::multipart::Multipart {
     fn generate(_url: String) -> Either<Vec<Parameter>, RequestBody> {
         let mut contents = BTreeMap::new();
-        
+
         contents.insert(
             "multipart/form-data".to_owned(),
             MediaType {
@@ -481,13 +496,13 @@ impl ParameterProvider for axum::extract::multipart::Multipart {
                 encoding: None,
             },
         );
-        
+
         let req_body = RequestBody {
             description: Some("Multipart form data".to_owned()),
             required: Some(true),
             content: contents,
         };
-        
+
         Either::Right(req_body)
     }
 }
