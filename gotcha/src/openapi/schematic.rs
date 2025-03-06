@@ -195,6 +195,9 @@ impl<T: Schematic> Schematic for Option<T> {
     fn required() -> bool {
         false
     }
+    fn nullable() -> Option<bool> {
+        Some(true)
+    }
 
     fn type_() -> &'static str {
         T::type_()
@@ -204,7 +207,13 @@ impl<T: Schematic> Schematic for Option<T> {
         T::doc()
     }
     fn generate_schema() -> EnhancedSchema {
-        T::generate_schema()
+        let enhanced_schema = T::generate_schema();
+        let mut schema = enhanced_schema.schema;
+        schema.nullable = Some(true);
+        EnhancedSchema {
+            schema,
+            required: Self::required(),
+        }
     }
 }
 
