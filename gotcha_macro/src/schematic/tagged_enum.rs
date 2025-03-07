@@ -103,8 +103,10 @@ pub(crate) fn handler(ident: syn::Ident, doc: TokenStream2, variants: Vec<Parame
                 #variants_codegen
                 branches.push(variant_object);
             )*
-
+            let mut discriminator = ::std::collections::HashMap::new();
+            discriminator.insert("propertyName".to_string(), ::gotcha::serde_json::to_value("type").unwrap());
             schema.schema.extras.insert("oneOf".to_string(), ::gotcha::serde_json::to_value(branches).unwrap());
+            schema.schema.extras.insert("discriminator".to_string(), ::gotcha::serde_json::to_value(discriminator).unwrap());
             schema
         }
     };

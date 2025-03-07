@@ -1,4 +1,7 @@
 {
+    "discriminator": {
+        "propertyName": "type"
+    },
     "oneOf": [
         {
             "properties": {
