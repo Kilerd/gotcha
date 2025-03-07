@@ -85,13 +85,13 @@ pub(crate) fn request_handler(args: TokenStream, input_stream: TokenStream) -> T
     let ret_schematic = match ret_pos {
         ReturnType::Default => {
             quote! {
-                Box::new(|| { ( () as ::gotcha::Responsable).response() })
+                Box::new(|| { ( () as ::gotcha::Responsible).response() })
             }
         }
 
         ReturnType::Type(_, ty) => {
             quote! {
-                Box::new(|| {<#ty as ::gotcha::Responsable>::response()})
+                Box::new(|| {<#ty as ::gotcha::Responsible>::response()})
             }
         }
     };

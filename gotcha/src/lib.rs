@@ -84,7 +84,7 @@ pub use crate::config::GotchaConfigLoader;
 #[cfg(feature = "message")]
 pub mod message;
 #[cfg(feature = "openapi")]
-pub use crate::openapi::responsable::Responsable;
+pub use crate::openapi::responsible::Responsible;
 
 #[cfg(feature = "openapi")]
 pub use gotcha_macro::api;

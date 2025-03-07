@@ -5,13 +5,13 @@ use oas::{MediaType, Referenceable, Response, Responses};
 
 use crate::openapi::schematic::Schematic;
 
-pub trait Responsable {
+pub trait Responsible {
     fn response() -> Responses;
 }
 
 // todo: add response for ()
 
-impl<T> Responsable for Json<T>
+impl<T> Responsible for Json<T>
 where
     T: Schematic,
 {
@@ -42,7 +42,7 @@ where
     }
 }
 
-impl<T> Responsable for T
+impl<T> Responsible for T
 where
     T: Schematic,
 {
@@ -75,9 +75,9 @@ where
 
 
 
-impl<T, E> Responsable for Result<T, E>
+impl<T, E> Responsible for Result<T, E>
 where
-    T: Responsable,
+    T: Responsible,
 {
     fn response() -> Responses {
         let response = T::response();

@@ -41,7 +41,7 @@ use once_cell::sync::Lazy;
 use crate::Responder;
 
 pub mod schematic;
-pub mod responsable;
+pub mod responsible;
 
 
 pub(crate) async fn openapi_html() -> impl Responder {
