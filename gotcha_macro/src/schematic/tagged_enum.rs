@@ -52,8 +52,8 @@ pub(crate) fn handler(ident: syn::Ident, doc: TokenStream2, variants: Vec<Parame
 
             quote! {
                 let mut single_enum = ::std::collections::HashMap::new();
-                single_enum.insert("type".to_string(), ::gotcha::serde_json::to_value("enum").expect("cannot convert type to value"));
-                single_enum.insert("values".to_string(), ::gotcha::serde_json::to_value(vec![#varient_string.to_string()]).expect("cannot convert values to value"));
+                single_enum.insert("type".to_string(), ::gotcha::serde_json::to_value("string").expect("cannot convert type to value"));
+                single_enum.insert("enum".to_string(), ::gotcha::serde_json::to_value(vec![#varient_string.to_string()]).expect("cannot convert values to value"));
 
                 let mut properties = ::std::collections::HashMap::new();
                 let mut properties_required_fields = vec![];
