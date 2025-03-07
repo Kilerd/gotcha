@@ -333,13 +333,10 @@ impl<K: ToString, V: Schematic> Schematic for HashMap<K, V> {
             },
             required: Self::required(),
         };
-        let mut properties = BTreeMap::new();
-        properties.insert("type".to_string(), "string".to_string());
-        properties.insert("format".to_string(), V::type_().to_string());
         schema
             .schema
             .extras
-            .insert("additionalProperties".to_string(), ::serde_json::to_value(properties).unwrap());
+            .insert("additionalProperties".to_string(), V::generate_schema().schema.to_value());
         schema
     }
 }

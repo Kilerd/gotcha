@@ -1,7 +1,6 @@
 {
     "type": "object",
     "additionalProperties": {
-        "type": "string",
-        "format": "string"
+        "type": "string"
     }
 }
