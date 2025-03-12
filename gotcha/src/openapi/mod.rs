@@ -37,12 +37,14 @@ use either::Either;
 use http::Method;
 use oas::{Info, OpenAPIV3, Operation, Parameter, PathItem, Referenceable, RequestBody, Responses, Tag};
 use once_cell::sync::Lazy;
+use regex::Regex;
 
 use crate::Responder;
 
 pub mod schematic;
 pub mod responsible;
 
+static PATH_VARIABLE_PATTERN: &str = r"\:[a-z]+(?:_[a-z]+)*";
 
 pub(crate) async fn openapi_html() -> impl Responder {
     Html(include_str!("../../statics/redoc.html"))
@@ -55,6 +57,14 @@ pub(crate) async fn scalar_html() -> impl Responder {
 pub type ParamType = Either<Vec<Parameter>, RequestBody>;
 
 pub type ParamConstructor = Box<dyn Fn(String) -> ParamType + Sync + Send + 'static>;
+
+
+pub fn replace_path_variable(path: String) -> String {
+    let regex = Regex::new(PATH_VARIABLE_PATTERN).unwrap();
+    regex.replace_all(&path, |caps: &regex::Captures| {
+        format!("{{{}}}", &caps[0][1..])
+    }).to_string()
+}
 
 #[derive()]
 pub struct Operable {
@@ -70,7 +80,7 @@ pub struct Operable {
 impl Operable {
     pub fn generate(&self, path: String) -> Operation {
         let tags = self.group.map(|group| vec![group.to_string()]);
-
+        let path = replace_path_variable(path);
         let mut params = vec![];
         let mut request_body = None;
         for item in self.parameters.iter() {
@@ -159,4 +169,18 @@ pub fn generate_openapi(operations: HashMap<(String, Method), Operation>) -> Ope
         }
     }
     spec
+}
+
+
+
+#[cfg(all(test, feature = "openapi"))]
+mod tests {
+    use super::*;
+    
+    #[test]
+    fn test_path_variable_pattern() {
+        assert_eq!(replace_path_variable("/users".to_string()), "/users");
+        assert_eq!(replace_path_variable("/users/:id".to_string()), "/users/{id}");
+        assert_eq!(replace_path_variable("/users/:id/:name".to_string()), "/users/{id}/{name}");
+    }
 }
