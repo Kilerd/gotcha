@@ -80,7 +80,6 @@ pub struct Operable {
 impl Operable {
     pub fn generate(&self, path: String) -> Operation {
         let tags = self.group.map(|group| vec![group.to_string()]);
-        let path = replace_path_variable(path);
         let mut params = vec![];
         let mut request_body = None;
         for item in self.parameters.iter() {
@@ -132,6 +131,7 @@ pub fn generate_openapi(operations: HashMap<(String, Method), Operation>) -> Ope
         extras: None,
     };
     for ((path, method), operation) in operations {
+        let path = replace_path_variable(path);
         if let Some(added_tags) = &operation.tags {
             added_tags.iter().for_each(|tag| {
                 if let Some(tags) = &mut spec.tags {
