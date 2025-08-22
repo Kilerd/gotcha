@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::convert::Infallible;
 
 use axum::extract::Request;
@@ -6,7 +5,6 @@ use axum::handler::Handler;
 pub use axum::response::IntoResponse as Responder;
 use axum::routing::{MethodFilter, MethodRouter, Route};
 use axum::Router;
-use http::Method;
 #[cfg(feature = "openapi")]
 use oas::Operation;
 use tower_layer::Layer;
@@ -14,6 +12,10 @@ use tower_service::Service;
 
 #[cfg(feature = "openapi")]
 use crate::Operable;
+
+
+#[cfg(feature = "openapi")]
+use std::collections::HashMap;
 
 macro_rules! implement_method {
     ($method:expr, $fn_name: tt ) => {
@@ -29,7 +31,7 @@ macro_rules! implement_method {
 pub struct GotchaRouter<State = ()> {
     #[cfg(feature = "openapi")]
     /// The operations for the router.
-    pub(crate) operations: HashMap<(String, Method), Operation>,
+    pub(crate) operations: std::collections::HashMap<(String, Method), Operation>,
     pub(crate) router: Router<State>,
 }
 impl<State: Clone + Send + Sync + 'static> Default for GotchaRouter<State> {
@@ -77,7 +79,7 @@ impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
     /// let router: GotchaRouter<()> = GotchaRouter::default()
     ///     .method_route("/", MethodFilter::GET, hello_world);
     /// ```
-    pub fn method_route<H, T>(mut self, path: &str, method: MethodFilter, handler: H) -> Self
+    pub fn method_route<H, T>(self, path: &str, method: MethodFilter, handler: H) -> Self
     where
         H: Handler<T, State>,
         T: 'static,

@@ -34,7 +34,7 @@ use std::collections::{BTreeMap, HashMap};
 use axum::response::Html;
 use convert_case::{Case, Casing};
 use either::Either;
-use http::Method;
+use axum::http::Method;
 use oas::{Info, OpenAPIV3, Operation, Parameter, PathItem, Referenceable, RequestBody, Responses, Tag};
 use once_cell::sync::Lazy;
 use regex::Regex;

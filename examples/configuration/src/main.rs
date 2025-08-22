@@ -1,35 +1,14 @@
-use gotcha::router::GotchaRouter;
-use gotcha::{async_trait, ConfigWrapper, GotchaApp, GotchaContext, State, Responder};
-use serde::{Deserialize, Serialize};
-
-#[derive(Debug, Deserialize, Clone, Serialize, Default)]
-pub struct Config {
-    welcome: String,
-}
-
-pub async fn hello_world(config: State<ConfigWrapper<Config>>) -> impl Responder {
-    config.0.application.welcome.clone()
-}
-
-pub struct App;
-
-#[async_trait]
-impl GotchaApp for App {
-    type State = ();
-    type Config = Config;
-
-    fn routes(&self, router: GotchaRouter<GotchaContext<Self::State, Self::Config>>) -> GotchaRouter<GotchaContext<Self::State, Self::Config>> {
-        router.get("/", hello_world)
-    }
-
-    fn state(&self, _config: &ConfigWrapper<Self::Config>) -> impl std::future::Future<Output = Result<Self::State, Box<dyn std::error::Error>>> + Send {
-        async move { Ok(()) }
-    }
-}
+use gotcha::prelude::*;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let app = App {};
-    app.run().await?;
+    tracing_subscriber::fmt::init();
+    
+    let app = Gotcha::new()
+        .with_env_config("APP")
+        .with_optional_config("config.toml")
+        .get("/", || async { "Configuration example working!" });
+    
+    app.listen("127.0.0.1:3000").await?;
     Ok(())
 }

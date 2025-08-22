@@ -31,7 +31,7 @@ use serde::{Deserialize, Serialize};
 use tower_layer::Layer;
 use tower_service::Service;
 
-use crate::config::{BasicConfig, ConfigWrapper, GotchaConfigLoader};
+use crate::config::{ConfigWrapper, GotchaConfigLoader, Config, ConfigBuilder, ConfigState, BasicConfig};
 use crate::router::{GotchaRouter, Responder};
 use crate::GotchaContext;
 
@@ -54,6 +54,7 @@ where
     port: u16,
     state: Option<S>,
     config: Option<ConfigWrapper<C>>,
+    config_builder: Option<ConfigState>,
 }
 
 impl Default for Gotcha<EmptyState, EmptyConfig> {
@@ -79,6 +80,7 @@ impl Gotcha<EmptyState, EmptyConfig> {
             port: 3000,
             state: None,
             config: None,
+            config_builder: None,
         }
     }
 }
@@ -100,6 +102,7 @@ where
             port: 3000,
             state: None,
             config: None,
+            config_builder: None,
         }
     }
 
@@ -112,6 +115,191 @@ where
     /// Set the application configuration
     pub fn config(mut self, config: ConfigWrapper<C>) -> Self {
         self.config = Some(config);
+        self
+    }
+
+    /// Build configuration using a custom configuration builder function
+    ///
+    /// This replaces any existing configuration sources with the result of the builder function.
+    /// Use the individual methods (with_env_config, with_file_config, etc.) for cumulative configuration.
+    ///
+    /// # Example
+    /// ```no_run
+    /// use gotcha::prelude::*;
+    /// 
+    /// let app = Gotcha::new()
+    ///     .build_config(|builder| {
+    ///         builder
+    ///             .file_optional("config.toml")
+    ///             .env("APP")
+    ///     })?;
+    /// ```
+    pub fn build_config<F>(mut self, builder_fn: F) -> Result<Self, crate::config::ConfigError>
+    where
+        F: FnOnce(ConfigBuilder) -> ConfigBuilder,
+    {
+        let builder = Config::builder();
+        let configured_builder = builder_fn(builder);
+        let config: ConfigWrapper<C> = configured_builder.build()?;
+        self.config = Some(config);
+        self.config_builder = None; // Clear any accumulated builder
+        Ok(self)
+    }
+
+    /// Add default configuration sources (files + environment variables)
+    ///
+    /// This adds to any existing configuration sources rather than replacing them.
+    /// Equivalent to calling `.with_default_files().with_default_env()`
+    ///
+    /// # Example
+    /// ```no_run
+    /// use gotcha::prelude::*;
+    /// 
+    /// let app = Gotcha::new()
+    ///     .with_default_config()?;
+    /// ```
+    pub fn with_default_config(self) -> Self {
+        self.with_default_files().with_default_env()
+    }
+
+    /// Add environment variable configuration source
+    ///
+    /// This adds to any existing configuration sources rather than replacing them.
+    /// Multiple calls will add multiple environment prefixes.
+    ///
+    /// # Example
+    /// ```no_run
+    /// use gotcha::prelude::*;
+    /// 
+    /// let app = Gotcha::new()
+    ///     .with_env_config("APP")
+    ///     .with_env_config("GOTCHA"); // Both prefixes will be used
+    /// ```
+    pub fn with_env_config<P: AsRef<str>>(mut self, prefix: P) -> Self {
+        let mut state = self.config_builder.take().unwrap_or_else(|| ConfigState {
+            file_paths: Vec::new(),
+            env_prefixes: Vec::new(),
+            enable_vars: true,
+        });
+        
+        state.env_prefixes.push(prefix.as_ref().to_string());
+        self.config_builder = Some(state);
+        self
+    }
+
+    /// Add a required configuration file source
+    ///
+    /// This adds to any existing configuration sources rather than replacing them.
+    /// Multiple calls will add multiple file sources.
+    ///
+    /// # Example
+    /// ```no_run
+    /// use gotcha::prelude::*;
+    /// 
+    /// let app = Gotcha::new()
+    ///     .with_file_config("config.toml")
+    ///     .with_file_config("local.toml"); // Both files will be loaded
+    /// ```
+    pub fn with_file_config<P: AsRef<std::path::Path>>(mut self, path: P) -> Self {
+        let mut state = self.config_builder.take().unwrap_or_else(|| ConfigState {
+            file_paths: Vec::new(),
+            env_prefixes: Vec::new(),
+            enable_vars: true,
+        });
+        
+        state.file_paths.push(path.as_ref().to_path_buf());
+        self.config_builder = Some(state);
+        self
+    }
+
+    /// Add an optional configuration file source (won't fail if file doesn't exist)
+    ///
+    /// This adds to any existing configuration sources rather than replacing them.
+    /// Multiple calls will add multiple optional file sources.
+    ///
+    /// # Example
+    /// ```no_run
+    /// use gotcha::prelude::*;
+    /// 
+    /// let app = Gotcha::new()
+    ///     .with_optional_config("config.toml")
+    ///     .with_optional_config("local.toml"); // Both files will be loaded if they exist
+    /// ```
+    pub fn with_optional_config<P: AsRef<std::path::Path>>(mut self, path: P) -> Self {
+        let mut state = self.config_builder.take().unwrap_or_else(|| ConfigState {
+            file_paths: Vec::new(),
+            env_prefixes: Vec::new(),
+            enable_vars: true,
+        });
+        
+        state.file_paths.push(path.as_ref().to_path_buf());
+        self.config_builder = Some(state);
+        self
+    }
+
+    /// Add default configuration files (configurations/application.toml and profile-specific files)
+    ///
+    /// This adds to any existing configuration sources rather than replacing them.
+    ///
+    /// # Example
+    /// ```no_run
+    /// use gotcha::prelude::*;
+    /// 
+    /// let app = Gotcha::new()
+    ///     .with_default_files();
+    /// ```
+    pub fn with_default_files(mut self) -> Self {
+        let mut state = self.config_builder.take().unwrap_or_default();
+        
+        // Add default file paths
+        state.file_paths.push("configurations/application.toml".into());
+        
+        // Add profile-specific file if profile is set
+        if let Ok(profile) = std::env::var("GOTCHA_ACTIVE_PROFILE") {
+            let profile_path = format!("configurations/application_{}.toml", profile);
+            state.file_paths.push(profile_path.into());
+        }
+        
+        self.config_builder = Some(state);
+        self
+    }
+
+    /// Add default environment variable prefix ("APP")
+    ///
+    /// This adds to any existing configuration sources rather than replacing them.
+    ///
+    /// # Example
+    /// ```no_run
+    /// use gotcha::prelude::*;
+    /// 
+    /// let app = Gotcha::new()
+    ///     .with_default_env();
+    /// ```
+    pub fn with_default_env(mut self) -> Self {
+        let mut state = self.config_builder.take().unwrap_or_default();
+        
+        state.env_prefixes.push("APP".to_string());
+        self.config_builder = Some(state);
+        self
+    }
+
+    /// Enable variable substitution (${VAR} and ${VAR:-default} syntax)
+    ///
+    /// This affects all configuration sources added to the builder.
+    ///
+    /// # Example
+    /// ```no_run
+    /// use gotcha::prelude::*;
+    /// 
+    /// let app = Gotcha::new()
+    ///     .with_optional_config("config.toml")
+    ///     .enable_variable_substitution();
+    /// ```
+    pub fn enable_variable_substitution(mut self) -> Self {
+        let mut state = self.config_builder.take().unwrap_or_default();
+        
+        state.enable_vars = true;
+        self.config_builder = Some(state);
         self
     }
 
@@ -320,10 +508,33 @@ where
     /// Build the application context
     async fn build_context(&self) -> Result<GotchaContext<S, C>, Box<dyn std::error::Error>> {
         // Load or create configuration
-        let config = match &self.config {
-            Some(config) => config.clone(),
-            None => {
-                // Try to load from files, fall back to default
+        let config = match (&self.config, &self.config_builder) {
+            // If explicit config is set, use it
+            (Some(config), _) => config.clone(),
+            // If we have accumulated configuration sources, build them
+            (None, Some(state)) => {
+                let builder = ConfigBuilder::from_state(state.clone());
+                match builder.build::<ConfigWrapper<C>>() {
+                    Ok(config) => {
+                        tracing::info!("Configuration loaded successfully from accumulated sources");
+                        config
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to load accumulated configuration: {}, using defaults", e);
+                        tracing::info!("💡 Check configuration files and environment variables");
+                        ConfigWrapper {
+                            #[cfg(not(feature = "cloudflare_worker"))]
+                            basic: BasicConfig {
+                                host: self.host.clone(),
+                                port: self.port,
+                            },
+                            application: C::default(),
+                        }
+                    }
+                }
+            }
+            // No explicit config or builder, try legacy loading then fall back to defaults
+            (None, None) => {
                 match std::panic::catch_unwind(|| {
                     GotchaConfigLoader::load::<ConfigWrapper<C>>(
                         std::env::var("GOTCHA_ACTIVE_PROFILE").ok()
