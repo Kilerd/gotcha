@@ -1,6 +1,6 @@
 [package]
 name = "gotcha"
-description = "enhanced web framework based on actix-web"
+description = "Enhanced web framework built on top of Axum with OpenAPI, metrics, and configuration management"
 edition = "2021"
 version = "0.2.2"
 license = "MIT"
