@@ -15,7 +15,25 @@
 //! - Message system
 //! - State management
 //!
-//! ## Example
+//! ## Simple Example (New Builder API)
+//!
+//! ```no_run
+//! use gotcha::prelude::*;
+//! 
+//! #[tokio::main]
+//! async fn main() -> Result<(), Box<dyn std::error::Error>> {
+//!     Gotcha::new()
+//!         .get("/", || async { "Hello World" })
+//!         .get("/hello/:name", |Path(name): Path<String>| async move {
+//!             format!("Hello, {}!", name)
+//!         })
+//!         .listen("127.0.0.1:3000")
+//!         .await?;
+//!     Ok(())
+//! }
+//! ```
+//!
+//! ## Advanced Example (Traditional Trait API)
 //!
 //! ```no_run
 //! use gotcha::{async_trait, ConfigWrapper, GotchaApp, GotchaContext, GotchaRouter, Responder, State};
@@ -79,6 +97,7 @@ use tracing_subscriber::prelude::*;
 use tracing_subscriber::{fmt, EnvFilter};
 pub use {axum, inventory, tracing};
 
+pub use crate::builder::{EmptyConfig, EmptyState, Gotcha};
 pub use crate::config::GotchaConfigLoader;
 
 #[cfg(feature = "message")]
@@ -98,9 +117,10 @@ pub use crate::message::{Message, Messager};
 #[cfg(feature = "openapi")]
 pub use crate::openapi::Operable;
 
+pub mod builder;
 pub mod config;
-
 pub mod error;
+pub mod prelude;
 #[cfg(feature = "openapi")]
 pub mod openapi;
 pub mod router;

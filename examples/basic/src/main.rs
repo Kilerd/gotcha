@@ -1,4 +1,4 @@
-use gotcha::{ConfigWrapper, GotchaApp, GotchaContext, GotchaRouter, State, Responder};
+use gotcha::{async_trait, ConfigWrapper, GotchaApp, GotchaContext, GotchaRouter, State, Responder};
 use serde::{Deserialize, Serialize};
 
 pub async fn hello_world(_state: State<ConfigWrapper<Config>>) -> impl Responder {
@@ -12,6 +12,7 @@ pub struct Config {
 
 pub struct App {}
 
+#[async_trait]
 impl GotchaApp for App {
     type State = ();
 
@@ -21,8 +22,8 @@ impl GotchaApp for App {
         router.get("/", hello_world)
     }
 
-    async fn state<'a, 'b>(&'a self, _config: &'b ConfigWrapper<Self::Config>) -> Result<Self::State, Box<dyn std::error::Error>> {
-        Ok(())
+    fn state(&self, _config: &ConfigWrapper<Self::Config>) -> impl std::future::Future<Output = Result<Self::State, Box<dyn std::error::Error>>> + Send {
+        async move { Ok(()) }
     }
 }
 
