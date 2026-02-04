@@ -52,7 +52,7 @@ pub trait Schematic {
 
 /// ParameterProvider is a trait that defines the value which can be used as a parameter.
 pub trait ParameterProvider {
-    fn generate(url: String) -> Either<Vec<Parameter>, RequestBody> {
+    fn generate(_url: String) -> Either<Vec<Parameter>, RequestBody> {
         Either::Left(vec![])
     }
 }
