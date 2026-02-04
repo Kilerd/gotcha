@@ -11,8 +11,10 @@ use tower_layer::Layer;
 use tower_service::Service;
 
 #[cfg(feature = "openapi")]
-use crate::Operable;
+use http::Method;
 
+#[cfg(feature = "openapi")]
+use crate::Operable;
 
 #[cfg(feature = "openapi")]
 use std::collections::HashMap;
