@@ -69,7 +69,7 @@ impl Gotcha<EmptyState, EmptyConfig> {
     /// # Example
     /// ```no_run
     /// use gotcha::prelude::*;
-    /// 
+    ///
     /// let app = Gotcha::new()
     ///     .get("/", || async { "Hello World" });
     /// ```
@@ -85,16 +85,36 @@ impl Gotcha<EmptyState, EmptyConfig> {
     }
 }
 
-impl<S, C> Gotcha<S, C>
-where
-    S: Clone + Send + Sync + 'static + Default,
-    C: Clone + Send + Sync + 'static + Serialize + for<'de> Deserialize<'de> + Default,
-{
+impl Gotcha {
     /// Create a new Gotcha builder with custom state and config types
-    pub fn with_types<NS, NC>() -> Gotcha<NS, NC>
+    ///
+    /// This is a convenience method that allows you to specify custom types
+    /// without needing to provide dummy type parameters.
+    ///
+    /// # Example
+    /// ```no_run
+    /// use gotcha::prelude::*;
+    /// use serde::{Deserialize, Serialize};
+    ///
+    /// #[derive(Clone, Default)]
+    /// struct AppState {
+    ///     // your state fields
+    /// }
+    ///
+    /// #[derive(Clone, Default, Serialize, Deserialize)]
+    /// struct AppConfig {
+    ///     // your config fields
+    /// }
+    ///
+    /// let app = Gotcha::with_types::<AppState, AppConfig>()
+    ///     .get("/", |state: State<AppState>| async move {
+    ///         "Hello with custom state"
+    ///     });
+    /// ```
+    pub fn with_types<S, C>() -> Gotcha<S, C>
     where
-        NS: Clone + Send + Sync + 'static + Default,
-        NC: Clone + Send + Sync + 'static + Serialize + for<'de> Deserialize<'de> + Default,
+        S: Clone + Send + Sync + 'static + Default,
+        C: Clone + Send + Sync + 'static + Serialize + for<'de> Deserialize<'de> + Default,
     {
         Gotcha {
             router: GotchaRouter::default(),
@@ -105,6 +125,77 @@ where
             config_builder: None,
         }
     }
+
+    /// Create a Gotcha builder with custom state type and default config
+    ///
+    /// # Example
+    /// ```no_run
+    /// use gotcha::prelude::*;
+    ///
+    /// #[derive(Clone, Default)]
+    /// struct AppState {
+    ///     counter: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    /// }
+    ///
+    /// let app = Gotcha::with_state::<AppState>()
+    ///     .state(AppState::default())
+    ///     .get("/", |state: State<AppState>| async move {
+    ///         "Hello with custom state"
+    ///     });
+    /// ```
+    pub fn with_state<S>() -> Gotcha<S, EmptyConfig>
+    where
+        S: Clone + Send + Sync + 'static + Default,
+    {
+        Gotcha {
+            router: GotchaRouter::default(),
+            host: "127.0.0.1".to_string(),
+            port: 3000,
+            state: None,
+            config: None,
+            config_builder: None,
+        }
+    }
+
+    /// Create a Gotcha builder with custom config type and default state
+    ///
+    /// # Example
+    /// ```no_run
+    /// use gotcha::prelude::*;
+    /// use serde::{Deserialize, Serialize};
+    ///
+    /// #[derive(Clone, Default, Serialize, Deserialize)]
+    /// struct AppConfig {
+    ///     api_key: String,
+    ///     max_connections: u32,
+    /// }
+    ///
+    /// let app = Gotcha::with_config::<AppConfig>()
+    ///     .with_env_config("APP")
+    ///     .get("/", |config: State<ConfigWrapper<AppConfig>>| async move {
+    ///         "Hello with custom config"
+    ///     });
+    /// ```
+    pub fn with_config<C>() -> Gotcha<EmptyState, C>
+    where
+        C: Clone + Send + Sync + 'static + Serialize + for<'de> Deserialize<'de> + Default,
+    {
+        Gotcha {
+            router: GotchaRouter::default(),
+            host: "127.0.0.1".to_string(),
+            port: 3000,
+            state: None,
+            config: None,
+            config_builder: None,
+        }
+    }
+}
+
+impl<S, C> Gotcha<S, C>
+where
+    S: Clone + Send + Sync + 'static + Default,
+    C: Clone + Send + Sync + 'static + Serialize + for<'de> Deserialize<'de> + Default,
+{
 
     /// Set the application state
     pub fn state(mut self, state: S) -> Self {
