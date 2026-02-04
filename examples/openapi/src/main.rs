@@ -1,6 +1,8 @@
 use gotcha::{api, ConfigWrapper, GotchaApp, GotchaContext, GotchaRouter, Json, Path, Schematic};
 use serde::{Deserialize, Serialize};
 
+mod test_skip;
+
 #[derive(Schematic, Serialize, Deserialize, Debug)]
 pub struct ResponseWrapper<T: Schematic> {
     pub code: i32,
@@ -100,6 +102,10 @@ impl GotchaApp for App {
             .get("/pets/:pet_id", get_pet)
             .put("/pets/:pet_id", update_pet_info)
             .put("/pets/:pet_id/address/:address_id", update_pet_address_detail)
+            // Test skip functionality
+            .post("/test/skip-json/:key_id", test_skip::test_skip_json)
+            .post("/test/skip-query/:key_id", test_skip::test_skip_query)
+            .post("/test/no-skip/:key_id", test_skip::test_no_skip)
     }
 
     async fn state<'a, 'b>(&'a self, _config: &'b ConfigWrapper<Self::Config>) -> Result<Self::State, Box<dyn std::error::Error>> {

@@ -53,24 +53,15 @@ pub(crate) fn request_handler(args: TokenStream, input_stream: TokenStream) -> T
         .flat_map(|param| match param {
             FnArg::Receiver(_) => None,
             FnArg::Typed(typed) => {
-                // TODO: typed parse attribute
-
                 // Check if the parameter has the #[api(skip)] attribute
                 let should_skip = typed.attrs.iter().any(|attr| {
-                    if let Ok(meta) = attr.parse_meta() {
-                        if let syn::Meta::List(meta_list) = meta {
-                            if meta_list.path.is_ident("api") {
-                                return meta_list.nested.iter().any(|nested_meta| {
-                                    if let syn::NestedMeta::Meta(syn::Meta::Path(path)) = nested_meta {
-                                        path.is_ident("skip")
-                                    } else {
-                                        false
-                                    }
-                                });
-                            }
-                        }
+                    if attr.path.is_ident("api") {
+                        // Parse the attribute tokens to check for "skip"
+                        let tokens = attr.tokens.to_string();
+                        tokens.contains("skip")
+                    } else {
+                        false
                     }
-                    false
                 });
 
                 if should_skip {
@@ -98,7 +89,8 @@ pub(crate) fn request_handler(args: TokenStream, input_stream: TokenStream) -> T
 
     input.sig.inputs.iter_mut().for_each(|param| {
         if let FnArg::Typed(typed) = param {
-            typed.attrs = vec![];
+            // Remove only the #[api(...)] attributes, keep others
+            typed.attrs.retain(|attr| !attr.path.is_ident("api"));
         }
     });
 

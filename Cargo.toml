@@ -6,6 +6,7 @@ members = [
     "gotcha_macro",
     "examples/*"
 ]
+exclude = ["examples/clouldflare-worker"]
 default-members = ["gotcha", "gotcha_macro"]
 
 [workspace.dependencies]

@@ -81,6 +81,7 @@ impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
     /// let router: GotchaRouter<()> = GotchaRouter::default()
     ///     .method_route("/", MethodFilter::GET, hello_world);
     /// ```
+    #[allow(unused_mut)]
     pub fn method_route<H, T>(mut self, path: &str, method: MethodFilter, handler: H) -> Self
     where
         H: Handler<T, State>,
