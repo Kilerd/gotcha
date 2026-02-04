@@ -413,16 +413,34 @@ impl<T1: Schematic, T2: Schematic> ParameterProvider for Path<(T1, T2)> {
 }
 
 impl<T: Schematic> ParameterProvider for Path<T> {
-    fn generate(_url: String) -> Either<Vec<Parameter>, RequestBody> {
+    fn generate(url: String) -> Either<Vec<Parameter>, RequestBody> {
         let mut ret = vec![];
         let mut schema = T::generate_schema();
+
+        // Check if this is a struct with properties or a simple type
         if let Some(mut properties) = schema.schema.extras.remove("properties") {
+            // Case 1: Struct with properties - each property becomes a path parameter
             if let Some(properties) = properties.as_object_mut() {
                 properties.iter_mut().for_each(|(key, value)| {
                     let schema = serde_json::from_value(value.clone()).unwrap();
                     let param = build_param(key.to_string(), ParameterIn::Path, T::required(), schema, T::doc());
                     ret.push(param);
                 })
+            }
+        } else {
+            // Case 2: Simple type like Uuid - extract parameter name from URL
+            let pattern = regex::Regex::new(r":([^/]+)").unwrap();
+            let param_names_in_path: Vec<String> = pattern.captures_iter(&url).map(|digits| digits.get(1).unwrap().as_str().to_string()).collect();
+
+            if let Some(param_name) = param_names_in_path.first() {
+                let param = build_param(
+                    param_name.clone(),
+                    ParameterIn::Path,
+                    T::required(),
+                    T::generate_schema().schema,
+                    T::doc(),
+                );
+                ret.push(param);
             }
         }
         Either::Left(ret)
