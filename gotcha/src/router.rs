@@ -11,7 +11,7 @@ use tower_layer::Layer;
 use tower_service::Service;
 
 #[cfg(feature = "openapi")]
-use http::Method;
+use axum::http::Method;
 
 #[cfg(feature = "openapi")]
 use crate::Operable;
@@ -81,7 +81,7 @@ impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
     /// let router: GotchaRouter<()> = GotchaRouter::default()
     ///     .method_route("/", MethodFilter::GET, hello_world);
     /// ```
-    pub fn method_route<H, T>(self, path: &str, method: MethodFilter, handler: H) -> Self
+    pub fn method_route<H, T>(mut self, path: &str, method: MethodFilter, handler: H) -> Self
     where
         H: Handler<T, State>,
         T: 'static,
