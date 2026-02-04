@@ -30,7 +30,7 @@ pub use crate::config::{ConfigWrapper, GotchaConfigLoader};
 pub use crate::router::Responder;
 
 // Common Axum extractors and utilities
-pub use axum::extract::{Json, Path, Query, State};
+pub use axum::extract::{Extension, Json, Path, Query, State};
 pub use axum::http::{StatusCode, HeaderMap, Method};
 pub use axum::response::{Html, Redirect, Response};
 pub use axum::routing::{get, post, put, delete, patch};

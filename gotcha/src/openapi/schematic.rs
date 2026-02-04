@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 
-use axum::extract::{Json, Path, Query, Request, State};
+use axum::extract::{Extension, Json, Path, Query, Request, State};
 use bigdecimal::BigDecimal;
 use chrono::{DateTime, Utc};
 use either::Either;
@@ -52,7 +52,7 @@ pub trait Schematic {
 
 /// ParameterProvider is a trait that defines the value which can be used as a parameter.
 pub trait ParameterProvider {
-    fn generate(url: String) -> Either<Vec<Parameter>, RequestBody> {
+    fn generate(_url: String) -> Either<Vec<Parameter>, RequestBody> {
         Either::Left(vec![])
     }
 }
@@ -485,6 +485,8 @@ impl<T: Schematic> ParameterProvider for Query<T> {
 }
 
 impl<T> ParameterProvider for State<T> {}
+
+impl<T> ParameterProvider for Extension<T> {}
 
 impl ParameterProvider for Request {}
 
