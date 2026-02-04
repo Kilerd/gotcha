@@ -81,7 +81,7 @@
 
 pub use async_trait::async_trait;
 use axum::extract::FromRef;
-pub use axum::extract::{Json, Path, Query, State};
+pub use axum::extract::{Extension, Json, Path, Query, State};
 pub use axum::response::IntoResponse as Responder;
 pub use axum::routing::{delete, get, patch, post, put};
 pub use axum_macros::debug_handler;
