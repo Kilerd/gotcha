@@ -279,6 +279,24 @@ impl Schematic for BigDecimal {
     }
 }
 
+impl Schematic for rust_decimal::Decimal {
+    fn name() -> &'static str {
+        "decimal"
+    }
+
+    fn required() -> bool {
+        true
+    }
+
+    fn type_() -> &'static str {
+        "string"
+    }
+
+    fn format() -> Option<String> {
+        Some("decimal".to_string())
+    }
+}
+
 impl<T: Schematic> Schematic for HashSet<T> {
     fn name() -> &'static str {
         T::name()
