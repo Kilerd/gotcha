@@ -10,14 +10,13 @@ struct Product {
     discount: Option<Decimal>,
 }
 
-#[test]
-fn test_decimal_schema_generation() {
+fn main() {
     let schema = Product::generate_schema();
-    let json = serde_json::to_string_pretty(&schema).unwrap();
+    let schema_value = schema.schema.to_value();
 
     let expected = include_str!("rust_decimal.json");
     assert_json_diff::assert_json_eq!(
-        serde_json::from_str::<serde_json::Value>(&json).unwrap(),
+        schema_value,
         serde_json::from_str::<serde_json::Value>(expected).unwrap()
     );
 }

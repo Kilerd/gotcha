@@ -2,15 +2,22 @@ use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::quote;
 
 use crate::schematic::ParameterEnumVariantOpt;
-use crate::utils::AttributesExt;
+use crate::utils::{get_serde_name, parse_serde_rename, AttributesExt, RenameAll};
 
-pub(crate) fn handler(ident: syn::Ident, doc: TokenStream2, variants: Vec<ParameterEnumVariantOpt>) -> Result<TokenStream2, (Span, &'static str)> {
+pub(crate) fn handler(
+    ident: syn::Ident,
+    doc: TokenStream2,
+    variants: Vec<ParameterEnumVariantOpt>,
+    rename_all: Option<RenameAll>,
+) -> Result<TokenStream2, (Span, &'static str)> {
     let ident_string = ident.to_string();
 
     let variants_codegen: Vec<TokenStream2> = variants
         .into_iter()
         .map(|variant| {
-            let varient_string = variant.ident.to_string();
+            let variant_ident_str = variant.ident.to_string();
+            let variant_rename = parse_serde_rename(&variant.attrs);
+            let varient_string = get_serde_name(&variant_ident_str, variant_rename.as_deref(), rename_all);
 
             let fields_stream: Vec<TokenStream2> = variant
                 .fields
@@ -22,11 +29,13 @@ pub(crate) fn handler(ident: syn::Ident, doc: TokenStream2, variants: Vec<Parame
                     } else {
                         quote! {None}
                     };
-                    let field_ty = field.ty;
+                    let field_ty = field.ty.clone();
 
                     if let Some(ident) = field.ident.as_ref() {
                         // named variant
-                        let field_name = ident.to_string();
+                        let field_ident_str = ident.to_string();
+                        let field_rename = parse_serde_rename(&field.attrs);
+                        let field_name = get_serde_name(&field_ident_str, field_rename.as_deref(), None);
                         quote! {
                             let mut field_schema = <#field_ty as Schematic>::generate_schema();
                             field_schema.schema.description = #field_description;

@@ -2,10 +2,13 @@ use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::quote;
 
 use crate::schematic::ParameterStructFieldOpt;
-use crate::utils::AttributesExt;
+use crate::utils::{get_serde_name, parse_serde_rename, AttributesExt, RenameAll};
 
 pub(crate) fn handler(
-    ident: syn::Ident, doc: TokenStream2, fields: darling::ast::Fields<ParameterStructFieldOpt>,
+    ident: syn::Ident,
+    doc: TokenStream2,
+    fields: darling::ast::Fields<ParameterStructFieldOpt>,
+    rename_all: Option<RenameAll>,
 ) -> Result<TokenStream2, (Span, &'static str)> {
     let ident_string = ident.to_string();
 
@@ -13,7 +16,9 @@ pub(crate) fn handler(
         .fields
         .into_iter()
         .map(|field| {
-            let field_name = field.ident.unwrap().to_string();
+            let ident_str = field.ident.as_ref().unwrap().to_string();
+            let rename = parse_serde_rename(&field.attrs);
+            let field_name = get_serde_name(&ident_str, rename.as_deref(), rename_all);
             let field_ty = field.ty;
             let field_description = if let Some(doc) = field.attrs.get_doc() {
                 quote! { Some(#doc.to_string()) }

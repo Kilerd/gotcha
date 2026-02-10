@@ -1,21 +1,18 @@
 {
-  "schema": {
-    "type": "object",
-    "properties": {
-      "name": {
-        "type": "string"
-      },
-      "price": {
-        "type": "string",
-        "format": "decimal"
-      },
-      "discount": {
-        "type": "string",
-        "format": "decimal",
-        "nullable": true
-      }
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string"
     },
-    "required": ["name", "price"]
+    "price": {
+      "type": "string",
+      "format": "decimal"
+    },
+    "discount": {
+      "type": "string",
+      "format": "decimal",
+      "nullable": true
+    }
   },
-  "required": true
+  "required": ["name", "price"]
 }

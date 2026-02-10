@@ -9,7 +9,7 @@ pub mod named_struct;
 pub mod simple_enum;
 pub mod tagged_enum;
 
-use crate::utils::AttributesExt;
+use crate::utils::{parse_serde_rename_all, AttributesExt, RenameAll};
 
 #[derive(Debug, PartialEq, Eq)]
 enum SerdeTag {
@@ -28,11 +28,13 @@ impl SerdeTag {
 #[derive(Debug)]
 struct ParameterExtraField {
     tag: Option<SerdeTag>,
+    rename_all: Option<RenameAll>,
 }
 
 impl ParameterExtraField {
     fn from_attr(attrs: &[syn::Attribute]) -> Self {
         let mut tag = None;
+        let rename_all = parse_serde_rename_all(attrs);
 
         for attr in attrs {
             if attr.path.is_ident("serde") {
@@ -51,7 +53,7 @@ impl ParameterExtraField {
                 }
             }
         }
-        ParameterExtraField { tag }
+        ParameterExtraField { tag, rename_all }
     }
 }
 
@@ -132,18 +134,16 @@ pub(crate) fn handler(input: TokenStream2) -> Result<TokenStream2, (Span, &'stat
             // Check if all enum variants have empty fields
             let is_simple_enum = enum_variants.iter().all(|variant| variant.fields.is_empty());
             if is_simple_enum {
-                simple_enum::handler(ident.clone(), doc, enum_variants)?
+                simple_enum::handler(ident.clone(), doc, enum_variants, extra_field.rename_all)?
+            } else if extra_field.tag == None {
+                external_tagged_enum::handler(ident.clone(), doc, enum_variants, extra_field.rename_all)?
+            } else if extra_field.tag == Some(SerdeTag::Type) {
+                tagged_enum::handler(ident.clone(), doc, enum_variants, extra_field.rename_all)?
             } else {
-                if extra_field.tag == None {
-                    external_tagged_enum::handler(ident.clone(), doc, enum_variants)?
-                } else if extra_field.tag == Some(SerdeTag::Type) {
-                    tagged_enum::handler(ident.clone(), doc, enum_variants)?
-                } else {
-                    return Err((Span::call_site(), "Only simple enums without fields are supported"));
-                }
+                return Err((Span::call_site(), "Only simple enums without fields are supported"));
             }
         }
-        Data::Struct(fields) => named_struct::handler(ident.clone(), doc, fields)?,
+        Data::Struct(fields) => named_struct::handler(ident.clone(), doc, fields, extra_field.rename_all)?,
     };
 
     let ret = quote! {
