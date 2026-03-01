@@ -52,6 +52,11 @@ pub(crate) fn handler(
             schema.schema.extras.insert("enum".to_string(), ::gotcha::serde_json::to_value(enum_variants).unwrap());
             schema
         }
+
+        fn flatten_schema() -> Option<::gotcha::serde_json::Value> {
+            // Simple enums return their schema for flattening
+            Some(Self::generate_schema().schema.to_value())
+        }
     };
 
     Ok(ret)

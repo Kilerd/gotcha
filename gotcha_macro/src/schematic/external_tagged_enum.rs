@@ -122,6 +122,18 @@ pub(crate) fn handler(
             schema.schema.extras.insert("oneOf".to_string(), ::gotcha::serde_json::to_value(branches).unwrap());
             schema
         }
+
+        fn flatten_schema() -> Option<::gotcha::serde_json::Value> {
+            // Return the oneOf schema for flattening
+            let mut branches: Vec<::std::collections::HashMap<String, ::gotcha::serde_json::Value>> = vec![];
+            #(
+                #variants_codegen
+                branches.push(variant_object);
+            )*
+            let mut obj: ::std::collections::HashMap<String, ::gotcha::serde_json::Value> = ::std::collections::HashMap::new();
+            obj.insert("oneOf".to_string(), ::gotcha::serde_json::to_value(branches).unwrap());
+            Some(::gotcha::serde_json::to_value(obj).unwrap())
+        }
     };
 
     Ok(ret)

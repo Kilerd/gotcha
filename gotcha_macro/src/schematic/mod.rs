@@ -8,32 +8,27 @@ pub mod external_tagged_enum;
 pub mod named_struct;
 pub mod simple_enum;
 pub mod tagged_enum;
+pub mod untagged_enum;
 
 use crate::utils::{parse_serde_rename_all, AttributesExt, RenameAll};
 
 #[derive(Debug, PartialEq, Eq)]
-enum SerdeTag {
-    Type,
-}
-
-impl SerdeTag {
-    fn from_str(s: &str) -> Option<Self> {
-        match s {
-            "type" => Some(SerdeTag::Type),
-            _ => None,
-        }
-    }
+enum SerdeTagKind {
+    /// #[serde(tag = "type")] - internally tagged
+    Internal(String),
+    /// #[serde(untagged)] - no tag
+    Untagged,
 }
 
 #[derive(Debug)]
 struct ParameterExtraField {
-    tag: Option<SerdeTag>,
+    tag_kind: Option<SerdeTagKind>,
     rename_all: Option<RenameAll>,
 }
 
 impl ParameterExtraField {
     fn from_attr(attrs: &[syn::Attribute]) -> Self {
-        let mut tag = None;
+        let mut tag_kind = None;
         let rename_all = parse_serde_rename_all(attrs);
 
         for attr in attrs {
@@ -42,18 +37,26 @@ impl ParameterExtraField {
                     attr.parse_args_with(|input: syn::parse::ParseStream| syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated(input))
                 {
                     for meta in nested {
-                        if let syn::Meta::NameValue(name_value) = meta {
-                            if name_value.path.is_ident("tag") {
-                                if let syn::Lit::Str(lit_str) = name_value.lit {
-                                    tag = SerdeTag::from_str(&lit_str.value());
+                        match meta {
+                            syn::Meta::NameValue(name_value) => {
+                                if name_value.path.is_ident("tag") {
+                                    if let syn::Lit::Str(lit_str) = name_value.lit {
+                                        tag_kind = Some(SerdeTagKind::Internal(lit_str.value()));
+                                    }
                                 }
                             }
+                            syn::Meta::Path(path) => {
+                                if path.is_ident("untagged") {
+                                    tag_kind = Some(SerdeTagKind::Untagged);
+                                }
+                            }
+                            _ => {}
                         }
                     }
                 }
             }
         }
-        ParameterExtraField { tag, rename_all }
+        ParameterExtraField { tag_kind, rename_all }
     }
 }
 
@@ -135,12 +138,19 @@ pub(crate) fn handler(input: TokenStream2) -> Result<TokenStream2, (Span, &'stat
             let is_simple_enum = enum_variants.iter().all(|variant| variant.fields.is_empty());
             if is_simple_enum {
                 simple_enum::handler(ident.clone(), doc, enum_variants, extra_field.rename_all)?
-            } else if extra_field.tag == None {
-                external_tagged_enum::handler(ident.clone(), doc, enum_variants, extra_field.rename_all)?
-            } else if extra_field.tag == Some(SerdeTag::Type) {
-                tagged_enum::handler(ident.clone(), doc, enum_variants, extra_field.rename_all)?
             } else {
-                return Err((Span::call_site(), "Only simple enums without fields are supported"));
+                match extra_field.tag_kind {
+                    None => {
+                        // Default: externally tagged
+                        external_tagged_enum::handler(ident.clone(), doc, enum_variants, extra_field.rename_all)?
+                    }
+                    Some(SerdeTagKind::Internal(ref tag_name)) => {
+                        tagged_enum::handler(ident.clone(), doc, enum_variants, extra_field.rename_all, tag_name.clone())?
+                    }
+                    Some(SerdeTagKind::Untagged) => {
+                        untagged_enum::handler(ident.clone(), doc, enum_variants, extra_field.rename_all)?
+                    }
+                }
             }
         }
         Data::Struct(fields) => named_struct::handler(ident.clone(), doc, fields, extra_field.rename_all)?,

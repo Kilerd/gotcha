@@ -9,8 +9,10 @@ pub(crate) fn handler(
     doc: TokenStream2,
     variants: Vec<ParameterEnumVariantOpt>,
     rename_all: Option<RenameAll>,
+    tag_name: String,
 ) -> Result<TokenStream2, (Span, &'static str)> {
     let ident_string = ident.to_string();
+    let tag_name_str = tag_name.as_str();
 
     let variants_codegen: Vec<TokenStream2> = variants
         .into_iter()
@@ -66,8 +68,8 @@ pub(crate) fn handler(
 
                 let mut properties = ::std::collections::HashMap::new();
                 let mut properties_required_fields = vec![];
-                properties.insert("type".to_string(), ::gotcha::serde_json::to_value(single_enum).expect("cannot convert type to value"));
-                properties_required_fields.push("type".to_string());
+                properties.insert(#tag_name_str.to_string(), ::gotcha::serde_json::to_value(single_enum).expect("cannot convert type to value"));
+                properties_required_fields.push(#tag_name_str.to_string());
                 #(
                     #fields_stream
                 )*
@@ -113,10 +115,25 @@ pub(crate) fn handler(
                 branches.push(variant_object);
             )*
             let mut discriminator = ::std::collections::HashMap::new();
-            discriminator.insert("propertyName".to_string(), ::gotcha::serde_json::to_value("type").unwrap());
+            discriminator.insert("propertyName".to_string(), ::gotcha::serde_json::to_value(#tag_name_str).unwrap());
             schema.schema.extras.insert("oneOf".to_string(), ::gotcha::serde_json::to_value(branches).unwrap());
             schema.schema.extras.insert("discriminator".to_string(), ::gotcha::serde_json::to_value(discriminator).unwrap());
             schema
+        }
+
+        fn flatten_schema() -> Option<::gotcha::serde_json::Value> {
+            // Return the oneOf schema for flattening
+            let mut branches: Vec<::std::collections::HashMap<String, ::gotcha::serde_json::Value>> = vec![];
+            #(
+                #variants_codegen
+                branches.push(variant_object);
+            )*
+            let mut discriminator: ::std::collections::HashMap<String, ::gotcha::serde_json::Value> = ::std::collections::HashMap::new();
+            discriminator.insert("propertyName".to_string(), ::gotcha::serde_json::to_value(#tag_name_str).unwrap());
+            let mut obj: ::std::collections::HashMap<String, ::gotcha::serde_json::Value> = ::std::collections::HashMap::new();
+            obj.insert("oneOf".to_string(), ::gotcha::serde_json::to_value(branches).unwrap());
+            obj.insert("discriminator".to_string(), ::gotcha::serde_json::to_value(discriminator).unwrap());
+            Some(::gotcha::serde_json::to_value(obj).unwrap())
         }
     };
 

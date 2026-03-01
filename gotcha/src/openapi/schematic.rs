@@ -48,6 +48,12 @@ pub trait Schematic {
             required: Self::required(),
         }
     }
+    /// Generate a schema suitable for flattening into another type.
+    /// Returns None for types that should use fields() for flattening (structs),
+    /// or Some(schema) for types that need special handling (enums with oneOf).
+    fn flatten_schema() -> Option<serde_json::Value> {
+        None
+    }
 }
 
 /// ParameterProvider is a trait that defines the value which can be used as a parameter.

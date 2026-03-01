@@ -158,6 +158,28 @@ pub fn parse_serde_rename(attrs: &[Attribute]) -> Option<String> {
     None
 }
 
+/// Check if field has serde(flatten) attribute
+pub fn has_serde_flatten(attrs: &[Attribute]) -> bool {
+    for attr in attrs {
+        if attr.path.is_ident("serde") {
+            if let Ok(nested) = attr.parse_args_with(
+                |input: syn::parse::ParseStream| {
+                    syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated(input)
+                },
+            ) {
+                for meta in nested {
+                    if let syn::Meta::Path(path) = meta {
+                        if path.is_ident("flatten") {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    false
+}
+
 /// Parse serde rename_all attribute from container attributes
 pub fn parse_serde_rename_all(attrs: &[Attribute]) -> Option<RenameAll> {
     for attr in attrs {
