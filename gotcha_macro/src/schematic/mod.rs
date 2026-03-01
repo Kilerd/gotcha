@@ -4,6 +4,7 @@ use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::quote;
 use syn::{parse2, DeriveInput, GenericParam};
 
+pub mod adjacent_tagged_enum;
 pub mod external_tagged_enum;
 pub mod named_struct;
 pub mod simple_enum;
@@ -16,6 +17,8 @@ use crate::utils::{parse_serde_rename_all, AttributesExt, RenameAll};
 enum SerdeTagKind {
     /// #[serde(tag = "type")] - internally tagged
     Internal(String),
+    /// #[serde(tag = "type", content = "data")] - adjacently tagged
+    Adjacent { tag: String, content: String },
     /// #[serde(untagged)] - no tag
     Untagged,
 }
@@ -28,7 +31,9 @@ struct ParameterExtraField {
 
 impl ParameterExtraField {
     fn from_attr(attrs: &[syn::Attribute]) -> Self {
-        let mut tag_kind = None;
+        let mut tag_name: Option<String> = None;
+        let mut content_name: Option<String> = None;
+        let mut is_untagged = false;
         let rename_all = parse_serde_rename_all(attrs);
 
         for attr in attrs {
@@ -41,13 +46,17 @@ impl ParameterExtraField {
                             syn::Meta::NameValue(name_value) => {
                                 if name_value.path.is_ident("tag") {
                                     if let syn::Lit::Str(lit_str) = name_value.lit {
-                                        tag_kind = Some(SerdeTagKind::Internal(lit_str.value()));
+                                        tag_name = Some(lit_str.value());
+                                    }
+                                } else if name_value.path.is_ident("content") {
+                                    if let syn::Lit::Str(lit_str) = name_value.lit {
+                                        content_name = Some(lit_str.value());
                                     }
                                 }
                             }
                             syn::Meta::Path(path) => {
                                 if path.is_ident("untagged") {
-                                    tag_kind = Some(SerdeTagKind::Untagged);
+                                    is_untagged = true;
                                 }
                             }
                             _ => {}
@@ -56,6 +65,17 @@ impl ParameterExtraField {
                 }
             }
         }
+
+        let tag_kind = if is_untagged {
+            Some(SerdeTagKind::Untagged)
+        } else {
+            match (tag_name, content_name) {
+                (Some(tag), Some(content)) => Some(SerdeTagKind::Adjacent { tag, content }),
+                (Some(tag), None) => Some(SerdeTagKind::Internal(tag)),
+                _ => None,
+            }
+        };
+
         ParameterExtraField { tag_kind, rename_all }
     }
 }
@@ -146,6 +166,9 @@ pub(crate) fn handler(input: TokenStream2) -> Result<TokenStream2, (Span, &'stat
                     }
                     Some(SerdeTagKind::Internal(ref tag_name)) => {
                         tagged_enum::handler(ident.clone(), doc, enum_variants, extra_field.rename_all, tag_name.clone())?
+                    }
+                    Some(SerdeTagKind::Adjacent { ref tag, ref content }) => {
+                        adjacent_tagged_enum::handler(ident.clone(), doc, enum_variants, extra_field.rename_all, tag.clone(), content.clone())?
                     }
                     Some(SerdeTagKind::Untagged) => {
                         untagged_enum::handler(ident.clone(), doc, enum_variants, extra_field.rename_all)?

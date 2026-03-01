@@ -118,6 +118,32 @@ pub(crate) fn handler(
         }
     };
 
+    // Generate flatten_schema implementation for structs
+    let flatten_schema_impl = if has_flatten {
+        quote! {
+            fn flatten_schema() -> Option<::gotcha::serde_json::Value> {
+                // Collect flatten schemas from inner types (for nested flatten)
+                let mut flatten_schemas: Vec<::gotcha::serde_json::Value> = vec![];
+                #(
+                    #flatten_schema_stream
+                )*
+
+                if flatten_schemas.is_empty() {
+                    None
+                } else if flatten_schemas.len() == 1 {
+                    Some(flatten_schemas.remove(0))
+                } else {
+                    // Multiple enum flatten schemas - combine with allOf
+                    let mut obj: ::std::collections::HashMap<String, ::gotcha::serde_json::Value> = ::std::collections::HashMap::new();
+                    obj.insert("allOf".to_string(), ::gotcha::serde_json::to_value(flatten_schemas).unwrap());
+                    Some(::gotcha::serde_json::to_value(obj).unwrap())
+                }
+            }
+        }
+    } else {
+        quote! {}
+    };
+
     let ret = quote! {
         fn name() -> &'static str {
             #ident_string
@@ -144,6 +170,9 @@ pub(crate) fn handler(
             )*
             result
         }
+
+        #flatten_schema_impl
+
         fn generate_schema() -> ::gotcha::EnhancedSchema {
             let mut schema = ::gotcha::EnhancedSchema {
                 schema: ::gotcha::oas::Schema {
