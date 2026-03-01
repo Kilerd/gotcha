@@ -1,6 +1,7 @@
 {
   "oneOf": [
     {
+      "title": "One",
       "properties": {
         "One": {
             "type": "object",
@@ -20,6 +21,7 @@
       "type": "object"
     },
     {
+      "title": "Two",
       "properties": {
         "Two": {
             "type": "object",

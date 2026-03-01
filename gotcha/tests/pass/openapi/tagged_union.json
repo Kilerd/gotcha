@@ -4,6 +4,7 @@
     },
     "oneOf": [
         {
+            "title": "One",
             "properties": {
                 "type": {
                     "type": "string",
@@ -22,6 +23,7 @@
             "type": "object"
         },
         {
+            "title": "Two",
             "properties": {
                 "type": {
                     "type": "string",

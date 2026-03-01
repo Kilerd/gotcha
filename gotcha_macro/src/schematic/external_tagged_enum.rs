@@ -77,6 +77,7 @@ pub(crate) fn handler(
                    root_properties.insert(#varient_string.to_string(), ::gotcha::serde_json::to_value(second_properties).expect("cannot convert properties to value"));
 
                    let mut variant_object: ::std::collections::HashMap<String, ::gotcha::serde_json::Value> = ::std::collections::HashMap::new();
+                   variant_object.insert("title".to_string(), ::gotcha::serde_json::to_value(#varient_string).expect("cannot convert title to value"));
                    variant_object.insert("type".to_string(), ::gotcha::serde_json::to_value("object").expect("cannot convert type to value"));
                    variant_object.insert("properties".to_string(), ::gotcha::serde_json::to_value(root_properties).expect("cannot convert root properties to value"));
                    variant_object.insert("required".to_string(), ::gotcha::serde_json::to_value(root_required_fields).expect("cannot convert root properties required fields to value"));

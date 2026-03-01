@@ -15,6 +15,10 @@ pub(crate) fn handler(
     let variants_codegen: Vec<TokenStream2> = variants
         .into_iter()
         .map(|variant| {
+            let variant_ident_str = variant.ident.to_string();
+            let variant_rename = parse_serde_rename(&variant.attrs);
+            let variant_string = get_serde_name(&variant_ident_str, variant_rename.as_deref(), rename_all);
+
             let fields_stream: Vec<TokenStream2> = variant
                 .fields
                 .into_iter()
@@ -69,6 +73,7 @@ pub(crate) fn handler(
                     } else {
                         // For named variant, create an object schema
                         let mut variant_object: ::std::collections::HashMap<String, ::gotcha::serde_json::Value> = ::std::collections::HashMap::new();
+                        variant_object.insert("title".to_string(), ::gotcha::serde_json::to_value(#variant_string).expect("cannot convert title to value"));
                         variant_object.insert("type".to_string(), ::gotcha::serde_json::to_value("object").expect("cannot convert type to value"));
                         variant_object.insert("properties".to_string(), ::gotcha::serde_json::to_value(properties).expect("cannot convert properties to value"));
                         variant_object.insert("required".to_string(), ::gotcha::serde_json::to_value(properties_required_fields).expect("cannot convert required fields to value"));

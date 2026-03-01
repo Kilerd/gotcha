@@ -48,6 +48,7 @@ pub(crate) fn handler(
                         properties.insert(#content_name_str.to_string(), content_schema);
 
                         let mut variant_object: ::std::collections::HashMap<String, ::gotcha::serde_json::Value> = ::std::collections::HashMap::new();
+                        variant_object.insert("title".to_string(), ::gotcha::serde_json::to_value(#variant_string).unwrap());
                         variant_object.insert("type".to_string(), ::gotcha::serde_json::to_value("object").unwrap());
                         variant_object.insert("properties".to_string(), ::gotcha::serde_json::to_value(properties).unwrap());
                         variant_object.insert("required".to_string(), ::gotcha::serde_json::to_value(vec![#tag_name_str, #content_name_str]).unwrap());
@@ -68,6 +69,7 @@ pub(crate) fn handler(
                         properties.insert(#tag_name_str.to_string(), ::gotcha::serde_json::to_value(tag_enum).unwrap());
 
                         let mut variant_object: ::std::collections::HashMap<String, ::gotcha::serde_json::Value> = ::std::collections::HashMap::new();
+                        variant_object.insert("title".to_string(), ::gotcha::serde_json::to_value(#variant_string).unwrap());
                         variant_object.insert("type".to_string(), ::gotcha::serde_json::to_value("object").unwrap());
                         variant_object.insert("properties".to_string(), ::gotcha::serde_json::to_value(properties).unwrap());
                         variant_object.insert("required".to_string(), ::gotcha::serde_json::to_value(vec![#tag_name_str]).unwrap());
@@ -122,6 +124,7 @@ pub(crate) fn handler(
                         properties.insert(#content_name_str.to_string(), ::gotcha::serde_json::to_value(content_schema).unwrap());
 
                         let mut variant_object: ::std::collections::HashMap<String, ::gotcha::serde_json::Value> = ::std::collections::HashMap::new();
+                        variant_object.insert("title".to_string(), ::gotcha::serde_json::to_value(#variant_string).unwrap());
                         variant_object.insert("type".to_string(), ::gotcha::serde_json::to_value("object").unwrap());
                         variant_object.insert("properties".to_string(), ::gotcha::serde_json::to_value(properties).unwrap());
                         variant_object.insert("required".to_string(), ::gotcha::serde_json::to_value(vec![#tag_name_str, #content_name_str]).unwrap());
