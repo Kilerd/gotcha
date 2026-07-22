@@ -178,6 +178,41 @@ pub fn has_serde_flatten(attrs: &[Attribute]) -> bool {
     false
 }
 
+/// Run `pred` over each item inside every `#[serde(...)]` attribute; return true if any matches.
+fn serde_nested_any(attrs: &[Attribute], pred: impl Fn(&syn::Meta) -> bool) -> bool {
+    for attr in attrs {
+        if attr.path.is_ident("serde") {
+            if let Ok(nested) =
+                attr.parse_args_with(|input: syn::parse::ParseStream| syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated(input))
+            {
+                if nested.iter().any(&pred) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+/// Whether a field is dropped by serde (`skip`, `skip_serializing`, `skip_deserializing`)
+/// and should therefore not appear in the schema.
+pub fn has_serde_skip(attrs: &[Attribute]) -> bool {
+    serde_nested_any(
+        attrs,
+        |meta| matches!(meta, syn::Meta::Path(path) if path.is_ident("skip") || path.is_ident("skip_serializing") || path.is_ident("skip_deserializing")),
+    )
+}
+
+/// Whether a field is effectively optional for serde — `default` (`default` or
+/// `default = "..."`) or `skip_serializing_if = "..."` — so it need not be present.
+pub fn is_serde_optional(attrs: &[Attribute]) -> bool {
+    serde_nested_any(attrs, |meta| match meta {
+        syn::Meta::Path(path) => path.is_ident("default"),
+        syn::Meta::NameValue(nv) => nv.path.is_ident("default") || nv.path.is_ident("skip_serializing_if"),
+        _ => false,
+    })
+}
+
 /// Parse serde rename_all attribute from container attributes
 pub fn parse_serde_rename_all(attrs: &[Attribute]) -> Option<RenameAll> {
     for attr in attrs {
