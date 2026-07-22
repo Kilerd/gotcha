@@ -7,7 +7,7 @@ license = "MIT"
 repository = "https://github.com/Kilerd/gotcha/"
 
 [lib]
-doctest = false
+doctest = true
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [features]
@@ -59,3 +59,5 @@ assert-json-diff = "2"
 # Non-optional so trybuild-generated test crates (which derive Schematic and thus
 # emit `::gotcha_core::` paths) have gotcha_core in their extern prelude.
 gotcha_core = { version = "0.3", path = "../gotcha_core" }
+# So `#[tokio::main]` doc examples compile (the lib's own tokio dep is minimal).
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

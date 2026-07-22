@@ -13,21 +13,22 @@
 //! ## Examples
 //!
 //! ```rust,no_run
-//! use gotcha::{GotchaContext, TaskScheduler};
+//! use gotcha::TaskScheduler;
 //! use std::time::Duration;
 //!
-//! // Create a task scheduler
-//! let scheduler = TaskScheduler::new(context);
+//! # #[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
+//! # struct Config {}
+//! fn setup(scheduler: &TaskScheduler<(), Config>) {
+//!     // Schedule a cron task (the expression is a `String`)
+//!     scheduler.cron("daily-cleanup", "0 0 * * *".to_string(), |_ctx| async move {
+//!         // Task implementation
+//!     });
 //!
-//! // Schedule a cron task
-//! scheduler.cron("daily-cleanup", "0 0 * * *", |ctx| async move {
-//!     // Task implementation
-//! });
-//!
-//! // Schedule an interval task
-//! scheduler.interval("heartbeat", Duration::from_secs(60), |ctx| async move {
-//!     // Task implementation  
-//! });
+//!     // Schedule an interval task
+//!     scheduler.interval("heartbeat", Duration::from_secs(60), |_ctx| async move {
+//!         // Task implementation
+//!     });
+//! }
 //! ```
 //!
 //! Tasks have access to the application context and can be used for:

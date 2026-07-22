@@ -50,7 +50,7 @@ struct User {
 ### Advanced Trait API (For complex applications)
 
 ```rust
-use gotcha::{async_trait, ConfigWrapper, GotchaApp, GotchaContext, GotchaRouter, State};
+use gotcha::{ConfigWrapper, GotchaApp, GotchaContext, GotchaResult, GotchaRouter, State};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize, Serialize, Clone, Default)]
@@ -61,7 +61,6 @@ pub struct Config {
 
 pub struct App {}
 
-#[async_trait]
 impl GotchaApp for App {
     type State = AppState;
     type Config = Config;
@@ -73,8 +72,7 @@ impl GotchaApp for App {
             .get("/users/:id", get_user)
     }
 
-    async fn state(&self, config: &ConfigWrapper<Self::Config>) 
-        -> Result<Self::State, Box<dyn std::error::Error>> {
+    async fn state(&self, config: &ConfigWrapper<Self::Config>) -> GotchaResult<Self::State> {
         // Initialize database connections, etc.
         Ok(AppState::new(&config.database_url).await?)
     }
@@ -97,7 +95,7 @@ Add Gotcha to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-gotcha = "0.2"
+gotcha = "0.3"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 serde = { version = "1", features = ["derive"] }
 ```
@@ -108,7 +106,7 @@ Enable additional features as needed:
 
 ```toml
 [dependencies]
-gotcha = { version = "0.2", features = ["openapi", "prometheus", "cors", "static_files", "task", "message"] }
+gotcha = { version = "0.3", features = ["openapi", "prometheus", "cors", "static_files", "task", "message"] }
 ```
 
 Available features:
@@ -170,23 +168,22 @@ Configuration supports:
 ### Task Scheduling
 
 ```rust
-use gotcha::{GotchaApp, task::TaskScheduler};
+use gotcha::{GotchaApp, GotchaResult, TaskScheduler};
+use std::time::Duration;
 
-#[async_trait]
 impl GotchaApp for App {
     // ... other implementations
 
-    async fn tasks(&self) -> Vec<TaskScheduler> {
-        vec![
-            TaskScheduler::new("cleanup", "0 2 * * *", || async {
-                // Daily cleanup at 2 AM
-                println!("Running cleanup task");
-            }),
-            TaskScheduler::interval("heartbeat", Duration::from_secs(30), || async {
-                // Every 30 seconds
-                println!("Heartbeat");
-            }),
-        ]
+    async fn tasks(&self, scheduler: &mut TaskScheduler<Self::State, Self::Config>) -> GotchaResult<()> {
+        // Daily cleanup at 2 AM (cron fields: sec min hour day month weekday)
+        scheduler.cron("cleanup", "0 0 2 * * *".to_string(), |_ctx| async {
+            println!("Running cleanup task");
+        });
+        // Every 30 seconds
+        scheduler.interval("heartbeat", Duration::from_secs(30), |_ctx| async {
+            println!("Heartbeat");
+        });
+        Ok(())
     }
 }
 ```

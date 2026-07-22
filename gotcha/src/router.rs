@@ -72,7 +72,9 @@ impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
     /// # Examples
     ///
     /// ```rust,no_run
-    /// use gotcha::{GotchaRouter, Responder};
+    /// use gotcha::GotchaRouter;
+    /// use gotcha::axum::routing::MethodFilter;
+    /// # use gotcha::Responder;
     ///
     /// async fn hello_world() -> impl Responder {
     ///     "Hello World!"
@@ -173,10 +175,10 @@ impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
     /// # Examples
     ///
     /// ```rust,no_run
-    /// use gotcha::{GotchaRouter};
+    /// use gotcha::GotchaRouter;
     ///
     /// let router: GotchaRouter<()> = GotchaRouter::default()
-    ///     .layer(MyLayer::default());
+    ///     .layer(gotcha::axum::Extension(0u32));
     /// ```
     pub fn layer<L>(self, layer: L) -> Self
     where

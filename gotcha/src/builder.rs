@@ -105,20 +105,15 @@ impl Gotcha {
     /// use gotcha::prelude::*;
     /// use serde::{Deserialize, Serialize};
     ///
+    /// #[state]
     /// #[derive(Clone, Default)]
-    /// struct AppState {
-    ///     // your state fields
-    /// }
+    /// struct AppState {}
     ///
     /// #[derive(Clone, Default, Serialize, Deserialize)]
-    /// struct AppConfig {
-    ///     // your config fields
-    /// }
+    /// struct AppConfig {}
     ///
     /// let app = Gotcha::with_types::<AppState, AppConfig>()
-    ///     .get("/", |state: State<AppState>| async move {
-    ///         "Hello with custom state"
-    ///     });
+    ///     .get("/", |State(_): State<AppState>| async move { "Hello with custom state" });
     /// ```
     pub fn with_types<S, C>() -> Gotcha<S, C>
     where
@@ -143,6 +138,7 @@ impl Gotcha {
     /// ```no_run
     /// use gotcha::prelude::*;
     ///
+    /// #[state]
     /// #[derive(Clone, Default)]
     /// struct AppState {
     ///     counter: std::sync::Arc<std::sync::atomic::AtomicU64>,
@@ -150,9 +146,7 @@ impl Gotcha {
     ///
     /// let app = Gotcha::with_state::<AppState>()
     ///     .state(AppState::default())
-    ///     .get("/", |state: State<AppState>| async move {
-    ///         "Hello with custom state"
-    ///     });
+    ///     .get("/", |State(_): State<AppState>| async move { "Hello with custom state" });
     /// ```
     pub fn with_state<S>() -> Gotcha<S, EmptyConfig>
     where
@@ -230,14 +224,11 @@ where
     ///
     /// # Example
     /// ```no_run
+    /// # fn demo() -> gotcha::GotchaResult<()> {
     /// use gotcha::prelude::*;
     ///
-    /// let app = Gotcha::new()
-    ///     .build_config(|builder| {
-    ///         builder
-    ///             .file_optional("config.toml")
-    ///             .env("APP")
-    ///     })?;
+    /// let _app = Gotcha::new().build_config(|builder| builder.file_optional("config.toml").env("APP"))?;
+    /// # Ok(()) }
     /// ```
     pub fn build_config<F>(mut self, builder_fn: F) -> GotchaResult<Self>
     where
@@ -261,7 +252,7 @@ where
     /// use gotcha::prelude::*;
     ///
     /// let app = Gotcha::new()
-    ///     .with_default_config()?;
+    ///     .with_default_config();
     /// ```
     pub fn with_default_config(self) -> Self {
         self.with_default_files().with_default_env()
@@ -533,6 +524,9 @@ where
     /// # Example
     /// ```no_run
     /// use gotcha::prelude::*;
+    /// # async fn home_handler() -> impl Responder { "" }
+    /// # async fn about_handler() -> impl Responder { "" }
+    /// # async fn create_user() -> impl Responder { "" }
     ///
     /// let app = Gotcha::new()
     ///     .routes(|router| {
@@ -749,7 +743,9 @@ impl Gotcha<EmptyState, EmptyConfig> {
     /// #[tokio::main]
     /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
     ///     Gotcha::quick_start()
+    ///         .await?
     ///         .get("/", || async { "Hello World" })
+    ///         .run()
     ///         .await?;
     ///     Ok(())
     /// }
