@@ -43,7 +43,10 @@ use crate::Responder;
 
 pub mod schematic;
 
-static PATH_VARIABLE_PATTERN: &str = r"\:[a-z]+(?:_[a-z]+)*";
+// Match `:name` path parameters up to the next `/`, mirroring axum (and
+// `ParameterProvider`). The previous `[a-z_]`-only pattern skipped `:userId`,
+// `:id2`, `:ID`, leaving them un-templated in the OpenAPI paths.
+static PATH_VARIABLE_PATTERN: &str = r":[^/]+";
 
 pub(crate) async fn openapi_html() -> impl Responder {
     Html(include_str!("../../statics/redoc.html"))
@@ -176,5 +179,8 @@ mod tests {
         assert_eq!(replace_path_variable("/users".to_string()), "/users");
         assert_eq!(replace_path_variable("/users/:id".to_string()), "/users/{id}");
         assert_eq!(replace_path_variable("/users/:id/:name".to_string()), "/users/{id}/{name}");
+        // camelCase, digits and uppercase are now templated too (previously skipped)
+        assert_eq!(replace_path_variable("/users/:userId".to_string()), "/users/{userId}");
+        assert_eq!(replace_path_variable("/items/:id2/:ID".to_string()), "/items/{id2}/{ID}");
     }
 }
