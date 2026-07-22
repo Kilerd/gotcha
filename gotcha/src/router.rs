@@ -204,6 +204,28 @@ impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
             router: self.router.fallback(handler),
         }
     }
+
+    /// Finalize this router into a plain `axum::Router`, injecting `state`.
+    ///
+    /// When the `openapi` feature is enabled, this also mounts the generated
+    /// spec at `/openapi.json` and the Redoc / Scalar UIs at `/redoc` and
+    /// `/scalar`. This is the single assembly path shared by both the
+    /// [`GotchaApp`](crate::GotchaApp) trait and the [`Gotcha`](crate::Gotcha)
+    /// builder.
+    pub(crate) fn into_axum_router(self, state: State) -> Router {
+        cfg_if::cfg_if! {
+            if #[cfg(feature = "openapi")] {
+                let openapi_spec = crate::openapi::generate_openapi(self.operations);
+                self.router
+                    .with_state(state)
+                    .route("/openapi.json", axum::routing::get(move || async move { axum::Json(openapi_spec.clone()) }))
+                    .route("/redoc", axum::routing::get(crate::openapi::openapi_html))
+                    .route("/scalar", axum::routing::get(crate::openapi::scalar_html))
+            } else {
+                self.router.with_state(state)
+            }
+        }
+    }
 }
 
 #[doc(hidden)]

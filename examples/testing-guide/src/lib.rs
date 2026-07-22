@@ -229,7 +229,7 @@ impl GotchaApp for App {
     type State = AppState;
     type Config = AppConfig;
 
-    async fn state(&self, _config: &ConfigWrapper<Self::Config>) -> Result<Self::State, Box<dyn std::error::Error>> {
+    async fn state(&self, _config: &ConfigWrapper<Self::Config>) -> Result<Self::State, gotcha::GotchaError> {
         Ok(AppState::default())
     }
 

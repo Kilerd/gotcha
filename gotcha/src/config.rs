@@ -164,13 +164,16 @@ impl Config {
 pub struct GotchaConfigLoader;
 
 impl GotchaConfigLoader {
-    pub fn load<T: for<'de> Deserialize<'de>>(_profile: Option<String>) -> T {
+    /// Load configuration from `configurations/application.toml` + the `APP`
+    /// environment prefix. Returns an error instead of panicking on failure.
+    ///
+    /// NOTE: `_profile` is not yet honored here — see the config-hardening issue.
+    pub fn load<T: for<'de> Deserialize<'de>>(_profile: Option<String>) -> ConfigResult<T> {
         Config::builder()
             .file_optional("configurations/application.toml")
             .env("APP")
             .enable_vars()
             .build()
-            .expect("Failed to load configuration")
     }
 }
 
