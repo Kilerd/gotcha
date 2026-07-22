@@ -14,11 +14,12 @@
 //! ## Example
 //!
 //! ```rust,no_run
-//! use gotcha::{GotchaRouter, Operable};
+//! use gotcha::{api, GotchaRouter};
 //!
-//! #[openapi(group = "Users")]
-//! async fn get_user() -> impl Responder {
-//!     // Handler implementation
+//! /// Get a user by id
+//! #[api(id = "get_user", group = "users")]
+//! async fn get_user() -> String {
+//!     "user".to_string()
 //! }
 //!
 //! fn routes(router: GotchaRouter) -> GotchaRouter {
@@ -26,8 +27,8 @@
 //! }
 //! ```
 //!
-//! The OpenAPI documentation will be automatically generated and served at `/docs`
-//! and `/docs/scalar` endpoints when the feature is enabled.
+//! The generated spec is served at `/openapi.json`, with the Redoc UI at `/redoc`
+//! and the Scalar UI at `/scalar` when the feature is enabled.
 
 use std::collections::{BTreeMap, HashMap};
 
