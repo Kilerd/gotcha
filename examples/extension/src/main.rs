@@ -79,7 +79,7 @@ impl GotchaApp for App {
     }
 
     #[allow(clippy::manual_async_fn)]
-    fn state(&self, _config: &ConfigWrapper<Self::Config>) -> impl std::future::Future<Output = Result<Self::State, Box<dyn std::error::Error>>> + Send {
+    fn state(&self, _config: &ConfigWrapper<Self::Config>) -> impl std::future::Future<Output = Result<Self::State, gotcha::GotchaError>> + Send {
         async { Ok(()) }
     }
 }

@@ -26,14 +26,19 @@ use std::str::FromStr;
 use axum::extract::Request;
 use axum::handler::Handler;
 use axum::routing::MethodRouter;
-use axum::Router;
 use serde::{Deserialize, Serialize};
 use tower_layer::Layer;
 use tower_service::Service;
 
 use crate::config::{BasicConfig, Config, ConfigBuilder, ConfigState, ConfigWrapper, GotchaConfigLoader};
+use crate::error::{GotchaError, GotchaResult};
 use crate::router::{GotchaRouter, Responder};
 use crate::GotchaContext;
+
+/// A one-shot closure that registers background tasks on the scheduler when the
+/// server starts.
+#[cfg(feature = "task")]
+type TaskRegistrar<S, C> = Box<dyn FnOnce(&mut crate::TaskScheduler<S, C>) + Send>;
 
 /// Default empty configuration for simple applications
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -55,6 +60,8 @@ where
     state: Option<S>,
     config: Option<ConfigWrapper<C>>,
     config_builder: Option<ConfigState>,
+    #[cfg(feature = "task")]
+    tasks: Vec<TaskRegistrar<S, C>>,
 }
 
 impl Default for Gotcha<EmptyState, EmptyConfig> {
@@ -81,6 +88,8 @@ impl Gotcha<EmptyState, EmptyConfig> {
             state: None,
             config: None,
             config_builder: None,
+            #[cfg(feature = "task")]
+            tasks: Vec::new(),
         }
     }
 }
@@ -123,6 +132,8 @@ impl Gotcha {
             state: None,
             config: None,
             config_builder: None,
+            #[cfg(feature = "task")]
+            tasks: Vec::new(),
         }
     }
 
@@ -154,6 +165,8 @@ impl Gotcha {
             state: None,
             config: None,
             config_builder: None,
+            #[cfg(feature = "task")]
+            tasks: Vec::new(),
         }
     }
 
@@ -187,6 +200,8 @@ impl Gotcha {
             state: None,
             config: None,
             config_builder: None,
+            #[cfg(feature = "task")]
+            tasks: Vec::new(),
         }
     }
 }
@@ -224,7 +239,7 @@ where
     ///             .env("APP")
     ///     })?;
     /// ```
-    pub fn build_config<F>(mut self, builder_fn: F) -> Result<Self, crate::config::ConfigError>
+    pub fn build_config<F>(mut self, builder_fn: F) -> GotchaResult<Self>
     where
         F: FnOnce(ConfigBuilder) -> ConfigBuilder,
     {
@@ -477,6 +492,36 @@ where
         self
     }
 
+    /// Add a HEAD route
+    pub fn head<H, T>(mut self, path: &str, handler: H) -> Self
+    where
+        H: Handler<T, GotchaContext<S, C>>,
+        T: 'static,
+    {
+        self.router = self.router.head(path, handler);
+        self
+    }
+
+    /// Add an OPTIONS route
+    pub fn options<H, T>(mut self, path: &str, handler: H) -> Self
+    where
+        H: Handler<T, GotchaContext<S, C>>,
+        T: 'static,
+    {
+        self.router = self.router.options(path, handler);
+        self
+    }
+
+    /// Add a TRACE route
+    pub fn trace<H, T>(mut self, path: &str, handler: H) -> Self
+    where
+        H: Handler<T, GotchaContext<S, C>>,
+        T: 'static,
+    {
+        self.router = self.router.trace(path, handler);
+        self
+    }
+
     /// Add a route with custom method
     pub fn route(mut self, path: &str, method_router: MethodRouter<GotchaContext<S, C>>) -> Self {
         self.router = self.router.route(path, method_router);
@@ -530,6 +575,42 @@ where
         self
     }
 
+    /// Set a fallback handler for requests that don't match any route
+    pub fn fallback<H, T>(mut self, handler: H) -> Self
+    where
+        H: Handler<T, GotchaContext<S, C>>,
+        T: 'static,
+    {
+        self.router = self.router.fallback(handler);
+        self
+    }
+
+    /// Register background tasks (requires the `task` feature).
+    ///
+    /// The closure receives a [`TaskScheduler`](crate::TaskScheduler) when the
+    /// server starts, on which you can register `cron` / `interval` jobs. This
+    /// brings the builder to parity with `GotchaApp::tasks`.
+    ///
+    /// # Example
+    /// ```no_run
+    /// use gotcha::prelude::*;
+    /// use std::time::Duration;
+    ///
+    /// let app = Gotcha::new().tasks(|scheduler| {
+    ///     scheduler.interval("heartbeat", Duration::from_secs(60), |_ctx| async move {
+    ///         tracing::info!("tick");
+    ///     });
+    /// });
+    /// ```
+    #[cfg(feature = "task")]
+    pub fn tasks<F>(mut self, register: F) -> Self
+    where
+        F: FnOnce(&mut crate::TaskScheduler<S, C>) + Send + 'static,
+    {
+        self.tasks.push(Box::new(register));
+        self
+    }
+
     /// Add CORS support (requires "cors" feature)
     #[cfg(feature = "cors")]
     pub fn with_cors(self) -> Self {
@@ -559,45 +640,60 @@ where
     ///     Ok(())
     /// }
     /// ```
-    pub async fn listen<A>(self, addr: A) -> Result<(), Box<dyn std::error::Error>>
+    pub async fn listen<A>(self, addr: A) -> GotchaResult<()>
     where
         A: AsRef<str>,
     {
         let addr_str = addr.as_ref();
-        let socket_addr: SocketAddr = addr_str.parse().map_err(|_| format!("Invalid address format: {}", addr_str))?;
-
+        let socket_addr: SocketAddr = addr_str.parse().map_err(|_| GotchaError::InvalidAddress(addr_str.to_string()))?;
         self.listen_on(socket_addr).await
     }
 
     /// Start the server on a specific socket address
-    pub async fn listen_on(self, addr: SocketAddr) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn listen_on(self, addr: SocketAddr) -> GotchaResult<()> {
         tracing::info!("🚀 Starting Gotcha server on {}", addr);
 
         let context = self.build_context().await?;
-        let app_router = self.build_app_router(context).await?;
 
-        let listener = tokio::net::TcpListener::bind(addr).await?;
+        #[cfg(feature = "task")]
+        {
+            let tasks = self.tasks;
+            if !tasks.is_empty() {
+                let mut scheduler = crate::TaskScheduler::new(context.clone());
+                for register in tasks {
+                    register(&mut scheduler);
+                }
+            }
+        }
+
+        let app_router = self.router.into_axum_router(context);
+
+        let listener = tokio::net::TcpListener::bind(addr).await.map_err(|source| GotchaError::Bind {
+            addr: addr.to_string(),
+            source,
+        })?;
         tracing::info!("✅ Server listening on http://{}", addr);
 
-        axum::serve(listener, app_router).await?;
+        axum::serve(listener, app_router).await.map_err(GotchaError::Io)?;
         Ok(())
     }
 
     /// Start the server using the configured host and port
-    pub async fn run(self) -> Result<(), Box<dyn std::error::Error>> {
-        let host = self.host.clone();
-        let port = self.port;
-        let addr = SocketAddrV4::new(Ipv4Addr::from_str(&host)?, port);
+    pub async fn run(self) -> GotchaResult<()> {
+        let ip = Ipv4Addr::from_str(&self.host).map_err(|_| GotchaError::InvalidAddress(self.host.clone()))?;
+        let addr = SocketAddrV4::new(ip, self.port);
         self.listen_on(SocketAddr::V4(addr)).await
     }
 
-    /// Build the application context
-    async fn build_context(&self) -> Result<GotchaContext<S, C>, Box<dyn std::error::Error>> {
-        // Load or create configuration
+    /// Build the application context (loads configuration and resolves state).
+    ///
+    /// On configuration failure this logs a warning and falls back to defaults,
+    /// keeping the builder lenient. Use the trait API for strict config loading.
+    async fn build_context(&self) -> GotchaResult<GotchaContext<S, C>> {
         let config = match (&self.config, &self.config_builder) {
-            // If explicit config is set, use it
+            // Explicit config wins
             (Some(config), _) => config.clone(),
-            // If we have accumulated configuration sources, build them
+            // Accumulated configuration sources
             (None, Some(state)) => {
                 let builder = ConfigBuilder::from_state(state.clone());
                 match builder.build::<ConfigWrapper<C>>() {
@@ -606,8 +702,7 @@ where
                         config
                     }
                     Err(e) => {
-                        tracing::warn!("Failed to load accumulated configuration: {}, using defaults", e);
-                        tracing::info!("💡 Check configuration files and environment variables");
+                        tracing::warn!("Failed to load accumulated configuration: {e}, using defaults");
                         ConfigWrapper {
                             basic: BasicConfig {
                                 host: self.host.clone(),
@@ -618,61 +713,28 @@ where
                     }
                 }
             }
-            // No explicit config or builder, try legacy loading then fall back to defaults
-            (None, None) => {
-                match std::panic::catch_unwind(|| GotchaConfigLoader::load::<ConfigWrapper<C>>(std::env::var("GOTCHA_ACTIVE_PROFILE").ok())) {
-                    Ok(config) => config,
-                    Err(_) => {
-                        // If loading fails, use default
-                        tracing::warn!("Failed to load configuration, using defaults");
-                        ConfigWrapper {
-                            basic: BasicConfig {
-                                host: self.host.clone(),
-                                port: self.port,
-                            },
-                            application: C::default(),
-                        }
+            // Default loading, falling back to defaults on failure
+            (None, None) => match GotchaConfigLoader::load::<ConfigWrapper<C>>(std::env::var("GOTCHA_ACTIVE_PROFILE").ok()) {
+                Ok(config) => config,
+                Err(e) => {
+                    tracing::warn!("Failed to load configuration: {e}, using defaults");
+                    ConfigWrapper {
+                        basic: BasicConfig {
+                            host: self.host.clone(),
+                            port: self.port,
+                        },
+                        application: C::default(),
                     }
                 }
-            }
+            },
         };
 
-        // Create or use provided state
         let state = match &self.state {
             Some(state) => state.clone(),
             None => S::default(),
         };
 
         Ok(GotchaContext { config, state })
-    }
-
-    /// Build the final Axum router
-    async fn build_app_router(self, context: GotchaContext<S, C>) -> Result<Router, Box<dyn std::error::Error>> {
-        let GotchaRouter {
-            #[cfg(feature = "openapi")]
-            operations,
-            router: raw_router,
-        } = self.router;
-
-        #[cfg(feature = "openapi")]
-        let openapi_spec = crate::openapi::generate_openapi(operations);
-
-        cfg_if::cfg_if! {
-            if #[cfg(feature = "openapi")] {
-                use axum::Json;
-                let router = raw_router
-                    .with_state(context.clone())
-                    .route("/openapi.json", axum::routing::get(move || async move {
-                        Json(openapi_spec.clone())
-                    }))
-                    .route("/redoc", axum::routing::get(crate::openapi::openapi_html))
-                    .route("/scalar", axum::routing::get(crate::openapi::scalar_html));
-            } else {
-                let router = raw_router.with_state(context.clone());
-            }
-        }
-
-        Ok(router)
     }
 }
 
@@ -692,7 +754,7 @@ impl Gotcha<EmptyState, EmptyConfig> {
     ///     Ok(())
     /// }
     /// ```
-    pub async fn quick_start() -> Result<Self, Box<dyn std::error::Error>> {
+    pub async fn quick_start() -> GotchaResult<Self> {
         tracing_subscriber::fmt::init();
         Ok(Self::new())
     }

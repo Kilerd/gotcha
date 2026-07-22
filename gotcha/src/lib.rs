@@ -36,7 +36,7 @@
 //! ## Advanced Example (Traditional Trait API)
 //!
 //! ```no_run
-//! use gotcha::{async_trait, ConfigWrapper, GotchaApp, GotchaContext, GotchaRouter, Responder, State};
+//! use gotcha::{ConfigWrapper, GotchaApp, GotchaContext, GotchaResult, GotchaRouter, Responder, State};
 //! use serde::{Deserialize, Serialize};
 //!
 //! pub async fn hello_world(_state: State<ConfigWrapper<Config>>) -> impl Responder {
@@ -50,7 +50,6 @@
 //!
 //! pub struct App {}
 //!
-//! #[async_trait]
 //! impl GotchaApp for App {
 //!     type State = ();
 //!     type Config = Config;
@@ -59,7 +58,7 @@
 //!         router.get("/", hello_world)
 //!     }
 //!
-//!     async fn state(&self, _config: &ConfigWrapper<Self::Config>) -> Result<Self::State, Box<dyn std::error::Error>> {
+//!     async fn state(&self, _config: &ConfigWrapper<Self::Config>) -> GotchaResult<Self::State> {
 //!         Ok(())
 //!     }
 //! }
@@ -98,6 +97,7 @@ pub use {axum, inventory, tracing};
 
 pub use crate::builder::{EmptyConfig, EmptyState, Gotcha};
 pub use crate::config::GotchaConfigLoader;
+pub use crate::error::{GotchaError, GotchaResult};
 
 #[cfg(feature = "message")]
 pub mod message;
@@ -167,14 +167,14 @@ pub trait GotchaApp: Sized + Send + Sync {
     type State: Clone + Send + Sync + 'static;
     type Config: Clone + Send + Sync + 'static + Serialize + for<'de> Deserialize<'de> + Default;
 
-    fn config(&self) -> impl std::future::Future<Output = Result<ConfigWrapper<Self::Config>, Box<dyn std::error::Error>>> + Send {
+    fn config(&self) -> impl std::future::Future<Output = GotchaResult<ConfigWrapper<Self::Config>>> + Send {
         async move {
-            let config = GotchaConfigLoader::load::<ConfigWrapper<Self::Config>>(std::env::var("GOTCHA_ACTIVE_PROFILE").ok());
+            let config = GotchaConfigLoader::load::<ConfigWrapper<Self::Config>>(std::env::var("GOTCHA_ACTIVE_PROFILE").ok())?;
             Ok(config)
         }
     }
 
-    fn logger(&self) -> Result<(), Box<dyn std::error::Error>> {
+    fn logger(&self) -> GotchaResult<()> {
         tracing_subscriber::registry()
             .with(fmt::layer())
             .with(
@@ -190,48 +190,22 @@ pub trait GotchaApp: Sized + Send + Sync {
 
     fn routes(&self, router: GotchaRouter<GotchaContext<Self::State, Self::Config>>) -> GotchaRouter<GotchaContext<Self::State, Self::Config>>;
 
-    fn state(&self, config: &ConfigWrapper<Self::Config>) -> impl std::future::Future<Output = Result<Self::State, Box<dyn std::error::Error>>> + Send;
+    fn state(&self, config: &ConfigWrapper<Self::Config>) -> impl std::future::Future<Output = GotchaResult<Self::State>> + Send;
 
     #[cfg(feature = "task")]
-    fn tasks(
-        &self, _task_scheduler: &mut TaskScheduler<Self::State, Self::Config>,
-    ) -> impl std::future::Future<Output = Result<(), Box<dyn std::error::Error>>> + Send {
+    fn tasks(&self, _task_scheduler: &mut TaskScheduler<Self::State, Self::Config>) -> impl std::future::Future<Output = GotchaResult<()>> + Send {
         async { Ok(()) }
     }
 
-    fn build_router(
-        &self, context: GotchaContext<Self::State, Self::Config>,
-    ) -> impl std::future::Future<Output = Result<axum::Router, Box<dyn std::error::Error>>> + Send {
+    fn build_router(&self, context: GotchaContext<Self::State, Self::Config>) -> impl std::future::Future<Output = GotchaResult<axum::Router>> + Send {
         async move {
             let router = GotchaRouter::<GotchaContext<Self::State, Self::Config>>::default();
             let router = self.routes(router);
-
-            let GotchaRouter {
-                #[cfg(feature = "openapi")]
-                operations,
-                router: raw_router,
-            } = router;
-
-            #[cfg(feature = "openapi")]
-            let openapi_spec = crate::openapi::generate_openapi(operations);
-
-            cfg_if::cfg_if! {
-                if #[cfg(feature = "openapi")] {
-                    let router = raw_router
-                    .with_state(context.clone())
-                    .route("/openapi.json", axum::routing::get(|| async move { Json(openapi_spec.clone()) }))
-                    .route("/redoc", axum::routing::get(openapi::openapi_html))
-                    .route("/scalar", axum::routing::get(openapi::scalar_html));
-                }else {
-                    let router = raw_router
-                    .with_state(context.clone());
-                }
-            }
-            Ok(router)
+            Ok(router.into_axum_router(context))
         }
     }
 
-    fn run(self) -> impl std::future::Future<Output = Result<(), Box<dyn std::error::Error>>> + Send {
+    fn run(self) -> impl std::future::Future<Output = GotchaResult<()>> + Send {
         async move {
             use std::net::{Ipv4Addr, SocketAddrV4};
             use std::str::FromStr;
@@ -251,9 +225,13 @@ pub trait GotchaApp: Sized + Send + Sync {
                 }
             }
 
-            let addr = SocketAddrV4::new(Ipv4Addr::from_str(&config.basic.host)?, config.basic.port);
-            let listener = tokio::net::TcpListener::bind(addr).await?;
-            axum::serve(listener, router).await?;
+            let ip = Ipv4Addr::from_str(&config.basic.host).map_err(|_| GotchaError::InvalidAddress(config.basic.host.clone()))?;
+            let addr = SocketAddrV4::new(ip, config.basic.port);
+            let listener = tokio::net::TcpListener::bind(addr).await.map_err(|source| GotchaError::Bind {
+                addr: addr.to_string(),
+                source,
+            })?;
+            axum::serve(listener, router).await.map_err(GotchaError::Io)?;
             Ok(())
         }
     }
