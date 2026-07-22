@@ -118,7 +118,6 @@ Available features:
 - `static_files` - Static file serving capabilities
 - `task` - Background task scheduling with cron support
 - `message` - Built-in message passing system
-- `cloudflare_worker` - Cloudflare Worker runtime support
 
 ## 📖 Documentation & Examples
 
@@ -240,9 +239,6 @@ cargo test --package gotcha
 
 # Test with specific features
 cargo test --package gotcha --features "openapi prometheus"
-
-# Test Cloudflare Worker features
-python3 test-feature-matrix.py echo-cf-worker
 ```
 
 ### Code Quality

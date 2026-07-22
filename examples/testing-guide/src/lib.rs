@@ -1,10 +1,7 @@
 // Business application code using Gotcha framework
 
-use gotcha::{
-    api, ConfigWrapper, GotchaApp, GotchaContext, GotchaRouter,
-    Json, Path, Query, State, Schematic
-};
 use axum::http::StatusCode;
+use gotcha::{api, ConfigWrapper, GotchaApp, GotchaContext, GotchaRouter, Json, Path, Query, Schematic, State};
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
 use uuid::Uuid;
@@ -19,14 +16,12 @@ pub struct AppState {
 impl Default for AppState {
     fn default() -> Self {
         Self {
-            users: Arc::new(Mutex::new(vec![
-                User {
-                    id: Uuid::new_v4(),
-                    name: "Alice".to_string(),
-                    email: "alice@example.com".to_string(),
-                    age: 30,
-                }
-            ])),
+            users: Arc::new(Mutex::new(vec![User {
+                id: Uuid::new_v4(),
+                name: "Alice".to_string(),
+                email: "alice@example.com".to_string(),
+                age: 30,
+            }])),
             counter: Arc::new(Mutex::new(0)),
         }
     }
@@ -88,10 +83,7 @@ pub async fn health_check(State(ctx): State<GotchaContext<AppState, AppConfig>>)
 }
 
 #[api(id = "list_users", group = "users")]
-pub async fn list_users(
-    State(ctx): State<GotchaContext<AppState, AppConfig>>,
-    Query(params): Query<QueryParams>,
-) -> Json<ApiResponse<Vec<User>>> {
+pub async fn list_users(State(ctx): State<GotchaContext<AppState, AppConfig>>, Query(params): Query<QueryParams>) -> Json<ApiResponse<Vec<User>>> {
     let users = ctx.state.users.lock().unwrap();
     let page = params.page.unwrap_or(1);
     let size = params.size.unwrap_or(10);
@@ -99,11 +91,7 @@ pub async fn list_users(
     let start = (page - 1) * size;
     let end = std::cmp::min(start + size, users.len());
 
-    let paginated_users = if start < users.len() {
-        users[start..end].to_vec()
-    } else {
-        vec![]
-    };
+    let paginated_users = if start < users.len() { users[start..end].to_vec() } else { vec![] };
 
     Json(ApiResponse {
         success: true,
@@ -114,8 +102,7 @@ pub async fn list_users(
 
 #[api(id = "get_user", group = "users")]
 pub async fn get_user(
-    State(ctx): State<GotchaContext<AppState, AppConfig>>,
-    Path(user_id): Path<Uuid>,
+    State(ctx): State<GotchaContext<AppState, AppConfig>>, Path(user_id): Path<Uuid>,
 ) -> Result<Json<ApiResponse<User>>, (StatusCode, Json<ErrorResponse>)> {
     let users = ctx.state.users.lock().unwrap();
 
@@ -136,10 +123,7 @@ pub async fn get_user(
 }
 
 #[api(id = "create_user", group = "users")]
-pub async fn create_user(
-    State(ctx): State<GotchaContext<AppState, AppConfig>>,
-    Json(payload): Json<CreateUserRequest>,
-) -> Json<ApiResponse<User>> {
+pub async fn create_user(State(ctx): State<GotchaContext<AppState, AppConfig>>, Json(payload): Json<CreateUserRequest>) -> Json<ApiResponse<User>> {
     let mut users = ctx.state.users.lock().unwrap();
     let mut counter = ctx.state.counter.lock().unwrap();
 
@@ -162,9 +146,7 @@ pub async fn create_user(
 
 #[api(id = "update_user", group = "users")]
 pub async fn update_user(
-    State(ctx): State<GotchaContext<AppState, AppConfig>>,
-    Path(user_id): Path<Uuid>,
-    Json(payload): Json<UpdateUserRequest>,
+    State(ctx): State<GotchaContext<AppState, AppConfig>>, Path(user_id): Path<Uuid>, Json(payload): Json<UpdateUserRequest>,
 ) -> Result<Json<ApiResponse<User>>, (StatusCode, Json<ErrorResponse>)> {
     let mut users = ctx.state.users.lock().unwrap();
 
@@ -198,8 +180,7 @@ pub async fn update_user(
 
 #[api(id = "delete_user", group = "users")]
 pub async fn delete_user(
-    State(ctx): State<GotchaContext<AppState, AppConfig>>,
-    Path(user_id): Path<Uuid>,
+    State(ctx): State<GotchaContext<AppState, AppConfig>>, Path(user_id): Path<Uuid>,
 ) -> Result<Json<ApiResponse<()>>, (StatusCode, Json<ErrorResponse>)> {
     let mut users = ctx.state.users.lock().unwrap();
 
@@ -252,8 +233,7 @@ impl GotchaApp for App {
         Ok(AppState::default())
     }
 
-    fn routes(&self, router: GotchaRouter<GotchaContext<Self::State, Self::Config>>)
-        -> GotchaRouter<GotchaContext<Self::State, Self::Config>> {
+    fn routes(&self, router: GotchaRouter<GotchaContext<Self::State, Self::Config>>) -> GotchaRouter<GotchaContext<Self::State, Self::Config>> {
         router
             .get("/health", health_check)
             .get("/users", list_users)
@@ -275,10 +255,7 @@ pub async fn create_test_app() -> axum::Router {
     };
 
     let state = app.state(&config).await.unwrap();
-    let context = GotchaContext {
-        state,
-        config,
-    };
+    let context = GotchaContext { state, config };
 
     app.build_router(context).await.unwrap()
 }

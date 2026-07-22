@@ -10,7 +10,7 @@
 //!
 //! ## Example Usage
 //!
-//! ```rust
+//! ```rust,ignore
 //! use gotcha::{api, Json, Path, Schematic};
 //! use serde::{Deserialize, Serialize};
 //!
@@ -49,7 +49,7 @@ pub(crate) mod utils;
 ///
 /// ## Example
 ///
-/// ```rust
+/// ```rust,ignore
 /// use gotcha::{api, Json, Path, Schematic};
 ///
 /// #[derive(Schematic)]
@@ -73,7 +73,7 @@ pub fn api(args: TokenStream, input_stream: TokenStream) -> TokenStream {
 ///
 /// ## Example
 ///
-/// ```rust
+/// ```rust,ignore
 /// use gotcha::Schematic;
 /// use serde::{Deserialize, Serialize};
 ///

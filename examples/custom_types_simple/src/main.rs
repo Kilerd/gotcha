@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 
 // Custom application state
 #[derive(Clone, Default)]
+#[allow(dead_code)]
 struct MyState {
     name: String,
 }
@@ -52,11 +53,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .state(MyState { name: "Example".to_string() })
         .get("/", || async { "Custom state only" });
 
-    let _app3 = Gotcha::with_config::<MyConfig>()
-        .get("/", || async { "Custom config only" });
+    let _app3 = Gotcha::with_config::<MyConfig>().get("/", || async { "Custom config only" });
 
-    let _app4 = Gotcha::new()
-        .get("/", || async { "Simple app" });
+    let _app4 = Gotcha::new().get("/", || async { "Simple app" });
 
     println!("✨ Benefits of the new API:");
     println!("  • No more confusing <(), ()> type parameters");

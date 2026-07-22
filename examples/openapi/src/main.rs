@@ -108,7 +108,7 @@ impl GotchaApp for App {
             .post("/test/no-skip/:key_id", test_skip::test_no_skip)
     }
 
-    async fn state<'a, 'b>(&'a self, _config: &'b ConfigWrapper<Self::Config>) -> Result<Self::State, Box<dyn std::error::Error>> {
+    async fn state(&self, _config: &ConfigWrapper<Self::Config>) -> Result<Self::State, Box<dyn std::error::Error>> {
         Ok(())
     }
 }

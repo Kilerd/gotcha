@@ -54,10 +54,7 @@ fn test_tagged_enum_custom_tag_with_rename() {
 
     // Check discriminator uses custom tag name
     let discriminator = json.get("discriminator").unwrap();
-    assert_eq!(
-        discriminator.get("propertyName").unwrap().as_str().unwrap(),
-        "event_type"
-    );
+    assert_eq!(discriminator.get("propertyName").unwrap().as_str().unwrap(), "event_type");
 
     // Check variant names are SCREAMING_SNAKE_CASE
     let one_of = json.get("oneOf").unwrap().as_array().unwrap();
@@ -118,15 +115,8 @@ pub struct Metadata {
 #[derive(Debug, Clone, Serialize, Deserialize, Schematic)]
 #[serde(tag = "type")]
 pub enum Document {
-    Draft {
-        content: String,
-        metadata: Metadata,
-    },
-    Published {
-        content: String,
-        url: String,
-        metadata: Metadata,
-    },
+    Draft { content: String, metadata: Metadata },
+    Published { content: String, url: String, metadata: Metadata },
 }
 
 #[test]

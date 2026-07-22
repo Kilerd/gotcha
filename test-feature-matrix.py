@@ -41,16 +41,11 @@ def generate_combinations(features):
 
 if __name__ == "__main__":
     features = load_features()
-    features = [feature for feature in features if feature not in ["cloudflare_worker", "http1"]]
+    features = [feature for feature in features if feature not in ["http1"]]
 
     if len(sys.argv) > 1 and sys.argv[1] == "echo":
         combinations = generate_combinations(features)
         print(f"features={json.dumps(combinations)}")
-    elif len(sys.argv) > 1 and sys.argv[1] == "echo-cf-worker":
-        features = ["cors", "openapi"]
-        combinations = generate_combinations(features)
-        cf_combinations = [f"cloudflare_worker {f}" for f in combinations]
-        print(f"features={json.dumps(cf_combinations)}")
     else:
         # Get combinations
         combinations = generate_combinations(features)

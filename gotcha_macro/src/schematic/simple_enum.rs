@@ -5,10 +5,7 @@ use crate::schematic::ParameterEnumVariantOpt;
 use crate::utils::{get_serde_name, parse_serde_rename, RenameAll};
 
 pub(crate) fn handler(
-    ident: syn::Ident,
-    doc: TokenStream2,
-    variants: Vec<ParameterEnumVariantOpt>,
-    rename_all: Option<RenameAll>,
+    ident: syn::Ident, doc: TokenStream2, variants: Vec<ParameterEnumVariantOpt>, rename_all: Option<RenameAll>,
 ) -> Result<TokenStream2, (Span, &'static str)> {
     let ident_string = ident.to_string();
 
@@ -37,9 +34,9 @@ pub(crate) fn handler(
         fn doc() -> Option<String> {
             #doc
         }
-        fn generate_schema() -> ::gotcha::EnhancedSchema {
-            let mut schema = ::gotcha::EnhancedSchema {
-                schema: ::gotcha::oas::Schema {
+        fn generate_schema() -> ::gotcha_core::EnhancedSchema {
+            let mut schema = ::gotcha_core::EnhancedSchema {
+                schema: ::gotcha_core::oas::Schema {
                     _type: Some(Self::type_().to_string()),
                     format:None,
                     nullable:None,
@@ -49,11 +46,11 @@ pub(crate) fn handler(
                 required: Self::required(),
             };
             let enum_variants:Vec<&'static str> = vec![ #(#variant_vec ,)* ];
-            schema.schema.extras.insert("enum".to_string(), ::gotcha::serde_json::to_value(enum_variants).unwrap());
+            schema.schema.extras.insert("enum".to_string(), ::gotcha_core::serde_json::to_value(enum_variants).unwrap());
             schema
         }
 
-        fn flatten_schema() -> Option<::gotcha::serde_json::Value> {
+        fn flatten_schema() -> Option<::gotcha_core::serde_json::Value> {
             // Simple enums return their schema for flattening
             Some(Self::generate_schema().schema.to_value())
         }

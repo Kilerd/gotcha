@@ -5,11 +5,7 @@ use crate::schematic::ParameterEnumVariantOpt;
 use crate::utils::{get_serde_name, parse_serde_rename, AttributesExt, RenameAll};
 
 pub(crate) fn handler(
-    ident: syn::Ident,
-    doc: TokenStream2,
-    variants: Vec<ParameterEnumVariantOpt>,
-    rename_all: Option<RenameAll>,
-    tag_name: String,
+    ident: syn::Ident, doc: TokenStream2, variants: Vec<ParameterEnumVariantOpt>, rename_all: Option<RenameAll>, tag_name: String,
 ) -> Result<TokenStream2, (Span, &'static str)> {
     let ident_string = ident.to_string();
     let tag_name_str = tag_name.as_str();
@@ -39,7 +35,7 @@ pub(crate) fn handler(
                         let field_rename = parse_serde_rename(&field.attrs);
                         let field_name = get_serde_name(&field_ident_str, field_rename.as_deref(), None);
                         quote! {
-                            let mut field_schema = <#field_ty as Schematic>::generate_schema();
+                            let mut field_schema = <#field_ty as ::gotcha_core::Schematic>::generate_schema();
                             field_schema.schema.description = #field_description;
                             properties.insert(#field_name.to_string(), field_schema.schema.to_value());
                             if field_schema.required {
@@ -49,7 +45,7 @@ pub(crate) fn handler(
                     } else {
                         // unnamed variant
                         quote! {
-                            let inner_fields = <#field_ty as Schematic>::fields();
+                            let inner_fields = <#field_ty as ::gotcha_core::Schematic>::fields();
                             for (field_name, field_schema) in inner_fields {
                                 properties.insert(field_name.to_string(), field_schema.schema.to_value());
                                 if field_schema.required {
@@ -63,22 +59,22 @@ pub(crate) fn handler(
 
             quote! {
                 let mut single_enum = ::std::collections::HashMap::new();
-                single_enum.insert("type".to_string(), ::gotcha::serde_json::to_value("string").expect("cannot convert type to value"));
-                single_enum.insert("enum".to_string(), ::gotcha::serde_json::to_value(vec![#varient_string.to_string()]).expect("cannot convert values to value"));
+                single_enum.insert("type".to_string(), ::gotcha_core::serde_json::to_value("string").expect("cannot convert type to value"));
+                single_enum.insert("enum".to_string(), ::gotcha_core::serde_json::to_value(vec![#varient_string.to_string()]).expect("cannot convert values to value"));
 
                 let mut properties = ::std::collections::HashMap::new();
                 let mut properties_required_fields = vec![];
-                properties.insert(#tag_name_str.to_string(), ::gotcha::serde_json::to_value(single_enum).expect("cannot convert type to value"));
+                properties.insert(#tag_name_str.to_string(), ::gotcha_core::serde_json::to_value(single_enum).expect("cannot convert type to value"));
                 properties_required_fields.push(#tag_name_str.to_string());
                 #(
                     #fields_stream
                 )*
 
                 let mut variant_object = ::std::collections::HashMap::new();
-                variant_object.insert("title".to_string(), ::gotcha::serde_json::to_value(#varient_string).expect("cannot convert title to value"));
-                variant_object.insert("type".to_string(), ::gotcha::serde_json::to_value("object").expect("cannot convert type to value"));
-                variant_object.insert("properties".to_string(), ::gotcha::serde_json::to_value(properties).expect("cannot convert root properties to value"));
-                variant_object.insert("required".to_string(), ::gotcha::serde_json::to_value(properties_required_fields).expect("cannot convert root required fields to value"));
+                variant_object.insert("title".to_string(), ::gotcha_core::serde_json::to_value(#varient_string).expect("cannot convert title to value"));
+                variant_object.insert("type".to_string(), ::gotcha_core::serde_json::to_value("object").expect("cannot convert type to value"));
+                variant_object.insert("properties".to_string(), ::gotcha_core::serde_json::to_value(properties).expect("cannot convert root properties to value"));
+                variant_object.insert("required".to_string(), ::gotcha_core::serde_json::to_value(properties_required_fields).expect("cannot convert root required fields to value"));
             }
         })
         .collect();
@@ -98,9 +94,9 @@ pub(crate) fn handler(
         fn doc() -> Option<String> {
             #doc
         }
-        fn generate_schema() -> ::gotcha::EnhancedSchema {
-            let mut schema = ::gotcha::EnhancedSchema {
-                schema: ::gotcha::oas::Schema {
+        fn generate_schema() -> ::gotcha_core::EnhancedSchema {
+            let mut schema = ::gotcha_core::EnhancedSchema {
+                schema: ::gotcha_core::oas::Schema {
                     _type: None,
                     format:None,
                     nullable:None,
@@ -116,25 +112,25 @@ pub(crate) fn handler(
                 branches.push(variant_object);
             )*
             let mut discriminator = ::std::collections::HashMap::new();
-            discriminator.insert("propertyName".to_string(), ::gotcha::serde_json::to_value(#tag_name_str).unwrap());
-            schema.schema.extras.insert("oneOf".to_string(), ::gotcha::serde_json::to_value(branches).unwrap());
-            schema.schema.extras.insert("discriminator".to_string(), ::gotcha::serde_json::to_value(discriminator).unwrap());
+            discriminator.insert("propertyName".to_string(), ::gotcha_core::serde_json::to_value(#tag_name_str).unwrap());
+            schema.schema.extras.insert("oneOf".to_string(), ::gotcha_core::serde_json::to_value(branches).unwrap());
+            schema.schema.extras.insert("discriminator".to_string(), ::gotcha_core::serde_json::to_value(discriminator).unwrap());
             schema
         }
 
-        fn flatten_schema() -> Option<::gotcha::serde_json::Value> {
+        fn flatten_schema() -> Option<::gotcha_core::serde_json::Value> {
             // Return the oneOf schema for flattening
-            let mut branches: Vec<::std::collections::HashMap<String, ::gotcha::serde_json::Value>> = vec![];
+            let mut branches: Vec<::std::collections::HashMap<String, ::gotcha_core::serde_json::Value>> = vec![];
             #(
                 #variants_codegen
                 branches.push(variant_object);
             )*
-            let mut discriminator: ::std::collections::HashMap<String, ::gotcha::serde_json::Value> = ::std::collections::HashMap::new();
-            discriminator.insert("propertyName".to_string(), ::gotcha::serde_json::to_value(#tag_name_str).unwrap());
-            let mut obj: ::std::collections::HashMap<String, ::gotcha::serde_json::Value> = ::std::collections::HashMap::new();
-            obj.insert("oneOf".to_string(), ::gotcha::serde_json::to_value(branches).unwrap());
-            obj.insert("discriminator".to_string(), ::gotcha::serde_json::to_value(discriminator).unwrap());
-            Some(::gotcha::serde_json::to_value(obj).unwrap())
+            let mut discriminator: ::std::collections::HashMap<String, ::gotcha_core::serde_json::Value> = ::std::collections::HashMap::new();
+            discriminator.insert("propertyName".to_string(), ::gotcha_core::serde_json::to_value(#tag_name_str).unwrap());
+            let mut obj: ::std::collections::HashMap<String, ::gotcha_core::serde_json::Value> = ::std::collections::HashMap::new();
+            obj.insert("oneOf".to_string(), ::gotcha_core::serde_json::to_value(branches).unwrap());
+            obj.insert("discriminator".to_string(), ::gotcha_core::serde_json::to_value(discriminator).unwrap());
+            Some(::gotcha_core::serde_json::to_value(obj).unwrap())
         }
     };
 

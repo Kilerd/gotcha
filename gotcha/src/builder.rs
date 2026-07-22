@@ -8,7 +8,7 @@
 //!
 //! ```no_run
 //! use gotcha::prelude::*;
-//! 
+//!
 //! #[tokio::main]
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {
 //!     Gotcha::new()
@@ -31,7 +31,7 @@ use serde::{Deserialize, Serialize};
 use tower_layer::Layer;
 use tower_service::Service;
 
-use crate::config::{ConfigWrapper, GotchaConfigLoader, Config, ConfigBuilder, ConfigState, BasicConfig};
+use crate::config::{BasicConfig, Config, ConfigBuilder, ConfigState, ConfigWrapper, GotchaConfigLoader};
 use crate::router::{GotchaRouter, Responder};
 use crate::GotchaContext;
 
@@ -196,7 +196,6 @@ where
     S: Clone + Send + Sync + 'static + Default,
     C: Clone + Send + Sync + 'static + Serialize + for<'de> Deserialize<'de> + Default,
 {
-
     /// Set the application state
     pub fn state(mut self, state: S) -> Self {
         self.state = Some(state);
@@ -217,7 +216,7 @@ where
     /// # Example
     /// ```no_run
     /// use gotcha::prelude::*;
-    /// 
+    ///
     /// let app = Gotcha::new()
     ///     .build_config(|builder| {
     ///         builder
@@ -245,7 +244,7 @@ where
     /// # Example
     /// ```no_run
     /// use gotcha::prelude::*;
-    /// 
+    ///
     /// let app = Gotcha::new()
     ///     .with_default_config()?;
     /// ```
@@ -261,7 +260,7 @@ where
     /// # Example
     /// ```no_run
     /// use gotcha::prelude::*;
-    /// 
+    ///
     /// let app = Gotcha::new()
     ///     .with_env_config("APP")
     ///     .with_env_config("GOTCHA"); // Both prefixes will be used
@@ -272,7 +271,7 @@ where
             env_prefixes: Vec::new(),
             enable_vars: true,
         });
-        
+
         state.env_prefixes.push(prefix.as_ref().to_string());
         self.config_builder = Some(state);
         self
@@ -286,7 +285,7 @@ where
     /// # Example
     /// ```no_run
     /// use gotcha::prelude::*;
-    /// 
+    ///
     /// let app = Gotcha::new()
     ///     .with_file_config("config.toml")
     ///     .with_file_config("local.toml"); // Both files will be loaded
@@ -297,7 +296,7 @@ where
             env_prefixes: Vec::new(),
             enable_vars: true,
         });
-        
+
         state.file_paths.push(path.as_ref().to_path_buf());
         self.config_builder = Some(state);
         self
@@ -311,7 +310,7 @@ where
     /// # Example
     /// ```no_run
     /// use gotcha::prelude::*;
-    /// 
+    ///
     /// let app = Gotcha::new()
     ///     .with_optional_config("config.toml")
     ///     .with_optional_config("local.toml"); // Both files will be loaded if they exist
@@ -322,7 +321,7 @@ where
             env_prefixes: Vec::new(),
             enable_vars: true,
         });
-        
+
         state.file_paths.push(path.as_ref().to_path_buf());
         self.config_builder = Some(state);
         self
@@ -335,22 +334,22 @@ where
     /// # Example
     /// ```no_run
     /// use gotcha::prelude::*;
-    /// 
+    ///
     /// let app = Gotcha::new()
     ///     .with_default_files();
     /// ```
     pub fn with_default_files(mut self) -> Self {
         let mut state = self.config_builder.take().unwrap_or_default();
-        
+
         // Add default file paths
         state.file_paths.push("configurations/application.toml".into());
-        
+
         // Add profile-specific file if profile is set
         if let Ok(profile) = std::env::var("GOTCHA_ACTIVE_PROFILE") {
             let profile_path = format!("configurations/application_{}.toml", profile);
             state.file_paths.push(profile_path.into());
         }
-        
+
         self.config_builder = Some(state);
         self
     }
@@ -362,13 +361,13 @@ where
     /// # Example
     /// ```no_run
     /// use gotcha::prelude::*;
-    /// 
+    ///
     /// let app = Gotcha::new()
     ///     .with_default_env();
     /// ```
     pub fn with_default_env(mut self) -> Self {
         let mut state = self.config_builder.take().unwrap_or_default();
-        
+
         state.env_prefixes.push("APP".to_string());
         self.config_builder = Some(state);
         self
@@ -381,14 +380,14 @@ where
     /// # Example
     /// ```no_run
     /// use gotcha::prelude::*;
-    /// 
+    ///
     /// let app = Gotcha::new()
     ///     .with_optional_config("config.toml")
     ///     .enable_variable_substitution();
     /// ```
     pub fn enable_variable_substitution(mut self) -> Self {
         let mut state = self.config_builder.take().unwrap_or_default();
-        
+
         state.enable_vars = true;
         self.config_builder = Some(state);
         self
@@ -399,7 +398,7 @@ where
     /// # Example
     /// ```no_run
     /// use gotcha::prelude::*;
-    /// 
+    ///
     /// let app = Gotcha::new()
     ///     .host("0.0.0.0")
     ///     .port(8080);
@@ -420,11 +419,11 @@ where
     /// # Example
     /// ```no_run
     /// use gotcha::prelude::*;
-    /// 
+    ///
     /// let app = Gotcha::new()
     ///     .get("/", || async { "Hello World" })
     ///     .get("/users/:id", get_user);
-    /// 
+    ///
     /// async fn get_user() -> impl Responder {
     ///     "User info"
     /// }
@@ -489,7 +488,7 @@ where
     /// # Example
     /// ```no_run
     /// use gotcha::prelude::*;
-    /// 
+    ///
     /// let app = Gotcha::new()
     ///     .routes(|router| {
     ///         router
@@ -550,7 +549,7 @@ where
     /// # Example
     /// ```no_run
     /// use gotcha::prelude::*;
-    /// 
+    ///
     /// #[tokio::main]
     /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
     ///     Gotcha::new()
@@ -565,22 +564,21 @@ where
         A: AsRef<str>,
     {
         let addr_str = addr.as_ref();
-        let socket_addr: SocketAddr = addr_str.parse()
-            .map_err(|_| format!("Invalid address format: {}", addr_str))?;
-        
+        let socket_addr: SocketAddr = addr_str.parse().map_err(|_| format!("Invalid address format: {}", addr_str))?;
+
         self.listen_on(socket_addr).await
     }
 
     /// Start the server on a specific socket address
     pub async fn listen_on(self, addr: SocketAddr) -> Result<(), Box<dyn std::error::Error>> {
         tracing::info!("🚀 Starting Gotcha server on {}", addr);
-        
+
         let context = self.build_context().await?;
         let app_router = self.build_app_router(context).await?;
-        
+
         let listener = tokio::net::TcpListener::bind(addr).await?;
         tracing::info!("✅ Server listening on http://{}", addr);
-        
+
         axum::serve(listener, app_router).await?;
         Ok(())
     }
@@ -589,10 +587,7 @@ where
     pub async fn run(self) -> Result<(), Box<dyn std::error::Error>> {
         let host = self.host.clone();
         let port = self.port;
-        let addr = SocketAddrV4::new(
-            Ipv4Addr::from_str(&host)?,
-            port
-        );
+        let addr = SocketAddrV4::new(Ipv4Addr::from_str(&host)?, port);
         self.listen_on(SocketAddr::V4(addr)).await
     }
 
@@ -614,7 +609,6 @@ where
                         tracing::warn!("Failed to load accumulated configuration: {}, using defaults", e);
                         tracing::info!("💡 Check configuration files and environment variables");
                         ConfigWrapper {
-                            #[cfg(not(feature = "cloudflare_worker"))]
                             basic: BasicConfig {
                                 host: self.host.clone(),
                                 port: self.port,
@@ -626,17 +620,12 @@ where
             }
             // No explicit config or builder, try legacy loading then fall back to defaults
             (None, None) => {
-                match std::panic::catch_unwind(|| {
-                    GotchaConfigLoader::load::<ConfigWrapper<C>>(
-                        std::env::var("GOTCHA_ACTIVE_PROFILE").ok()
-                    )
-                }) {
+                match std::panic::catch_unwind(|| GotchaConfigLoader::load::<ConfigWrapper<C>>(std::env::var("GOTCHA_ACTIVE_PROFILE").ok())) {
                     Ok(config) => config,
                     Err(_) => {
                         // If loading fails, use default
                         tracing::warn!("Failed to load configuration, using defaults");
                         ConfigWrapper {
-                            #[cfg(not(feature = "cloudflare_worker"))]
                             basic: BasicConfig {
                                 host: self.host.clone(),
                                 port: self.port,
@@ -658,10 +647,7 @@ where
     }
 
     /// Build the final Axum router
-    async fn build_app_router(
-        self, 
-        context: GotchaContext<S, C>
-    ) -> Result<Router, Box<dyn std::error::Error>> {
+    async fn build_app_router(self, context: GotchaContext<S, C>) -> Result<Router, Box<dyn std::error::Error>> {
         let GotchaRouter {
             #[cfg(feature = "openapi")]
             operations,
@@ -676,8 +662,8 @@ where
                 use axum::Json;
                 let router = raw_router
                     .with_state(context.clone())
-                    .route("/openapi.json", axum::routing::get(move || async move { 
-                        Json(openapi_spec.clone()) 
+                    .route("/openapi.json", axum::routing::get(move || async move {
+                        Json(openapi_spec.clone())
                     }))
                     .route("/redoc", axum::routing::get(crate::openapi::openapi_html))
                     .route("/scalar", axum::routing::get(crate::openapi::scalar_html));
@@ -697,8 +683,8 @@ impl Gotcha<EmptyState, EmptyConfig> {
     /// # Example
     /// ```no_run
     /// use gotcha::prelude::*;
-    /// 
-    /// #[tokio::main] 
+    ///
+    /// #[tokio::main]
     /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
     ///     Gotcha::quick_start()
     ///         .get("/", || async { "Hello World" })

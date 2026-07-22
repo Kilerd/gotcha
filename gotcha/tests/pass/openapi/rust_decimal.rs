@@ -1,5 +1,4 @@
-use gotcha::openapi::schematic::Schematic;
-use gotcha_macro::Schematic;
+use gotcha::Schematic;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 

@@ -26,9 +26,6 @@ cargo test --package gotcha --features "openapi prometheus cors"
 # Test feature combinations (comprehensive testing)
 python3 test-feature-matrix.py
 
-# Test Cloudflare Worker features specifically
-python3 test-feature-matrix.py echo-cf-worker
-
 # Build and run examples
 cargo run --package basic
 cargo run --package openapi
@@ -72,7 +69,6 @@ The framework uses Cargo features for modular functionality:
 - `static_files` - Static file serving capabilities
 - `task` - Background task scheduling with cron support
 - `message` - Built-in message passing system
-- `cloudflare_worker` - Cloudflare Worker runtime support
 
 ### Configuration System
 - Uses `mofa` crate for advanced configuration loading
@@ -103,14 +99,12 @@ Each example demonstrates specific features:
 - `configuration/` - Environment-based configuration
 - `task/` - Background task scheduling
 - `message/` - Message passing system
-- `cloudflare-worker/` - Cloudflare Worker deployment
 
 ## Development Guidelines
 
 ### Testing Strategy
 - Use `python3 test-feature-matrix.py` to test all feature combinations
 - Feature combinations are automatically generated and tested
-- Cloudflare Worker features require separate testing with `echo-cf-worker` option
 - Tests are located in `gotcha/tests/pass/` directory
 
 ### Configuration Management  
