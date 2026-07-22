@@ -88,7 +88,6 @@ pub use axum_macros::debug_handler;
 pub use config::ConfigWrapper;
 pub use either::Either;
 
-pub use gotcha_macro::*;
 pub use once_cell::sync::Lazy;
 pub use router::GotchaRouter;
 use serde::{Deserialize, Serialize};
@@ -103,7 +102,7 @@ pub use crate::config::GotchaConfigLoader;
 #[cfg(feature = "message")]
 pub mod message;
 #[cfg(feature = "openapi")]
-pub use crate::openapi::responsible::Responsible;
+pub use gotcha_core::Responsible;
 
 #[cfg(feature = "openapi")]
 pub use gotcha_macro::api;

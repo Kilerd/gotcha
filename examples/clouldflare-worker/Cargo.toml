@@ -10,7 +10,7 @@ crate-type = ["cdylib"]
 wasm-opt = false
 
 [dependencies]
-gotcha = {version="0.2", path = "../../gotcha", features = ["cloudflare_worker"]}
+gotcha = {version="0.3", path = "../../gotcha", features = ["cloudflare_worker"]}
 serde = {version="1", features=["derive"]}
 tokio = {version = "1", features = ["macros", 'rt']}
 worker = {version = "0.5.0", features = ["http"]}

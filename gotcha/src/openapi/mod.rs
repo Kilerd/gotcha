@@ -42,7 +42,6 @@ use regex::Regex;
 use crate::Responder;
 
 pub mod schematic;
-pub mod responsible;
 
 static PATH_VARIABLE_PATTERN: &str = r"\:[a-z]+(?:_[a-z]+)*";
 

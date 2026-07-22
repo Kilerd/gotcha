@@ -2,7 +2,7 @@
 name = "gotcha"
 description = "Enhanced web framework built on top of Axum with OpenAPI, metrics, and configuration management"
 edition = "2021"
-version = "0.2.2"
+version = "0.3.0"
 license = "MIT"
 repository = "https://github.com/Kilerd/gotcha/"
 
@@ -14,7 +14,7 @@ doctest = false
 default = ["http1"]
 http1 = ["axum/http1", "axum/tokio"]
 prometheus = ["dep:axum-prometheus"]
-openapi = ["dep:oas"]
+openapi = ["dep:oas", "dep:gotcha_core", "gotcha_core/axum"]
 cors = ["dep:tower-http"]
 static_files = ["dep:tower-http", "tower-http/fs"]
 task = ["dep:cron", "tokio/time"]
@@ -24,7 +24,8 @@ cloudflare_worker = ["dep:worker"]
 
 [dependencies]
 async-trait = "0.1.60"
-gotcha_macro = { version = "0.2", path = "../gotcha_macro" }
+gotcha_macro = { version = "0.3", path = "../gotcha_macro" }
+gotcha_core = { version = "0.3", path = "../gotcha_core", optional = true }
 serde = {version = "1", features = ["derive"]}
 tokio = {version = "1"}
 tracing = "0.1"
@@ -57,3 +58,6 @@ regex = "1.7"
 [dev-dependencies]
 trybuild = "1.0"
 assert-json-diff = "2"
+# Non-optional so trybuild-generated test crates (which derive Schematic and thus
+# emit `::gotcha_core::` paths) have gotcha_core in their extern prelude.
+gotcha_core = { version = "0.3", path = "../gotcha_core" }

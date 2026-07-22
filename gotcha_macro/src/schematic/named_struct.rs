@@ -22,11 +22,11 @@ pub(crate) fn handler(
         if has_serde_flatten(&field.attrs) {
             // Flatten field: merge fields from the inner type at runtime
             flatten_fields_stream.push(quote! {
-                result.extend(<#field_ty as Schematic>::fields());
+                result.extend(<#field_ty as ::gotcha_core::Schematic>::fields());
             });
             // Also collect flatten schemas for allOf generation
             flatten_schema_stream.push(quote! {
-                if let Some(flatten_val) = <#field_ty as Schematic>::flatten_schema() {
+                if let Some(flatten_val) = <#field_ty as ::gotcha_core::Schematic>::flatten_schema() {
                     flatten_schemas.push(flatten_val);
                 }
             });
@@ -44,7 +44,7 @@ pub(crate) fn handler(
                 (
                     #field_name,
                     {
-                        let mut field_schema = <#field_ty as Schematic>::generate_schema();
+                        let mut field_schema = <#field_ty as ::gotcha_core::Schematic>::generate_schema();
                         field_schema.schema.description = #field_description;
                         field_schema
                     }
@@ -60,7 +60,7 @@ pub(crate) fn handler(
         // flatten field returns a non-None flatten_schema (i.e., is an enum)
         quote! {
             // Collect flatten schemas from enum types
-            let mut flatten_schemas: Vec<::gotcha::serde_json::Value> = vec![];
+            let mut flatten_schemas: Vec<::gotcha_core::serde_json::Value> = vec![];
             #(
                 #flatten_schema_stream
             )*
@@ -80,22 +80,22 @@ pub(crate) fn handler(
             if flatten_schemas.is_empty() {
                 // No enum flatten fields, just use simple object schema
                 schema.schema._type = Some(Self::type_().to_string());
-                schema.schema.extras.insert("properties".to_string(), ::gotcha::serde_json::to_value(properties).unwrap());
-                schema.schema.extras.insert("required".to_string(), ::gotcha::serde_json::to_value(required_fields).unwrap());
+                schema.schema.extras.insert("properties".to_string(), ::gotcha_core::serde_json::to_value(properties).unwrap());
+                schema.schema.extras.insert("required".to_string(), ::gotcha_core::serde_json::to_value(required_fields).unwrap());
             } else {
                 // Has enum flatten fields, use allOf to combine
                 let mut base_schema = ::std::collections::HashMap::new();
-                base_schema.insert("type".to_string(), ::gotcha::serde_json::to_value("object").unwrap());
-                base_schema.insert("properties".to_string(), ::gotcha::serde_json::to_value(properties).unwrap());
-                base_schema.insert("required".to_string(), ::gotcha::serde_json::to_value(required_fields).unwrap());
+                base_schema.insert("type".to_string(), ::gotcha_core::serde_json::to_value("object").unwrap());
+                base_schema.insert("properties".to_string(), ::gotcha_core::serde_json::to_value(properties).unwrap());
+                base_schema.insert("required".to_string(), ::gotcha_core::serde_json::to_value(required_fields).unwrap());
 
-                let mut all_of: Vec<::gotcha::serde_json::Value> = vec![
-                    ::gotcha::serde_json::to_value(base_schema).unwrap()
+                let mut all_of: Vec<::gotcha_core::serde_json::Value> = vec![
+                    ::gotcha_core::serde_json::to_value(base_schema).unwrap()
                 ];
                 all_of.extend(flatten_schemas);
 
                 schema.schema._type = None;
-                schema.schema.extras.insert("allOf".to_string(), ::gotcha::serde_json::to_value(all_of).unwrap());
+                schema.schema.extras.insert("allOf".to_string(), ::gotcha_core::serde_json::to_value(all_of).unwrap());
             }
             schema
         }
@@ -112,8 +112,8 @@ pub(crate) fn handler(
                     required_fields.push(field_name.to_string());
                 }
             }
-            schema.schema.extras.insert("properties".to_string(), ::gotcha::serde_json::to_value(properties).unwrap());
-            schema.schema.extras.insert("required".to_string(), ::gotcha::serde_json::to_value(required_fields).unwrap());
+            schema.schema.extras.insert("properties".to_string(), ::gotcha_core::serde_json::to_value(properties).unwrap());
+            schema.schema.extras.insert("required".to_string(), ::gotcha_core::serde_json::to_value(required_fields).unwrap());
             schema
         }
     };
@@ -121,9 +121,9 @@ pub(crate) fn handler(
     // Generate flatten_schema implementation for structs
     let flatten_schema_impl = if has_flatten {
         quote! {
-            fn flatten_schema() -> Option<::gotcha::serde_json::Value> {
+            fn flatten_schema() -> Option<::gotcha_core::serde_json::Value> {
                 // Collect flatten schemas from inner types (for nested flatten)
-                let mut flatten_schemas: Vec<::gotcha::serde_json::Value> = vec![];
+                let mut flatten_schemas: Vec<::gotcha_core::serde_json::Value> = vec![];
                 #(
                     #flatten_schema_stream
                 )*
@@ -134,9 +134,9 @@ pub(crate) fn handler(
                     Some(flatten_schemas.remove(0))
                 } else {
                     // Multiple enum flatten schemas - combine with allOf
-                    let mut obj: ::std::collections::HashMap<String, ::gotcha::serde_json::Value> = ::std::collections::HashMap::new();
-                    obj.insert("allOf".to_string(), ::gotcha::serde_json::to_value(flatten_schemas).unwrap());
-                    Some(::gotcha::serde_json::to_value(obj).unwrap())
+                    let mut obj: ::std::collections::HashMap<String, ::gotcha_core::serde_json::Value> = ::std::collections::HashMap::new();
+                    obj.insert("allOf".to_string(), ::gotcha_core::serde_json::to_value(flatten_schemas).unwrap());
+                    Some(::gotcha_core::serde_json::to_value(obj).unwrap())
                 }
             }
         }
@@ -159,8 +159,8 @@ pub(crate) fn handler(
         fn doc() -> Option<String> {
             #doc
         }
-        fn fields() -> Vec<(&'static str, ::gotcha::EnhancedSchema)> {
-            let mut result: Vec<(&'static str, ::gotcha::EnhancedSchema)> = vec![
+        fn fields() -> Vec<(&'static str, ::gotcha_core::EnhancedSchema)> {
+            let mut result: Vec<(&'static str, ::gotcha_core::EnhancedSchema)> = vec![
                 #(
                     #normal_fields_stream ,
                 )*
@@ -173,9 +173,9 @@ pub(crate) fn handler(
 
         #flatten_schema_impl
 
-        fn generate_schema() -> ::gotcha::EnhancedSchema {
-            let mut schema = ::gotcha::EnhancedSchema {
-                schema: ::gotcha::oas::Schema {
+        fn generate_schema() -> ::gotcha_core::EnhancedSchema {
+            let mut schema = ::gotcha_core::EnhancedSchema {
+                schema: ::gotcha_core::oas::Schema {
                     _type: Some(Self::type_().to_string()),
                     format:None,
                     nullable:Self::nullable(),

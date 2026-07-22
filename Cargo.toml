@@ -3,11 +3,12 @@
 resolver = "2"
 members = [
     "gotcha",
+    "gotcha_core",
     "gotcha_macro",
     "examples/*"
 ]
 exclude = ["examples/clouldflare-worker"]
-default-members = ["gotcha", "gotcha_macro"]
+default-members = ["gotcha", "gotcha_core", "gotcha_macro"]
 
 [workspace.dependencies]
 cfg-if = "1"

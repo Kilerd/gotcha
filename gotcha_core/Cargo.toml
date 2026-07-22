@@ -1,0 +1,30 @@
+[package]
+name = "gotcha_core"
+description = "Lightweight schema core (Schematic trait + data-type impls) for the Gotcha web framework"
+edition = "2021"
+version = "0.3.0"
+license = "MIT"
+repository = "https://github.com/Kilerd/gotcha/"
+
+[lib]
+doctest = false
+
+[features]
+# Enables the axum-facing schema glue: `Responsible for Json<T>` and the whole
+# `ParameterProvider` family (impls for Path/Json/Query/State/Extension/Request/Multipart).
+# Off by default so a crate that only needs the Schematic schema layer stays free of
+# axum/regex/either. The `gotcha` crate turns this on.
+axum = ["dep:axum", "dep:regex", "dep:either"]
+
+[dependencies]
+gotcha_macro = { version = "0.3", path = "../gotcha_macro" }
+oas = "0.1"
+axum = { version = "0.7", default-features = false, features = ["json", "query", "multipart"], optional = true }
+regex = { version = "1", optional = true }
+either = { version = "1", optional = true }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+bigdecimal = "0.4"
+chrono = "0.4"
+uuid = { version = "1.10" }
+rust_decimal = "1.36"
