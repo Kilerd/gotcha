@@ -100,7 +100,7 @@ macro_rules! impl_primitive_type {
     };
 }
 
-impl_primitive_type! { i8, "i32", "integer"}
+impl_primitive_type! { i8, "i8", "integer"}
 impl_primitive_type! { i16, "i16", "integer"}
 impl_primitive_type! { i32, "i32", "integer"}
 impl_primitive_type! { i64, "i64", "integer"}
@@ -111,9 +111,9 @@ impl_primitive_type! { u32, "u32", "integer"}
 impl_primitive_type! { u64, "u64", "integer"}
 impl_primitive_type! { usize, "usize", "integer"}
 impl_primitive_type! { String, "string", "string"}
-impl_primitive_type! { bool, "string", "boolean"}
-impl_primitive_type! { f32, "string", "number"}
-impl_primitive_type! { f64, "string", "number"}
+impl_primitive_type! { bool, "bool", "boolean"}
+impl_primitive_type! { f32, "f32", "number"}
+impl_primitive_type! { f64, "f64", "number"}
 
 impl Schematic for () {
     fn name() -> &'static str {
@@ -269,7 +269,10 @@ impl<T: Schematic> Schematic for Vec<T> {
     }
 
     fn required() -> bool {
-        T::required()
+        // A `Vec<T>` field is always present (possibly as an empty array) unless
+        // it is wrapped in `Option`; its requiredness must not depend on whether
+        // the element type is required. Consistent with `HashSet`/`HashMap`.
+        true
     }
 
     fn type_() -> &'static str {
@@ -387,7 +390,7 @@ impl<K: ToString, V: Schematic> Schematic for HashMap<K, V> {
 
 impl Schematic for DateTime<Utc> {
     fn name() -> &'static str {
-        "string"
+        "datetime"
     }
 
     fn required() -> bool {
@@ -396,5 +399,37 @@ impl Schematic for DateTime<Utc> {
 
     fn type_() -> &'static str {
         "string"
+    }
+
+    fn format() -> Option<String> {
+        Some("date-time".to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn datetime_utc_has_date_time_format() {
+        let schema = <DateTime<Utc> as Schematic>::generate_schema();
+        assert_eq!(schema.schema._type.as_deref(), Some("string"));
+        assert_eq!(schema.schema.format.as_deref(), Some("date-time"));
+    }
+
+    #[test]
+    fn vec_field_is_required_regardless_of_element() {
+        // A bare Vec field is present (possibly empty), so it is required even
+        // when the element type is not (previously delegated to `T::required`).
+        assert!(<Vec<Option<u8>> as Schematic>::required());
+        assert!(<Vec<u8> as Schematic>::required());
+    }
+
+    #[test]
+    fn primitive_names_are_accurate() {
+        assert_eq!(<i8 as Schematic>::name(), "i8");
+        assert_eq!(<bool as Schematic>::name(), "bool");
+        assert_eq!(<f32 as Schematic>::name(), "f32");
+        assert_eq!(<f64 as Schematic>::name(), "f64");
     }
 }
