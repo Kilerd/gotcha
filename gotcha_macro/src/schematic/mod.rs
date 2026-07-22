@@ -7,6 +7,7 @@ use syn::{parse2, DeriveInput, GenericParam};
 pub mod adjacent_tagged_enum;
 pub mod external_tagged_enum;
 pub mod named_struct;
+pub mod newtype_struct;
 pub mod simple_enum;
 pub mod tagged_enum;
 pub mod untagged_enum;
@@ -172,7 +173,21 @@ pub(crate) fn handler(input: TokenStream2) -> Result<TokenStream2, (Span, &'stat
                 }
             }
         }
-        Data::Struct(fields) => named_struct::handler(ident.clone(), doc, fields, extra_field.rename_all)?,
+        Data::Struct(fields) => {
+            let is_tuple = matches!(fields.style, darling::ast::Style::Tuple);
+            let field_count = fields.fields.len();
+            if is_tuple && field_count == 1 {
+                // Newtype struct (e.g. `struct UserId(Uuid);`) — transparent to the inner type.
+                newtype_struct::handler(fields.fields)
+            } else if is_tuple {
+                return Err((
+                    ident.span(),
+                    "#[derive(Schematic)] does not support multi-field tuple structs; use a named struct",
+                ));
+            } else {
+                named_struct::handler(ident.clone(), doc, fields, extra_field.rename_all)?
+            }
+        }
     };
 
     let ret = quote! {
