@@ -54,6 +54,9 @@ pub struct ConfigState {
 pub struct ConfigBuilder {
     loader: ConfigLoader,
     state: ConfigState,
+    /// Required files (added via [`ConfigBuilder::file`]) that did not exist;
+    /// reported as an error at `build()` time.
+    missing_required: Vec<PathBuf>,
 }
 
 impl ConfigBuilder {
@@ -62,6 +65,7 @@ impl ConfigBuilder {
         Self {
             loader: ConfigLoader::new(),
             state: ConfigState::default(),
+            missing_required: Vec::new(),
         }
     }
 
@@ -72,12 +76,15 @@ impl ConfigBuilder {
         self
     }
 
-    /// Add required file source
+    /// Add a required file source. Unlike [`ConfigBuilder::file_optional`], a
+    /// missing file here causes `build()` to fail.
     pub fn file<P: AsRef<Path>>(mut self, path: P) -> Self {
         let path = path.as_ref().to_path_buf();
         self.state.file_paths.push(path.clone());
         if path.exists() {
             self.loader.add_source(FileSource::new(path));
+        } else {
+            self.missing_required.push(path);
         }
         self
     }
@@ -102,6 +109,12 @@ impl ConfigBuilder {
 
     /// Build configuration
     pub fn build<T: for<'de> Deserialize<'de>>(mut self) -> ConfigResult<T> {
+        if !self.missing_required.is_empty() {
+            return Err(ConfigError::Error(format!(
+                "required configuration file(s) not found: {:?}",
+                self.missing_required
+            )));
+        }
         if self.state.enable_vars {
             self.loader.enable_path_variable_processor();
             self.loader.enable_environment_variable_processor();
@@ -164,16 +177,16 @@ impl Config {
 pub struct GotchaConfigLoader;
 
 impl GotchaConfigLoader {
-    /// Load configuration from `configurations/application.toml` + the `APP`
-    /// environment prefix. Returns an error instead of panicking on failure.
-    ///
-    /// NOTE: `_profile` is not yet honored here — see the config-hardening issue.
-    pub fn load<T: for<'de> Deserialize<'de>>(_profile: Option<String>) -> ConfigResult<T> {
-        Config::builder()
-            .file_optional("configurations/application.toml")
-            .env("APP")
-            .enable_vars()
-            .build()
+    /// Load configuration from `configurations/application.toml`, then the
+    /// profile-specific `configurations/application_{profile}.toml` (if a profile
+    /// is given), then the `APP` environment prefix. Returns an error instead of
+    /// panicking on failure.
+    pub fn load<T: for<'de> Deserialize<'de>>(profile: Option<String>) -> ConfigResult<T> {
+        let mut builder = Config::builder().file_optional("configurations/application.toml");
+        if let Some(profile) = profile {
+            builder = builder.file_optional(format!("configurations/application_{profile}.toml"));
+        }
+        builder.env("APP").enable_vars().build()
     }
 }
 
@@ -201,5 +214,21 @@ mod tests {
         };
 
         assert_eq!(wrapper.application.name, "");
+    }
+
+    #[test]
+    fn required_missing_file_fails_to_build() {
+        let result: ConfigResult<TestConfig> = Config::builder().file("definitely-does-not-exist-abc123.toml").build();
+        assert!(result.is_err(), "a missing required file must fail the build");
+    }
+
+    #[test]
+    fn optional_missing_file_is_not_a_required_error() {
+        // A missing optional file must not trigger the required-file error (the config may
+        // still fail to deserialize for other reasons, but not because of this file).
+        let result: ConfigResult<TestConfig> = Config::builder().file_optional("definitely-does-not-exist-abc123.toml").build();
+        if let Err(ConfigError::Error(msg)) = &result {
+            assert!(!msg.contains("required configuration file"), "optional file wrongly treated as required: {msg}");
+        }
     }
 }

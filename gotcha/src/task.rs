@@ -61,13 +61,25 @@ where
         Self { context }
     }
 
+    /// Schedule a task on a cron expression.
+    ///
+    /// An invalid expression is reported (via `tracing::error!`) and the task is
+    /// simply not started, instead of panicking a detached task at the first tick.
     pub fn cron<F, FF>(&self, name: impl AsRef<str>, expression: String, task: F)
     where
         F: Fn(GotchaContext<T1, T2>) -> FF + Send + 'static,
         FF: Future<Output = ()> + Send + 'static,
     {
-        info!("starting cron task: {}", name.as_ref());
-        tokio::spawn(cron_proc_macro_wrapper(self.context.clone(), expression, task));
+        let name = name.as_ref().to_string();
+        let schedule = match Schedule::from_str(&expression) {
+            Ok(schedule) => schedule,
+            Err(e) => {
+                tracing::error!("cron task {name:?} has an invalid schedule {expression:?}: {e}; task not started");
+                return;
+            }
+        };
+        info!("starting cron task: {name}");
+        tokio::spawn(cron_proc_macro_wrapper(self.context.clone(), schedule, name, task));
     }
 
     pub fn interval<F, FF>(&self, name: impl AsRef<str>, interval: std::time::Duration, task: F)
@@ -75,31 +87,41 @@ where
         F: Fn(GotchaContext<T1, T2>) -> FF + Send + 'static,
         FF: Future<Output = ()> + Send + 'static,
     {
-        info!("starting interval task: {}", name.as_ref());
-        tokio::spawn(interval_proc_macro_wrapper(self.context.clone(), interval, task));
+        let name = name.as_ref().to_string();
+        info!("starting interval task: {name}");
+        tokio::spawn(interval_proc_macro_wrapper(self.context.clone(), interval, name, task));
     }
 }
 
-pub async fn cron_proc_macro_wrapper<T1, T2, F, FF>(context: GotchaContext<T1, T2>, expression: String, task: F)
+/// Run one task execution under supervision: if it panics, log it and keep the
+/// scheduler loop alive instead of silently killing the whole task.
+async fn run_supervised<FF>(name: &str, fut: FF)
+where
+    FF: Future<Output = ()> + Send + 'static,
+{
+    if let Err(join_error) = tokio::spawn(fut).await {
+        tracing::error!("scheduled task {name:?} panicked: {join_error}");
+    }
+}
+
+pub async fn cron_proc_macro_wrapper<T1, T2, F, FF>(context: GotchaContext<T1, T2>, schedule: Schedule, name: String, task: F)
 where
     T1: Clone + Send + Sync + 'static,
     T2: Clone + Send + Sync + 'static + Serialize + for<'de> Deserialize<'de> + Default,
     F: Fn(GotchaContext<T1, T2>) -> FF + Send + 'static,
     FF: Future<Output = ()> + Send + 'static,
 {
-    let schedule: Schedule = Schedule::from_str(&expression).unwrap();
-    let scheduler = schedule.upcoming(Utc);
-
-    for next_trigger_time in scheduler {
+    for next_trigger_time in schedule.upcoming(Utc) {
         let now = Utc::now();
-        let duration = next_trigger_time - now;
-        tokio::time::sleep(duration.to_std().unwrap()).await;
-        let t = task(context.clone());
-        t.await
+        // A trigger computed in the past (clock skew, or a long previous run) would make
+        // `to_std()` fail — run immediately in that case rather than panicking.
+        let wait = (next_trigger_time - now).to_std().unwrap_or(std::time::Duration::ZERO);
+        tokio::time::sleep(wait).await;
+        run_supervised(&name, task(context.clone())).await;
     }
 }
 
-pub async fn interval_proc_macro_wrapper<T1, T2, F, FF>(context: GotchaContext<T1, T2>, interval: std::time::Duration, task: F)
+pub async fn interval_proc_macro_wrapper<T1, T2, F, FF>(context: GotchaContext<T1, T2>, interval: std::time::Duration, name: String, task: F)
 where
     T1: Clone + Send + Sync + 'static,
     T2: Clone + Send + Sync + 'static + Serialize + for<'de> Deserialize<'de> + Default,
@@ -108,8 +130,7 @@ where
 {
     let mut interval = tokio::time::interval(interval);
     loop {
-        let _tick = interval.tick().await;
-        let t = task(context.clone());
-        t.await
+        interval.tick().await;
+        run_supervised(&name, task(context.clone())).await;
     }
 }
