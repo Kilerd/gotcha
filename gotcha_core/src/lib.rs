@@ -197,7 +197,7 @@ impl Schematic for chrono::NaiveDate {
 
 impl Schematic for serde_json::Value {
     fn name() -> &'static str {
-        "object"
+        "any"
     }
 
     fn required() -> bool {
@@ -208,8 +208,21 @@ impl Schematic for serde_json::Value {
         "object"
     }
 
-    fn format() -> Option<String> {
-        Some("json".to_string())
+    fn generate_schema() -> EnhancedSchema {
+        // `serde_json::Value` is an arbitrary JSON value (object, array, string, number,
+        // bool or null), so an empty schema (`{}`) — which matches anything — is the correct
+        // representation. Emitting `{"type":"object"}` made client generators read it as
+        // `Record<string, never>` (an empty object).
+        EnhancedSchema {
+            schema: Schema {
+                _type: None,
+                format: None,
+                nullable: None,
+                description: Self::doc(),
+                extras: Default::default(),
+            },
+            required: Self::required(),
+        }
     }
 }
 
@@ -431,5 +444,15 @@ mod tests {
         assert_eq!(<bool as Schematic>::name(), "bool");
         assert_eq!(<f32 as Schematic>::name(), "f32");
         assert_eq!(<f64 as Schematic>::name(), "f64");
+    }
+
+    #[test]
+    fn json_value_is_an_empty_any_schema() {
+        // `serde_json::Value` accepts any JSON, so its schema must be empty (`{}`), not
+        // `{"type":"object"}` (which reads as `Record<string, never>`).
+        let schema = <serde_json::Value as Schematic>::generate_schema();
+        let value = serde_json::to_value(&schema.schema).unwrap();
+        assert!(value.get("type").is_none(), "Value must not be typed: {value}");
+        assert!(value.get("format").is_none(), "Value must not have a format: {value}");
     }
 }
