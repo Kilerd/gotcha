@@ -54,10 +54,8 @@ impl ParameterExtraField {
                                     }
                                 }
                             }
-                            syn::Meta::Path(path) => {
-                                if path.is_ident("untagged") {
-                                    is_untagged = true;
-                                }
+                            syn::Meta::Path(path) if path.is_ident("untagged") => {
+                                is_untagged = true;
                             }
                             _ => {}
                         }
@@ -170,9 +168,7 @@ pub(crate) fn handler(input: TokenStream2) -> Result<TokenStream2, (Span, &'stat
                     Some(SerdeTagKind::Adjacent { ref tag, ref content }) => {
                         adjacent_tagged_enum::handler(ident.clone(), doc, enum_variants, extra_field.rename_all, tag.clone(), content.clone())?
                     }
-                    Some(SerdeTagKind::Untagged) => {
-                        untagged_enum::handler(ident.clone(), doc, enum_variants, extra_field.rename_all)?
-                    }
+                    Some(SerdeTagKind::Untagged) => untagged_enum::handler(ident.clone(), doc, enum_variants, extra_field.rename_all)?,
                 }
             }
         }

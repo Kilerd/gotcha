@@ -5,10 +5,7 @@ use crate::schematic::ParameterEnumVariantOpt;
 use crate::utils::{get_serde_name, parse_serde_rename, RenameAll};
 
 pub(crate) fn handler(
-    ident: syn::Ident,
-    doc: TokenStream2,
-    variants: Vec<ParameterEnumVariantOpt>,
-    rename_all: Option<RenameAll>,
+    ident: syn::Ident, doc: TokenStream2, variants: Vec<ParameterEnumVariantOpt>, rename_all: Option<RenameAll>,
 ) -> Result<TokenStream2, (Span, &'static str)> {
     let ident_string = ident.to_string();
 

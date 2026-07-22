@@ -30,6 +30,7 @@ struct CreateUserRequest {
 }
 
 #[derive(Serialize)]
+#[allow(dead_code)]
 struct HealthResponse {
     status: String,
     timestamp: String,
@@ -39,28 +40,21 @@ struct HealthResponse {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize logging
-    tracing_subscriber::fmt()
-        .with_env_filter("info,simple=debug")
-        .init();
+    tracing_subscriber::fmt().with_env_filter("info,simple=debug").init();
 
     println!("🚀 Starting Simple Gotcha Server");
     println!("📖 API Documentation: http://localhost:3000/redoc");
     println!("📊 OpenAPI Spec: http://localhost:3000/openapi.json");
     println!("🔧 Health Check: http://localhost:3000/health");
-    
+
     // Create the application using the new builder API
     Gotcha::new()
         // Enable CORS for all origins (not recommended for production)
         .with_cors()
-        
         // Enable OpenAPI documentation
         .with_openapi()
-        
         // Simple text response
-        .get("/", || async {
-            "🎉 Welcome to Gotcha! Visit /redoc for API documentation."
-        })
-        
+        .get("/", || async { "🎉 Welcome to Gotcha! Visit /redoc for API documentation." })
         // Health check endpoint with JSON response
         .get("/health", || async {
             Json(serde_json::json!({
@@ -69,12 +63,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "version": env!("CARGO_PKG_VERSION")
             }))
         })
-        
         // Path parameter example
         .get("/hello/:name", |Path(name): Path<String>| async move {
             format!("👋 Hello, {}! Welcome to Gotcha!", name)
         })
-        
         // JSON response with path parameter
         .get("/users/:id", |Path(id): Path<u32>| async move {
             // In a real application, you would fetch this from a database
@@ -85,7 +77,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             };
             Json(user)
         })
-        
         // POST endpoint with JSON body
         .post("/users", |Json(req): Json<CreateUserRequest>| async move {
             // In a real application, you would save this to a database
@@ -94,46 +85,34 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 name: req.name,
                 email: req.email,
             };
-            
+
             tracing::info!("Created user: {:?}", user);
-            
+
             // Return 201 Created with the user data
             (StatusCode::CREATED, Json(user))
         })
-        
         // Multiple HTTP methods for the same path
-        .route("/echo", 
-            post(|body: String| async move {
-                format!("Echo: {}", body)
-            })
-            .put(|body: String| async move {
-                format!("Put Echo: {}", body)
-            })
+        .route(
+            "/echo",
+            post(|body: String| async move { format!("Echo: {}", body) }).put(|body: String| async move { format!("Put Echo: {}", body) }),
         )
-        
         // Nested routes using a closure
         .routes(|router| {
             router
                 .get("/api/v1/ping", || async { "pong" })
-                .get("/api/v1/time", || async {
-                    "2024-01-01T00:00:00Z"
-                })
+                .get("/api/v1/time", || async { "2024-01-01T00:00:00Z" })
         })
-        
         // Error handling example
         .get("/error", || async {
             // This will return a 500 Internal Server Error
             Err::<String, _>("Something went wrong!")
         })
-        
         // Custom status code
-        .get("/teapot", || async {
-            (StatusCode::IM_A_TEAPOT, "I'm a teapot! ☕")
-        })
-        
+        .get("/teapot", || async { (StatusCode::IM_A_TEAPOT, "I'm a teapot! ☕") })
         // HTML response
         .get("/html", || async {
-            Html(r#"
+            Html(
+                r#"
                 <h1>🦀 Gotcha Framework</h1>
                 <p>This is an HTML response from a Gotcha server!</p>
                 <ul>
@@ -141,9 +120,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     <li><a href="/health">Health Check</a></li>
                     <li><a href="/redoc">API Documentation</a></li>
                 </ul>
-            "#)
+            "#,
+            )
         })
-        
         // Start the server
         .listen("127.0.0.1:3000")
         .await?;
@@ -153,20 +132,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 // Example of how you can still define separate handler functions
 // if you prefer that over closures
+#[allow(dead_code)]
 async fn separate_handler() -> impl Responder {
     "This is a separate handler function"
 }
 
 // You can also have handlers that use the full context
 // but this is typically not needed with the simple API
-async fn _complex_handler(
-    Path(id): Path<u32>,
-    Json(data): Json<serde_json::Value>,
-) -> Result<Json<serde_json::Value>, StatusCode> {
+async fn _complex_handler(Path(id): Path<u32>, Json(data): Json<serde_json::Value>) -> Result<Json<serde_json::Value>, StatusCode> {
     if id > 100 {
         return Err(StatusCode::NOT_FOUND);
     }
-    
+
     Ok(Json(serde_json::json!({
         "id": id,
         "received": data,

@@ -25,10 +25,7 @@ fn test_basic_untagged_multiple_types() {
     assert_eq!(one_of.len(), 3);
 
     // Check each variant type
-    let types: Vec<&str> = one_of
-        .iter()
-        .filter_map(|v| v.get("type").and_then(|t| t.as_str()))
-        .collect();
+    let types: Vec<&str> = one_of.iter().filter_map(|v| v.get("type").and_then(|t| t.as_str())).collect();
     assert!(types.contains(&"string"));
     assert!(types.contains(&"integer"));
     assert!(types.contains(&"boolean"));
@@ -164,10 +161,7 @@ fn test_untagged_with_vec() {
     let one_of = json.get("oneOf").unwrap().as_array().unwrap();
 
     // One should be string, one should be array
-    let types: Vec<&str> = one_of
-        .iter()
-        .filter_map(|v| v.get("type").and_then(|t| t.as_str()))
-        .collect();
+    let types: Vec<&str> = one_of.iter().filter_map(|v| v.get("type").and_then(|t| t.as_str())).collect();
     assert!(types.contains(&"string"));
     assert!(types.contains(&"array"));
 }

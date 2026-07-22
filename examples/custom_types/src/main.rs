@@ -1,10 +1,11 @@
 use gotcha::prelude::*;
 use serde::{Deserialize, Serialize};
+use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 // Custom application state
 #[derive(Clone, Default)]
+#[allow(dead_code)]
 struct AppState {
     request_counter: Arc<AtomicU64>,
 }
@@ -45,8 +46,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .get("/", || async { "App with custom config" });
 
     // Example 4: Traditional approach for simple apps still works
-    let _app4 = Gotcha::new()
-        .get("/", || async { "Simple app" });
+    let _app4 = Gotcha::new().get("/", || async { "Simple app" });
 
     println!();
     println!("✅ All API variations compile successfully!");

@@ -19,7 +19,7 @@
 //!
 //! ```no_run
 //! use gotcha::prelude::*;
-//! 
+//!
 //! #[tokio::main]
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {
 //!     Gotcha::new()
@@ -105,11 +105,11 @@ pub mod message;
 pub use gotcha_core::Responsible;
 
 #[cfg(feature = "openapi")]
+pub use crate::openapi::schematic::{ParameterProvider, Schematic};
+#[cfg(feature = "openapi")]
 pub use gotcha_macro::api;
 #[cfg(feature = "openapi")]
 pub use oas;
-#[cfg(feature = "openapi")]
-pub use crate::openapi::schematic::{ParameterProvider, Schematic};
 
 #[cfg(feature = "message")]
 pub use crate::message::{Message, Messager};
@@ -119,17 +119,14 @@ pub use crate::openapi::Operable;
 pub mod builder;
 pub mod config;
 pub mod error;
-pub mod prelude;
 #[cfg(feature = "openapi")]
 pub mod openapi;
+pub mod prelude;
 pub mod router;
 pub mod state;
 
 #[cfg(feature = "task")]
 pub mod task;
-
-#[cfg(feature = "cloudflare_worker")]
-pub use worker;
 
 #[cfg(feature = "prometheus")]
 pub mod prometheus {
@@ -144,11 +141,11 @@ pub mod layers {
 #[cfg(feature = "openapi")]
 pub use crate::openapi::schematic::EnhancedSchema;
 
+pub use serde_json;
 #[cfg(feature = "task")]
 pub use task::TaskScheduler;
 #[cfg(feature = "static_files")]
 pub use tower_http::services::{ServeDir, ServeFile};
-pub use {serde_json};
 
 #[derive(Clone)]
 pub struct GotchaContext<State: Clone + Send + Sync + 'static, Config: Clone + Send + Sync + 'static + Serialize + for<'de> Deserialize<'de> + Default> {
@@ -234,7 +231,6 @@ pub trait GotchaApp: Sized + Send + Sync {
         }
     }
 
-    #[cfg(not(feature = "cloudflare_worker"))]
     fn run(self) -> impl std::future::Future<Output = Result<(), Box<dyn std::error::Error>>> + Send {
         async move {
             use std::net::{Ipv4Addr, SocketAddrV4};
@@ -259,23 +255,6 @@ pub trait GotchaApp: Sized + Send + Sync {
             let listener = tokio::net::TcpListener::bind(addr).await?;
             axum::serve(listener, router).await?;
             Ok(())
-        }
-    }
-
-    #[cfg(feature = "cloudflare_worker")]
-    fn worker_router(self, worker_env: worker::Env) -> impl std::future::Future<Output = Result<GotchaRouter<()>, Box<dyn std::error::Error>>> + Send {
-        async move {
-            let config: ConfigWrapper<Self::Config> = self.config().await?;
-            let state = self.state(&config).await?;
-            let context = GotchaContext { config: config.clone(), state };
-
-            let router = self.build_router(context.clone()).await?;
-
-            Ok(GotchaRouter {
-                #[cfg(feature = "openapi")]
-                operations: Default::default(),
-                router,
-            })
         }
     }
 }

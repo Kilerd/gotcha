@@ -7,12 +7,7 @@ use crate::utils::{get_serde_name, parse_serde_rename, RenameAll};
 /// Handler for adjacently tagged enums: #[serde(tag = "kind", content = "data")]
 /// JSON format: { "kind": "VariantName", "data": { ...variant fields... } }
 pub(crate) fn handler(
-    ident: syn::Ident,
-    doc: TokenStream2,
-    variants: Vec<ParameterEnumVariantOpt>,
-    rename_all: Option<RenameAll>,
-    tag_name: String,
-    content_name: String,
+    ident: syn::Ident, doc: TokenStream2, variants: Vec<ParameterEnumVariantOpt>, rename_all: Option<RenameAll>, tag_name: String, content_name: String,
 ) -> Result<TokenStream2, (Span, &'static str)> {
     let ident_string = ident.to_string();
     let tag_name_str = tag_name.as_str();

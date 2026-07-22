@@ -134,7 +134,7 @@ impl<T: Schematic> ParameterProvider for Json<T> {
 impl<T: Schematic> ParameterProvider for Query<T> {
     fn generate(_url: String) -> Either<Vec<Parameter>, RequestBody> {
         let fields = T::fields();
-        if fields.len() == 0 {
+        if fields.is_empty() {
             let mut ret = vec![];
 
             let mut schema = T::generate_schema();

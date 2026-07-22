@@ -5,6 +5,8 @@ pub trait AttributesExt {
 }
 
 /// Serde rename_all case conventions
+// Variant names intentionally mirror serde's case-convention names.
+#[allow(clippy::enum_variant_names)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RenameAll {
     /// lowercase
@@ -64,7 +66,7 @@ fn split_into_words(s: &str) -> Vec<String> {
     let mut current_word = String::new();
 
     // First, split by underscores and hyphens
-    for part in s.split(|c| c == '_' || c == '-') {
+    for part in s.split(['_', '-']) {
         if part.is_empty() {
             continue;
         }
@@ -138,11 +140,9 @@ fn words_to_kebab_case(words: &[String]) -> String {
 pub fn parse_serde_rename(attrs: &[Attribute]) -> Option<String> {
     for attr in attrs {
         if attr.path.is_ident("serde") {
-            if let Ok(nested) = attr.parse_args_with(
-                |input: syn::parse::ParseStream| {
-                    syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated(input)
-                },
-            ) {
+            if let Ok(nested) =
+                attr.parse_args_with(|input: syn::parse::ParseStream| syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated(input))
+            {
                 for meta in nested {
                     if let syn::Meta::NameValue(name_value) = meta {
                         if name_value.path.is_ident("rename") {
@@ -162,11 +162,9 @@ pub fn parse_serde_rename(attrs: &[Attribute]) -> Option<String> {
 pub fn has_serde_flatten(attrs: &[Attribute]) -> bool {
     for attr in attrs {
         if attr.path.is_ident("serde") {
-            if let Ok(nested) = attr.parse_args_with(
-                |input: syn::parse::ParseStream| {
-                    syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated(input)
-                },
-            ) {
+            if let Ok(nested) =
+                attr.parse_args_with(|input: syn::parse::ParseStream| syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated(input))
+            {
                 for meta in nested {
                     if let syn::Meta::Path(path) = meta {
                         if path.is_ident("flatten") {
@@ -184,11 +182,9 @@ pub fn has_serde_flatten(attrs: &[Attribute]) -> bool {
 pub fn parse_serde_rename_all(attrs: &[Attribute]) -> Option<RenameAll> {
     for attr in attrs {
         if attr.path.is_ident("serde") {
-            if let Ok(nested) = attr.parse_args_with(
-                |input: syn::parse::ParseStream| {
-                    syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated(input)
-                },
-            ) {
+            if let Ok(nested) =
+                attr.parse_args_with(|input: syn::parse::ParseStream| syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated(input))
+            {
                 for meta in nested {
                     if let syn::Meta::NameValue(name_value) = meta {
                         if name_value.path.is_ident("rename_all") {
@@ -263,15 +259,9 @@ mod tests {
     #[test]
     fn test_get_serde_name() {
         // rename takes precedence
-        assert_eq!(
-            get_serde_name("InProgress", Some("custom"), Some(RenameAll::KebabCase)),
-            "custom"
-        );
+        assert_eq!(get_serde_name("InProgress", Some("custom"), Some(RenameAll::KebabCase)), "custom");
         // rename_all applied when no rename
-        assert_eq!(
-            get_serde_name("InProgress", None, Some(RenameAll::KebabCase)),
-            "in-progress"
-        );
+        assert_eq!(get_serde_name("InProgress", None, Some(RenameAll::KebabCase)), "in-progress");
         // original name when neither
         assert_eq!(get_serde_name("InProgress", None, None), "InProgress");
     }

@@ -3,10 +3,10 @@
 
 use gotcha::prelude::*;
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
-use tokio::sync::RwLock;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
+use tokio::sync::RwLock;
 
 // Application state with a counter and a simple in-memory store
 #[derive(Clone, Default)]
@@ -48,16 +48,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Initialize state with some sample data
     let mut initial_users = HashMap::new();
-    initial_users.insert(1, User {
-        id: 1,
-        name: "Alice".to_string(),
-        email: "alice@example.com".to_string(),
-    });
-    initial_users.insert(2, User {
-        id: 2,
-        name: "Bob".to_string(),
-        email: "bob@example.com".to_string(),
-    });
+    initial_users.insert(
+        1,
+        User {
+            id: 1,
+            name: "Alice".to_string(),
+            email: "alice@example.com".to_string(),
+        },
+    );
+    initial_users.insert(
+        2,
+        User {
+            id: 2,
+            name: "Bob".to_string(),
+            email: "bob@example.com".to_string(),
+        },
+    );
 
     let state = AppState {
         request_counter: Arc::new(AtomicU64::new(0)),
@@ -68,39 +74,31 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app = Gotcha::with_types::<AppState, AppConfig>()
         .state(state)
         .with_env_config("APP")
-
         // Home route with request counter
         .get("/", |ctx: State<GotchaContext<AppState, AppConfig>>| async move {
             let count = ctx.state.request_counter.fetch_add(1, Ordering::SeqCst);
             format!("Welcome to Gotcha! This is request #{}", count + 1)
         })
-
         // Get all users
         .get("/users", |ctx: State<GotchaContext<AppState, AppConfig>>| async move {
             let users = ctx.state.users.read().await;
-            let users_vec: Vec<&User> = users.values().collect();
+            let users_vec: Vec<User> = users.values().cloned().collect();
             Json(users_vec)
         })
-
         // Get user by ID
-        .get("/users/:id", |
-            Path(id): Path<u64>,
-            ctx: State<GotchaContext<AppState, AppConfig>>
-        | async move {
+        .get("/users/:id", |Path(id): Path<u64>, ctx: State<GotchaContext<AppState, AppConfig>>| async move {
             let users = ctx.state.users.read().await;
             match users.get(&id) {
                 Some(user) => Ok(Json(user.clone())),
-                None => Err((StatusCode::NOT_FOUND, "User not found"))
+                None => Err((StatusCode::NOT_FOUND, "User not found")),
             }
         })
-
         // Create new user
         .post("/users", || async {
             Json(serde_json::json!({
                 "message": "User creation endpoint (simplified for demo)"
             }))
         })
-
         // Show configuration
         .get("/config", |ctx: State<GotchaContext<AppState, AppConfig>>| async move {
             Json(serde_json::json!({
@@ -112,7 +110,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "max_users": ctx.config.application.max_users
             }))
         })
-
         // Health check
         .get("/health", || async {
             Json(serde_json::json!({

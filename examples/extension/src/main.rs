@@ -1,9 +1,6 @@
 //! Example demonstrating Extension<T> usage with OpenAPI generation
 
-use gotcha::{
-    api, async_trait, ConfigWrapper, Extension, GotchaApp, GotchaContext, GotchaRouter, Json,
-    Responder, Schematic, State
-};
+use gotcha::{api, async_trait, ConfigWrapper, Extension, GotchaApp, GotchaContext, GotchaRouter, Json, Responder, Schematic, State};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone)]
@@ -26,10 +23,7 @@ pub struct UserResponse {
 
 /// Get current user information
 #[api(id = "get_current_user", group = "users")]
-pub async fn get_current_user(
-    Extension(auth): Extension<AuthContext>,
-    State(_config): State<ConfigWrapper<Config>>,
-) -> Json<UserResponse> {
+pub async fn get_current_user(Extension(auth): Extension<AuthContext>, State(_config): State<ConfigWrapper<Config>>) -> Json<UserResponse> {
     Json(UserResponse {
         id: auth.user_id.clone(),
         name: format!("User {}", auth.user_id),
@@ -53,10 +47,7 @@ pub struct PostResponse {
 
 /// Create a new post
 #[api(id = "create_post", group = "posts")]
-pub async fn create_post(
-    Extension(auth): Extension<AuthContext>,
-    Json(request): Json<CreatePostRequest>,
-) -> Json<PostResponse> {
+pub async fn create_post(Extension(auth): Extension<AuthContext>, Json(request): Json<CreatePostRequest>) -> Json<PostResponse> {
     Json(PostResponse {
         id: uuid::Uuid::new_v4().to_string(),
         title: request.title,
@@ -87,16 +78,14 @@ impl GotchaApp for App {
             .layer(axum::middleware::from_fn(inject_auth_context))
     }
 
+    #[allow(clippy::manual_async_fn)]
     fn state(&self, _config: &ConfigWrapper<Self::Config>) -> impl std::future::Future<Output = Result<Self::State, Box<dyn std::error::Error>>> + Send {
         async { Ok(()) }
     }
 }
 
 // Middleware to inject AuthContext into requests
-async fn inject_auth_context(
-    mut req: axum::extract::Request,
-    next: axum::middleware::Next,
-) -> impl Responder {
+async fn inject_auth_context(mut req: axum::extract::Request, next: axum::middleware::Next) -> impl Responder {
     // In a real application, you would extract this from a JWT token or session
     let auth_context = AuthContext {
         user_id: "user123".to_string(),

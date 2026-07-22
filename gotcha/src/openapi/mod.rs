@@ -31,10 +31,10 @@
 
 use std::collections::{BTreeMap, HashMap};
 
+use axum::http::Method;
 use axum::response::Html;
 use convert_case::{Case, Casing};
 use either::Either;
-use axum::http::Method;
 use oas::{Info, OpenAPIV3, Operation, Parameter, PathItem, Referenceable, RequestBody, Responses, Tag};
 use once_cell::sync::Lazy;
 use regex::Regex;
@@ -57,12 +57,9 @@ pub type ParamType = Either<Vec<Parameter>, RequestBody>;
 
 pub type ParamConstructor = Box<dyn Fn(String) -> ParamType + Sync + Send + 'static>;
 
-
 pub fn replace_path_variable(path: String) -> String {
     let regex = Regex::new(PATH_VARIABLE_PATTERN).unwrap();
-    regex.replace_all(&path, |caps: &regex::Captures| {
-        format!("{{{}}}", &caps[0][1..])
-    }).to_string()
+    regex.replace_all(&path, |caps: &regex::Captures| format!("{{{}}}", &caps[0][1..])).to_string()
 }
 
 #[derive()]
@@ -170,12 +167,10 @@ pub fn generate_openapi(operations: HashMap<(String, Method), Operation>) -> Ope
     spec
 }
 
-
-
 #[cfg(all(test, feature = "openapi"))]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_path_variable_pattern() {
         assert_eq!(replace_path_variable("/users".to_string()), "/users");

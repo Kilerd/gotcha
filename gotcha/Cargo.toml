@@ -19,7 +19,6 @@ cors = ["dep:tower-http"]
 static_files = ["dep:tower-http", "tower-http/fs"]
 task = ["dep:cron", "tokio/time"]
 message = ["tokio/rt"]
-cloudflare_worker = ["dep:worker"]
 
 
 [dependencies]
@@ -47,7 +46,6 @@ axum-prometheus = { version = "0.7.0", optional = true }
 axum-macros = "0.4"
 tower-http = { version = "0.6", optional = true, features = ["cors", "fs"] }
 cfg-if = { workspace = true }
-worker = {version = "0.5.0", features = ["http"], optional = true}
 thiserror = "1.0"
 serde_json = "1"    
 bigdecimal = "0.4"

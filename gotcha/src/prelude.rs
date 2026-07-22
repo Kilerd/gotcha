@@ -7,7 +7,7 @@
 //!
 //! ```no_run
 //! use gotcha::prelude::*;
-//! 
+//!
 //! #[tokio::main]
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {
 //!     Gotcha::new()
@@ -25,15 +25,15 @@
 pub use crate::builder::{EmptyConfig, EmptyState, Gotcha};
 
 // Essential traits and types
-pub use crate::{GotchaApp, GotchaContext, GotchaRouter};
 pub use crate::config::{ConfigWrapper, GotchaConfigLoader};
 pub use crate::router::Responder;
+pub use crate::{GotchaApp, GotchaContext, GotchaRouter};
 
 // Common Axum extractors and utilities
 pub use axum::extract::{Extension, Json, Path, Query, State};
-pub use axum::http::{StatusCode, HeaderMap, Method};
+pub use axum::http::{HeaderMap, Method, StatusCode};
 pub use axum::response::{Html, Redirect, Response};
-pub use axum::routing::{get, post, put, delete, patch};
+pub use axum::routing::{delete, get, patch, post, put};
 
 // JSON handling
 pub use serde::{Deserialize, Serialize};
@@ -47,7 +47,7 @@ pub type Result<T, E = Box<dyn std::error::Error + Send + Sync>> = std::result::
 
 // Feature-specific exports
 #[cfg(feature = "openapi")]
-pub use crate::{api, Schematic, Responsible};
+pub use crate::{api, Responsible, Schematic};
 
 #[cfg(feature = "cors")]
 pub use crate::layers::CorsLayer;
@@ -62,7 +62,7 @@ macro_rules! handler {
     ($body:expr) => {
         || async move { $body }
     };
-    
+
     // Handler with single parameter
     ($param:ident: $param_type:ty => $body:expr) => {
         |$param: $param_type| async move { $body }

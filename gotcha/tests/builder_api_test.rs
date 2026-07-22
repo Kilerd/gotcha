@@ -24,23 +24,19 @@ fn test_new_api_with_types() {
 #[test]
 fn test_new_api_with_state() {
     // Should compile with just state type
-    let _app = Gotcha::with_state::<TestState>()
-        .state(TestState::default())
-        .get("/", || async { "test" });
+    let _app = Gotcha::with_state::<TestState>().state(TestState::default()).get("/", || async { "test" });
 }
 
 #[test]
 fn test_new_api_with_config() {
     // Should compile with just config type
-    let _app = Gotcha::with_config::<TestConfig>()
-        .get("/", || async { "test" });
+    let _app = Gotcha::with_config::<TestConfig>().get("/", || async { "test" });
 }
 
 #[test]
 fn test_traditional_api_still_works() {
     // Traditional API should still work
-    let _app = Gotcha::new()
-        .get("/", || async { "test" });
+    let _app = Gotcha::new().get("/", || async { "test" });
 }
 
 #[test]

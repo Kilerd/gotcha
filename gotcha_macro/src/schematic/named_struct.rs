@@ -5,10 +5,7 @@ use crate::schematic::ParameterStructFieldOpt;
 use crate::utils::{get_serde_name, has_serde_flatten, parse_serde_rename, AttributesExt, RenameAll};
 
 pub(crate) fn handler(
-    ident: syn::Ident,
-    doc: TokenStream2,
-    fields: darling::ast::Fields<ParameterStructFieldOpt>,
-    rename_all: Option<RenameAll>,
+    ident: syn::Ident, doc: TokenStream2, fields: darling::ast::Fields<ParameterStructFieldOpt>, rename_all: Option<RenameAll>,
 ) -> Result<TokenStream2, (Span, &'static str)> {
     let ident_string = ident.to_string();
 
