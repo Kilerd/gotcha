@@ -28,7 +28,7 @@ pub use crate::builder::{EmptyConfig, EmptyState, Gotcha};
 pub use crate::config::{ConfigWrapper, GotchaConfigLoader};
 pub use crate::error::{GotchaError, GotchaResult};
 pub use crate::router::Responder;
-pub use crate::{GotchaApp, GotchaContext, GotchaRouter};
+pub use crate::{state, GotchaApp, GotchaConfig, GotchaContext, GotchaRouter};
 
 // Common Axum extractors and utilities
 pub use axum::extract::{Extension, Json, Path, Query, State};

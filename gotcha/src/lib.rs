@@ -98,6 +98,9 @@ pub use {axum, inventory, tracing};
 pub use crate::builder::{EmptyConfig, EmptyState, Gotcha};
 pub use crate::config::GotchaConfigLoader;
 pub use crate::error::{GotchaError, GotchaResult};
+/// Attribute macro that makes a struct usable as `State<T>` in handlers by
+/// generating a `FromRef<GotchaContext<T, C>>` impl. See [`GotchaContext`].
+pub use gotcha_macro::state;
 
 #[cfg(feature = "message")]
 pub mod message;
@@ -123,7 +126,6 @@ pub mod error;
 pub mod openapi;
 pub mod prelude;
 pub mod router;
-pub mod state;
 
 #[cfg(feature = "task")]
 pub mod task;
@@ -162,6 +164,14 @@ where
         context.config.clone()
     }
 }
+
+/// Marker trait bundling the bounds every Gotcha application `Config` must meet.
+///
+/// Blanket-implemented for every qualifying type. It exists so macro-generated
+/// code (the `#[state]` attribute) can bound the config type with a single path
+/// (`::gotcha::GotchaConfig`) instead of restating the serde bounds.
+pub trait GotchaConfig: Clone + Send + Sync + 'static + Serialize + for<'de> Deserialize<'de> + Default {}
+impl<T> GotchaConfig for T where T: Clone + Send + Sync + 'static + Serialize + for<'de> Deserialize<'de> + Default {}
 
 pub trait GotchaApp: Sized + Send + Sync {
     type State: Clone + Send + Sync + 'static;
