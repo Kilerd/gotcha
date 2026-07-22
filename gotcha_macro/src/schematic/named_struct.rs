@@ -2,7 +2,7 @@ use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::quote;
 
 use crate::schematic::ParameterStructFieldOpt;
-use crate::utils::{get_serde_name, has_serde_flatten, parse_serde_rename, AttributesExt, RenameAll};
+use crate::utils::{get_serde_name, has_serde_flatten, has_serde_skip, is_serde_optional, parse_serde_rename, AttributesExt, RenameAll};
 
 pub(crate) fn handler(
     ident: syn::Ident, doc: TokenStream2, fields: darling::ast::Fields<ParameterStructFieldOpt>, rename_all: Option<RenameAll>,
@@ -15,6 +15,12 @@ pub(crate) fn handler(
 
     for field in fields.fields.into_iter() {
         let field_ty = field.ty;
+
+        // `#[serde(skip)]` / `skip_serializing` / `skip_deserializing` fields are not part of
+        // the serialized payload, so they must not appear in the schema.
+        if has_serde_skip(&field.attrs) {
+            continue;
+        }
 
         if has_serde_flatten(&field.attrs) {
             // Flatten field: merge fields from the inner type at runtime
@@ -37,12 +43,20 @@ pub(crate) fn handler(
             } else {
                 quote! { None }
             };
+            // `#[serde(default)]` / `skip_serializing_if` make a field optional in the payload,
+            // so it must not be listed as required even if its type is otherwise required.
+            let optional_override = if is_serde_optional(&field.attrs) {
+                quote! { field_schema.required = false; }
+            } else {
+                quote! {}
+            };
             normal_fields_stream.push(quote! {
                 (
                     #field_name,
                     {
                         let mut field_schema = <#field_ty as ::gotcha_core::Schematic>::generate_schema();
                         field_schema.schema.description = #field_description;
+                        #optional_override
                         field_schema
                     }
                 )
