@@ -2,7 +2,7 @@ use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::quote;
 
 use crate::schematic::ParameterStructFieldOpt;
-use crate::utils::{get_serde_name, has_serde_flatten, has_serde_skip, is_serde_optional, parse_serde_rename, AttributesExt, RenameAll};
+use crate::utils::{get_serde_name, has_serde_flatten, has_serde_skip, is_serde_optional, parse_serde_rename, RenameAll};
 
 pub(crate) fn handler(
     ident: syn::Ident, doc: TokenStream2, fields: darling::ast::Fields<ParameterStructFieldOpt>, rename_all: Option<RenameAll>,
@@ -14,7 +14,7 @@ pub(crate) fn handler(
     let mut flatten_schema_stream: Vec<TokenStream2> = Vec::new();
 
     for field in fields.fields.into_iter() {
-        let field_ty = field.ty;
+        let field_ty = field.ty.clone();
 
         // `#[serde(skip)]` / `skip_serializing` / `skip_deserializing` fields are not part of
         // the serialized payload, so they must not appear in the schema.
@@ -38,11 +38,6 @@ pub(crate) fn handler(
             let ident_str = field.ident.as_ref().unwrap().to_string();
             let rename = parse_serde_rename(&field.attrs);
             let field_name = get_serde_name(&ident_str, rename.as_deref(), rename_all);
-            let field_description = if let Some(doc) = field.attrs.get_doc() {
-                quote! { Some(#doc.to_string()) }
-            } else {
-                quote! { None }
-            };
             // `#[serde(default)]` / `skip_serializing_if` make a field optional in the payload,
             // so it must not be listed as required even if its type is otherwise required.
             let optional_override = if is_serde_optional(&field.attrs) {
@@ -50,6 +45,10 @@ pub(crate) fn handler(
             } else {
                 quote! {}
             };
+            // Description (an explicit `#[schematic(description = ...)]` overrides the doc comment)
+            // plus the `#[schematic(...)]` validation/metadata customizations.
+            let (field_description, customizations) = field.schema_customizations();
+
             normal_fields_stream.push(quote! {
                 (
                     #field_name,
@@ -57,6 +56,7 @@ pub(crate) fn handler(
                         let mut field_schema = <#field_ty as ::gotcha_core::Schematic>::generate_schema();
                         field_schema.schema.description = #field_description;
                         #optional_override
+                        #( #customizations )*
                         field_schema
                     }
                 )

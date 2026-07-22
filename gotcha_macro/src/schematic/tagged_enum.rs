@@ -2,7 +2,7 @@ use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::quote;
 
 use crate::schematic::ParameterEnumVariantOpt;
-use crate::utils::{get_serde_name, parse_serde_rename, AttributesExt, RenameAll};
+use crate::utils::{get_serde_name, parse_serde_rename, RenameAll};
 
 pub(crate) fn handler(
     ident: syn::Ident, doc: TokenStream2, variants: Vec<ParameterEnumVariantOpt>, rename_all: Option<RenameAll>, tag_name: String,
@@ -21,12 +21,7 @@ pub(crate) fn handler(
                 .fields
                 .into_iter()
                 .map(|field| {
-                    // doc code gen
-                    let field_description = if let Some(doc) = field.attrs.get_doc() {
-                        quote! { Some(#doc.to_string()) }
-                    } else {
-                        quote! {None}
-                    };
+                    let (field_description, customizations) = field.schema_customizations();
                     let field_ty = field.ty.clone();
 
                     if let Some(ident) = field.ident.as_ref() {
@@ -37,6 +32,7 @@ pub(crate) fn handler(
                         quote! {
                             let mut field_schema = <#field_ty as ::gotcha_core::Schematic>::generate_schema();
                             field_schema.schema.description = #field_description;
+                            #( #customizations )*
                             properties.insert(#field_name.to_string(), field_schema.schema.to_value());
                             if field_schema.required {
                                 properties_required_fields.push(#field_name.to_string());

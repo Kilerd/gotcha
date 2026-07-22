@@ -89,13 +89,96 @@ pub(crate) struct ParameterOpts {
     attrs: Vec<syn::Attribute>,
 }
 
+/// A literal JSON value (`= 42`, `= "x"`, `= true`) whose JSON type is preserved. Used for
+/// `example` / `default` so a numeric example stays a number instead of becoming a string.
+#[derive(Debug, Clone)]
+struct SchemaValue(TokenStream2);
+
+impl darling::FromMeta for SchemaValue {
+    fn from_value(value: &syn::Lit) -> darling::Result<Self> {
+        let tokens = match value {
+            syn::Lit::Str(v) => {
+                let v = v.value();
+                quote! { ::gotcha_core::serde_json::Value::from(#v) }
+            }
+            syn::Lit::Int(v) => {
+                let v = v.base10_parse::<i64>().map_err(darling::Error::from)?;
+                quote! { ::gotcha_core::serde_json::Value::from(#v) }
+            }
+            syn::Lit::Float(v) => {
+                let v = v.base10_parse::<f64>().map_err(darling::Error::from)?;
+                quote! { ::gotcha_core::serde_json::Value::from(#v) }
+            }
+            syn::Lit::Bool(v) => {
+                let v = v.value;
+                quote! { ::gotcha_core::serde_json::Value::from(#v) }
+            }
+            _ => return Err(darling::Error::unexpected_lit_type(value)),
+        };
+        Ok(SchemaValue(tokens))
+    }
+}
+
 #[derive(Debug, FromField)]
-#[darling(attributes(parameter), forward_attrs(allow, doc, cfg, serde))]
+#[darling(attributes(schematic), forward_attrs(allow, doc, cfg, serde))]
 pub(crate) struct ParameterStructFieldOpt {
     ident: Option<syn::Ident>,
     ty: syn::Type,
     attrs: Vec<syn::Attribute>,
-    // add more validator
+
+    // `#[schematic(...)]` field customizations — pure schema *documentation* only. darling
+    // treats `Option<_>` fields as optional automatically, so an absent attribute maps to `None`.
+    //
+    // Validation constraints (min/max, length, pattern, multiple_of, items, …) are deliberately
+    // NOT here: those belong to `#[validation(...)]` (issue #9) as the single source of truth for
+    // both runtime request validation and the schema, so a constraint is never written twice.
+    title: Option<String>,
+    description: Option<String>,
+    example: Option<SchemaValue>,
+    default: Option<SchemaValue>,
+    format: Option<String>,
+}
+
+impl ParameterStructFieldOpt {
+    /// Builds the `description` token and the list of `#[schematic(...)]` customization
+    /// statements for this field. Each statement mutates a local `field_schema` binding
+    /// (its `.schema.format` / `.schema.extras`). An explicit `#[schematic(description = "...")]`
+    /// overrides the doc comment.
+    pub(crate) fn schema_customizations(&self) -> (TokenStream2, Vec<TokenStream2>) {
+        // Builds a statement that inserts a JSON-Schema keyword into `field_schema.schema.extras`.
+        fn extra(key: &str, value: TokenStream2) -> TokenStream2 {
+            quote! {
+                field_schema.schema.extras.insert(#key.to_string(), ::gotcha_core::serde_json::to_value(#value).unwrap());
+            }
+        }
+
+        let description = if let Some(desc) = &self.description {
+            quote! { Some(#desc.to_string()) }
+        } else if let Some(doc) = self.attrs.get_doc() {
+            quote! { Some(#doc.to_string()) }
+        } else {
+            quote! { None }
+        };
+
+        let mut customizations: Vec<TokenStream2> = Vec::new();
+        if let Some(format) = &self.format {
+            customizations.push(quote! { field_schema.schema.format = Some(#format.to_string()); });
+        }
+        if let Some(v) = &self.title {
+            customizations.push(extra("title", quote! { #v }));
+        }
+        // `example` / `default` keep their JSON type (`SchemaValue` already builds a `Value`).
+        if let Some(v) = &self.example {
+            let value = &v.0;
+            customizations.push(quote! { field_schema.schema.extras.insert("example".to_string(), #value); });
+        }
+        if let Some(v) = &self.default {
+            let value = &v.0;
+            customizations.push(quote! { field_schema.schema.extras.insert("default".to_string(), #value); });
+        }
+
+        (description, customizations)
+    }
 }
 
 #[derive(Debug, FromVariant)]

@@ -81,10 +81,13 @@ pub(crate) fn handler(
                         let field_ident_str = field_ident.to_string();
                         let field_rename = parse_serde_rename(&field.attrs);
                         let field_name = get_serde_name(&field_ident_str, field_rename.as_deref(), None);
+                        let (field_description, customizations) = field.schema_customizations();
                         let field_ty = &field.ty;
                         Some(quote! {
                             {
-                                let field_schema = <#field_ty as ::gotcha_core::Schematic>::generate_schema();
+                                let mut field_schema = <#field_ty as ::gotcha_core::Schematic>::generate_schema();
+                                field_schema.schema.description = #field_description;
+                                #( #customizations )*
                                 content_properties.insert(#field_name.to_string(), field_schema.schema.to_value());
                                 if field_schema.required {
                                     content_required.push(#field_name.to_string());
