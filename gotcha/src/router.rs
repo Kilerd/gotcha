@@ -34,6 +34,11 @@ pub struct GotchaRouter<State = ()> {
     #[cfg(feature = "openapi")]
     /// The operations for the router.
     pub(crate) operations: std::collections::HashMap<(String, Method), Operation>,
+    /// Optional transform applied to the generated OpenAPI spec before it is served,
+    /// set via [`GotchaRouter::openapi`]. Lets apps customize `info`, `servers`,
+    /// `security`, `components`, etc.
+    #[cfg(feature = "openapi")]
+    pub(crate) openapi_transform: Option<Box<dyn FnOnce(oas::OpenAPIV3) -> oas::OpenAPIV3 + Send>>,
     pub(crate) router: Router<State>,
 }
 impl<State: Clone + Send + Sync + 'static> Default for GotchaRouter<State> {
@@ -41,6 +46,8 @@ impl<State: Clone + Send + Sync + 'static> Default for GotchaRouter<State> {
         Self {
             #[cfg(feature = "openapi")]
             operations: Default::default(),
+            #[cfg(feature = "openapi")]
+            openapi_transform: None,
             router: Router::new(),
         }
     }
@@ -64,6 +71,8 @@ impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
         Self {
             #[cfg(feature = "openapi")]
             operations: self.operations,
+            #[cfg(feature = "openapi")]
+            openapi_transform: self.openapi_transform,
             router: self.router.route(path, method_router),
         }
     }
@@ -114,6 +123,8 @@ impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
         Self {
             #[cfg(feature = "openapi")]
             operations: self.operations,
+            #[cfg(feature = "openapi")]
+            openapi_transform: self.openapi_transform,
             router: self.router.route(path, router),
         }
     }
@@ -150,6 +161,8 @@ impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
         Self {
             #[cfg(feature = "openapi")]
             operations: self.operations.into_iter().chain(operations).collect(),
+            #[cfg(feature = "openapi")]
+            openapi_transform: self.openapi_transform,
             router: self.router.nest(path, router.router),
         }
     }
@@ -167,6 +180,8 @@ impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
         Self {
             #[cfg(feature = "openapi")]
             operations: self.operations.into_iter().chain(other.operations).collect(),
+            #[cfg(feature = "openapi")]
+            openapi_transform: self.openapi_transform,
             router: self.router.merge(other.router),
         }
     }
@@ -191,6 +206,8 @@ impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
         Self {
             #[cfg(feature = "openapi")]
             operations: self.operations,
+            #[cfg(feature = "openapi")]
+            openapi_transform: self.openapi_transform,
             router: self.router.layer(layer),
         }
     }
@@ -203,8 +220,34 @@ impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
         Self {
             #[cfg(feature = "openapi")]
             operations: self.operations,
+            #[cfg(feature = "openapi")]
+            openapi_transform: self.openapi_transform,
             router: self.router.fallback(handler),
         }
+    }
+
+    /// Customize the generated OpenAPI spec before it is served at `/openapi.json`.
+    ///
+    /// The transform receives the fully-generated [`oas::OpenAPIV3`] (with every route's
+    /// operation already filled in) and returns the spec to serve, so you can set the
+    /// title/version, add servers, security schemes, components, and so on.
+    ///
+    /// ```rust,no_run
+    /// use gotcha::GotchaRouter;
+    ///
+    /// let router: GotchaRouter<()> = GotchaRouter::default().openapi(|mut spec| {
+    ///     spec.info.title = "My API".to_string();
+    ///     spec.info.version = "2.0.0".to_string();
+    ///     spec
+    /// });
+    /// ```
+    #[cfg(feature = "openapi")]
+    pub fn openapi<F>(mut self, transform: F) -> Self
+    where
+        F: FnOnce(oas::OpenAPIV3) -> oas::OpenAPIV3 + Send + 'static,
+    {
+        self.openapi_transform = Some(Box::new(transform));
+        self
     }
 
     /// Finalize this router into a plain `axum::Router`, injecting `state`.
@@ -217,7 +260,10 @@ impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
     pub(crate) fn into_axum_router(self, state: State) -> Router {
         cfg_if::cfg_if! {
             if #[cfg(feature = "openapi")] {
-                let openapi_spec = crate::openapi::generate_openapi(self.operations);
+                let mut openapi_spec = crate::openapi::generate_openapi(self.operations);
+                if let Some(transform) = self.openapi_transform {
+                    openapi_spec = transform(openapi_spec);
+                }
                 self.router
                     .with_state(state)
                     .route("/openapi.json", axum::routing::get(move || async move { axum::Json(openapi_spec.clone()) }))
@@ -239,4 +285,48 @@ where
 {
     let handle_name = std::any::type_name::<H>();
     inventory::iter::<Operable>.into_iter().find(|it| it.type_name.eq(handle_name))
+}
+
+#[cfg(all(test, feature = "openapi"))]
+mod tests {
+    use std::sync::{Arc, Mutex};
+
+    use super::*;
+
+    #[test]
+    fn openapi_transform_runs_during_assembly() {
+        // Capture the title the transform sees, to prove `.openapi(..)` is stored and applied
+        // when the router is finalized (the transformed spec is what gets served).
+        let captured: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+        let sink = captured.clone();
+
+        let router: GotchaRouter<()> = GotchaRouter::default().openapi(move |mut spec| {
+            spec.info.title = "Custom API".to_string();
+            spec.info.version = "9.9.9".to_string();
+            *sink.lock().unwrap() = Some(spec.info.title.clone());
+            spec
+        });
+        let _ = router.into_axum_router(());
+
+        assert_eq!(captured.lock().unwrap().as_deref(), Some("Custom API"));
+    }
+
+    #[test]
+    fn openapi_transform_survives_chained_builder_calls() {
+        // `.openapi(..)` set before other methods must not be dropped by the `Self { .. }`
+        // reconstructions in `route`/`layer`/etc.
+        let ran: Arc<Mutex<bool>> = Arc::new(Mutex::new(false));
+        let flag = ran.clone();
+
+        let router: GotchaRouter<()> = GotchaRouter::default()
+            .openapi(move |spec| {
+                *flag.lock().unwrap() = true;
+                spec
+            })
+            .route("/health", axum::routing::get(|| async { "ok" }))
+            .fallback(|| async { "not found" });
+        let _ = router.into_axum_router(());
+
+        assert!(*ran.lock().unwrap(), "transform set before route()/fallback() must still apply");
+    }
 }

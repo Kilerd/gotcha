@@ -579,6 +579,29 @@ where
         self
     }
 
+    /// Customize the generated OpenAPI spec before it is served at `/openapi.json`.
+    ///
+    /// See [`GotchaRouter::openapi`](crate::GotchaRouter::openapi). The transform can set the
+    /// title/version, add servers, security schemes, components, etc.
+    ///
+    /// ```rust,no_run
+    /// use gotcha::Gotcha;
+    ///
+    /// let app = Gotcha::new().openapi(|mut spec| {
+    ///     spec.info.title = "My API".to_string();
+    ///     spec.info.version = "2.0.0".to_string();
+    ///     spec
+    /// });
+    /// ```
+    #[cfg(feature = "openapi")]
+    pub fn openapi<F>(mut self, transform: F) -> Self
+    where
+        F: FnOnce(oas::OpenAPIV3) -> oas::OpenAPIV3 + Send + 'static,
+    {
+        self.router = self.router.openapi(transform);
+        self
+    }
+
     /// Register background tasks (requires the `task` feature).
     ///
     /// The closure receives a [`TaskScheduler`](crate::TaskScheduler) when the
