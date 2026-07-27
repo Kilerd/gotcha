@@ -71,6 +71,31 @@ pub fn api(args: TokenStream, input_stream: TokenStream) -> TokenStream {
 /// This derive macro automatically implements the `Schematic` trait,
 /// which generates OpenAPI JSON schemas for request and response types.
 ///
+/// ## Field attributes
+///
+/// Individual fields can be annotated with `#[schematic(...)]` to enrich the
+/// generated schema with *documentation* metadata. All keys are optional:
+/// `title`, `description`, `example`, `default`, `format`.
+///
+/// An explicit `description` overrides the field's doc comment, and `example` /
+/// `default` preserve their JSON type (`example = 42` stays a number, not `"42"`).
+///
+/// Validation constraints (min/max, length, regex, …) are intentionally *not* part of
+/// `#[schematic]`; they are handled by request validation as a single source of truth, so
+/// a constraint is never written twice.
+///
+/// ```rust,ignore
+/// #[derive(Schematic, Serialize, Deserialize)]
+/// struct CreateUserRequest {
+///     #[schematic(description = "User's full name", example = "Ada Lovelace")]
+///     name: String,
+///     #[schematic(format = "email")]
+///     email: String,
+///     #[schematic(default = 18)]
+///     age: u8,
+/// }
+/// ```
+///
 /// ## Example
 ///
 /// ```rust,ignore
