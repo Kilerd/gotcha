@@ -52,6 +52,7 @@ bigdecimal = "0.4"
 rust_decimal = "1.36"
 uuid = {version =  "1.10" }
 regex = "1.7"
+validator = { version = "0.20", features = ["derive"] }
 
 [dev-dependencies]
 trybuild = "1.0"
