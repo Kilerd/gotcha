@@ -118,6 +118,10 @@ pub use oas;
 pub use crate::message::{Message, Messager};
 #[cfg(feature = "openapi")]
 pub use crate::openapi::Operable;
+pub use crate::validation::{Valid, ValidRejection};
+/// Derive and trait for request validation (re-exported from the `validator` crate).
+/// Use with the [`Valid`] extractor.
+pub use validator::Validate;
 
 pub mod builder;
 pub mod config;
@@ -129,6 +133,7 @@ pub mod router;
 
 #[cfg(feature = "task")]
 pub mod task;
+pub mod validation;
 
 #[cfg(feature = "prometheus")]
 pub mod prometheus {
