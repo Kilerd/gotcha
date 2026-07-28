@@ -46,6 +46,9 @@ pub(crate) mod utils;
 ///
 /// - `id` - Unique operation ID for the endpoint
 /// - `group` - Group/tag for organizing operations in documentation
+/// - `summary` - Human-readable operation summary (defaults to the id in Title Case)
+/// - `deprecated` - Marks the operation as deprecated, e.g. `#[api(deprecated)]`
+/// - `security` - Name of a required security scheme, e.g. `#[api(security = "bearerAuth")]`
 ///
 /// ## Example
 ///

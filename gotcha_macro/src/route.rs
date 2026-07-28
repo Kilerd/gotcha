@@ -3,6 +3,8 @@ use quote::{format_ident, quote};
 use syn::{parse_macro_input, AttributeArgs, FnArg, ItemFn, ReturnType};
 use uuid::Uuid;
 
+use darling::util::Flag;
+
 use crate::utils::AttributesExt;
 use crate::FromMeta;
 
@@ -10,6 +12,12 @@ use crate::FromMeta;
 pub struct RouteMeta {
     group: Option<String>,
     id: Option<String>,
+    /// Explicit operation summary; when absent it is derived from the id in Title Case.
+    summary: Option<String>,
+    /// Marks the operation deprecated (`#[api(deprecated)]`).
+    deprecated: Flag,
+    /// Name of a security scheme required for this operation (empty scopes).
+    security: Option<String>,
 }
 
 pub(crate) fn request_handler(args: TokenStream, input_stream: TokenStream) -> TokenStream {
@@ -24,6 +32,17 @@ pub(crate) fn request_handler(args: TokenStream, input_stream: TokenStream) -> T
     let meta = args;
     let group = if let Some(group_name) = meta.group {
         quote! { Some(#group_name) }
+    } else {
+        quote! { None }
+    };
+    let summary = if let Some(summary) = meta.summary {
+        quote! { Some(#summary) }
+    } else {
+        quote! { None }
+    };
+    let deprecated = meta.deprecated.is_present();
+    let security = if let Some(security) = meta.security {
+        quote! { Some(#security) }
     } else {
         quote! { None }
     };
@@ -111,8 +130,10 @@ pub(crate) fn request_handler(args: TokenStream, input_stream: TokenStream) -> T
                 type_name: concat!(module_path!(), "::", #fn_ident_string),
                 id: #operation_id,
                 group: #group,
+                summary: #summary,
                 description: #docs,
-                deprecated: false,
+                deprecated: #deprecated,
+                security: #security,
                 parameters: &#uuid_ident,
                 responses: &#ret_uuid_ident,
             }

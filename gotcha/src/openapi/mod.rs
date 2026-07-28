@@ -36,7 +36,7 @@ use axum::http::Method;
 use axum::response::Html;
 use convert_case::{Case, Casing};
 use either::Either;
-use oas::{Info, OpenAPIV3, Operation, Parameter, PathItem, Referenceable, RequestBody, Responses, Tag};
+use oas::{Info, OpenAPIV3, Operation, Parameter, PathItem, Referenceable, RequestBody, Responses, SecurityRequirement, Tag};
 use once_cell::sync::Lazy;
 use regex::Regex;
 
@@ -71,8 +71,10 @@ pub struct Operable {
     pub type_name: &'static str,
     pub id: &'static str,
     pub group: Option<&'static str>,
+    pub summary: Option<&'static str>,
     pub description: Option<&'static str>,
     pub deprecated: bool,
+    pub security: Option<&'static str>,
     pub parameters: &'static Lazy<Vec<ParamConstructor>>,
     pub responses: &'static Lazy<Box<dyn Fn() -> Responses + Sync + Send + 'static>>,
 }
@@ -92,9 +94,18 @@ impl Operable {
         }
         let responses = (self.responses)();
 
+        // An explicit `#[api(summary = "...")]` wins; otherwise derive it from the id in Title Case.
+        let summary = self.summary.map(|s| s.to_string()).or_else(|| Some(self.id.to_case(Case::Title)));
+        // `#[api(security = "scheme")]` requires that named scheme (with empty scopes) for this operation.
+        let security = self.security.map(|scheme| {
+            let mut data: BTreeMap<String, Vec<String>> = BTreeMap::new();
+            data.insert(scheme.to_string(), vec![]);
+            vec![SecurityRequirement { data }]
+        });
+
         Operation {
             tags,
-            summary: Some(self.id.to_case(Case::Title)),
+            summary,
             description: self.description.map(|v| v.to_string()),
             external_docs: None,
             operation_id: Some(self.id.to_string()),
@@ -103,7 +114,7 @@ impl Operable {
             responses,
             callbacks: None,
             deprecated: Some(self.deprecated),
-            security: None,
+            security,
             servers: None,
         }
     }
