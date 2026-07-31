@@ -120,7 +120,7 @@ impl darling::FromMeta for SchemaValue {
 }
 
 #[derive(Debug, FromField)]
-#[darling(attributes(schematic), forward_attrs(allow, doc, cfg, serde))]
+#[darling(attributes(schematic), forward_attrs(allow, doc, cfg, serde, validate))]
 pub(crate) struct ParameterStructFieldOpt {
     ident: Option<syn::Ident>,
     ty: syn::Type,
@@ -137,6 +137,133 @@ pub(crate) struct ParameterStructFieldOpt {
     example: Option<SchemaValue>,
     default: Option<SchemaValue>,
     format: Option<String>,
+}
+
+/// The subset of `#[validate(...)]` (validator crate) rules that map cleanly to JSON-Schema
+/// keywords. Unmodelled validators (`regex`, `custom`, `must_match`, `contains`, …) are ignored
+/// so they stay runtime-only without breaking the derive.
+#[derive(Default)]
+struct ValidateConstraints {
+    minimum: Option<f64>,
+    maximum: Option<f64>,
+    /// Whether the corresponding bound came from `exclusive_min` / `exclusive_max`.
+    exclusive_minimum: bool,
+    exclusive_maximum: bool,
+    /// `length(min/max/equal)` — becomes minLength/maxLength for strings, minItems/maxItems for collections.
+    min_length: Option<u64>,
+    max_length: Option<u64>,
+    format: Option<&'static str>,
+}
+
+impl ValidateConstraints {
+    fn from_attrs(attrs: &[syn::Attribute]) -> Self {
+        let mut c = ValidateConstraints::default();
+        for attr in attrs {
+            if !attr.path.is_ident("validate") {
+                continue;
+            }
+            let items = match attr
+                .parse_args_with(|input: syn::parse::ParseStream| syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated(input))
+            {
+                Ok(items) => items,
+                Err(_) => continue,
+            };
+            for item in items {
+                match item {
+                    syn::Meta::List(list) if list.path.is_ident("range") => {
+                        for (name, lit) in name_values(&list) {
+                            match name.as_str() {
+                                "min" => c.minimum = lit_to_f64(lit),
+                                "max" => c.maximum = lit_to_f64(lit),
+                                // OpenAPI 3.0 models exclusivity as a `minimum` + `exclusiveMinimum: true` pair.
+                                "exclusive_min" => {
+                                    c.minimum = lit_to_f64(lit);
+                                    c.exclusive_minimum = true;
+                                }
+                                "exclusive_max" => {
+                                    c.maximum = lit_to_f64(lit);
+                                    c.exclusive_maximum = true;
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                    syn::Meta::List(list) if list.path.is_ident("length") => {
+                        for (name, lit) in name_values(&list) {
+                            match name.as_str() {
+                                "min" => c.min_length = lit_to_u64(lit),
+                                "max" => c.max_length = lit_to_u64(lit),
+                                // `equal` fixes both bounds.
+                                "equal" => {
+                                    c.min_length = lit_to_u64(lit);
+                                    c.max_length = lit_to_u64(lit);
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                    // `email` / `url` accept both the bare word and the `email(message = ...)` form.
+                    syn::Meta::Path(p) if p.is_ident("email") => c.format = Some("email"),
+                    syn::Meta::List(list) if list.path.is_ident("email") => c.format = Some("email"),
+                    syn::Meta::Path(p) if p.is_ident("url") => c.format = Some("uri"),
+                    syn::Meta::List(list) if list.path.is_ident("url") => c.format = Some("uri"),
+                    _ => {}
+                }
+            }
+        }
+        c
+    }
+}
+
+/// The `name = <lit>` pairs inside a `range(..)` / `length(..)` list.
+fn name_values(list: &syn::MetaList) -> Vec<(String, &syn::Lit)> {
+    list.nested
+        .iter()
+        .filter_map(|n| match n {
+            syn::NestedMeta::Meta(syn::Meta::NameValue(nv)) => Some((nv.path.get_ident()?.to_string(), &nv.lit)),
+            _ => None,
+        })
+        .collect()
+}
+
+fn lit_to_f64(lit: &syn::Lit) -> Option<f64> {
+    match lit {
+        syn::Lit::Int(i) => i.base10_parse().ok(),
+        syn::Lit::Float(f) => f.base10_parse().ok(),
+        _ => None,
+    }
+}
+
+fn lit_to_u64(lit: &syn::Lit) -> Option<u64> {
+    match lit {
+        syn::Lit::Int(i) => i.base10_parse().ok(),
+        _ => None,
+    }
+}
+
+/// Whether `ty` is a collection (`Vec<_>`), peeling one layer of `Option<_>`. Used to decide
+/// whether `length` maps to minItems/maxItems (collections) or minLength/maxLength (strings).
+fn is_collection(ty: &syn::Type) -> bool {
+    let syn::Type::Path(tp) = ty else {
+        return false;
+    };
+    let Some(seg) = tp.path.segments.last() else {
+        return false;
+    };
+    if seg.ident == "Vec" {
+        return true;
+    }
+    if seg.ident != "Option" {
+        return false;
+    }
+    // Peel one `Option<T>` layer and re-check the inner type.
+    let syn::PathArguments::AngleBracketed(args) = &seg.arguments else {
+        return false;
+    };
+    match args.args.first() {
+        Some(syn::GenericArgument::Type(inner)) => is_collection(inner),
+        _ => false,
+    }
 }
 
 impl ParameterStructFieldOpt {
@@ -161,6 +288,38 @@ impl ParameterStructFieldOpt {
         };
 
         let mut customizations: Vec<TokenStream2> = Vec::new();
+
+        // Mirror `#[validate(...)]` constraints into the schema so a rule written once for runtime
+        // validation also documents the field. Emitted first, so an explicit `#[schematic(...)]`
+        // still wins on any overlap (e.g. `format`).
+        let validated = ValidateConstraints::from_attrs(&self.attrs);
+        if let Some(min) = validated.minimum {
+            customizations.push(extra("minimum", quote! { #min }));
+            if validated.exclusive_minimum {
+                customizations.push(extra("exclusiveMinimum", quote! { true }));
+            }
+        }
+        if let Some(max) = validated.maximum {
+            customizations.push(extra("maximum", quote! { #max }));
+            if validated.exclusive_maximum {
+                customizations.push(extra("exclusiveMaximum", quote! { true }));
+            }
+        }
+        let (len_min, len_max) = if is_collection(&self.ty) {
+            ("minItems", "maxItems")
+        } else {
+            ("minLength", "maxLength")
+        };
+        if let Some(min) = validated.min_length {
+            customizations.push(extra(len_min, quote! { #min }));
+        }
+        if let Some(max) = validated.max_length {
+            customizations.push(extra(len_max, quote! { #max }));
+        }
+        if let Some(format) = validated.format {
+            customizations.push(quote! { field_schema.schema.format = Some(#format.to_string()); });
+        }
+
         if let Some(format) = &self.format {
             customizations.push(quote! { field_schema.schema.format = Some(#format.to_string()); });
         }
