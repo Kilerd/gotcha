@@ -108,7 +108,7 @@ Add Gotcha to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-gotcha = "0.3"
+gotcha = "0.4"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 serde = { version = "1", features = ["derive"] }
 ```
@@ -119,7 +119,7 @@ Enable additional features as needed:
 
 ```toml
 [dependencies]
-gotcha = { version = "0.3", features = ["openapi", "prometheus", "cors", "static_files", "task"] }
+gotcha = { version = "0.4", features = ["openapi", "prometheus", "cors", "static_files", "task"] }
 ```
 
 Available features:

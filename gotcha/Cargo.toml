@@ -2,7 +2,7 @@
 name = "gotcha"
 description = "Enhanced web framework built on top of Axum with OpenAPI, metrics, and configuration management"
 edition = "2021"
-version = "0.3.0"
+version = "0.4.0"
 license = "MIT"
 repository = "https://github.com/Kilerd/gotcha/"
 # Symlinked to the repository README so the crate documentation and the landing page are the same
@@ -35,8 +35,8 @@ task = ["dep:cron", "tokio/time"]
 
 [dependencies]
 async-trait = "0.1.60"
-gotcha_macro = { version = "0.3", path = "../gotcha_macro" }
-gotcha_core = { version = "0.3", path = "../gotcha_core", optional = true }
+gotcha_macro = { version = "0.4", path = "../gotcha_macro" }
+gotcha_core = { version = "0.4", path = "../gotcha_core", optional = true }
 serde = {version = "1", features = ["derive"]}
 # `rt` is needed by the message system, which is always available (it gated nothing but a
 # 160-line module and this one tokio feature).
@@ -76,7 +76,7 @@ trybuild = "1.0"
 assert-json-diff = "2"
 # Non-optional so trybuild-generated test crates (which derive Schematic and thus
 # emit `::gotcha_core::` paths) have gotcha_core in their extern prelude.
-gotcha_core = { version = "0.3", path = "../gotcha_core" }
+gotcha_core = { version = "0.4", path = "../gotcha_core" }
 # So `#[tokio::main]` doc examples compile (the lib's own tokio dep is minimal).
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 futures-core = "0.3.33"
