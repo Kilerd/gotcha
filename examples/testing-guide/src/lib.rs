@@ -246,12 +246,12 @@ impl GotchaApp for App {
 
 // ========== Helper function for testing ==========
 pub async fn create_test_app() -> axum::Router {
-    use gotcha::config::BasicConfig;
+    use gotcha::config::ServerConfig;
 
     let app = App;
     let config = ConfigWrapper {
-        basic: BasicConfig::default(),
-        application: AppConfig::default(),
+        server: ServerConfig::default(),
+        app: AppConfig::default(),
     };
 
     let state = app.state(&config).await.unwrap();

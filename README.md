@@ -147,18 +147,37 @@ Visit these endpoints when running:
 
 ### Configuration System
 
-Create a `configurations/application.toml` file:
+Create a `configurations/application.toml` file. Your application's own settings live at the top
+level; the framework's are in the reserved `[server]` section:
 
 ```toml
-[basic]
-host = "127.0.0.1"
-port = 3000
-
-[application]
 database_url = "${DATABASE_URL}"
 api_key = "${API_KEY}"
 app_name = "My Gotcha App"
+
+[server]
+host = "127.0.0.1"
+port = 3000
 ```
+
+Mark your config type with `#[config]` to extract it directly in handlers:
+
+```rust
+use gotcha::prelude::*;
+
+#[config]
+#[derive(Clone, Default, Serialize, Deserialize)]
+struct Config {
+    app_name: String,
+}
+
+async fn handler(State(config): State<Config>) -> impl Responder {
+    config.app_name.clone()
+}
+```
+
+The server settings are their own extractor, `State<ServerConfig>`; `State<ConfigWrapper<Config>>`
+still gives you both at once and derefs to your config.
 
 Configuration supports:
 - Environment variable resolution: `${ENV_VAR}`

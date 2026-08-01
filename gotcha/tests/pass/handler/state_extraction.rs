@@ -24,7 +24,7 @@ async fn state_handler(State(state): State<AppState>) -> impl Responder {
 
 // Config remains extractable too (via the framework's own FromRef impl).
 async fn config_handler(State(config): State<ConfigWrapper<AppConfig>>) -> impl Responder {
-    config.basic.host.clone()
+    config.server.host.clone()
 }
 
 fn main() {

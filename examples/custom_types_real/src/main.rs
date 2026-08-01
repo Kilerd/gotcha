@@ -102,12 +102,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Show configuration
         .get("/config", |ctx: State<GotchaContext<AppState, AppConfig>>| async move {
             Json(serde_json::json!({
-                "api_key": if ctx.config.application.api_key.is_empty() {
+                "api_key": if ctx.config.app.api_key.is_empty() {
                     "not-configured"
                 } else {
                     "***hidden***"
                 },
-                "max_users": ctx.config.application.max_users
+                "max_users": ctx.config.app.max_users
             }))
         })
         // Health check

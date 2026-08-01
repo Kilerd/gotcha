@@ -30,7 +30,7 @@ use serde::{Deserialize, Serialize};
 use tower_layer::Layer;
 use tower_service::Service;
 
-use crate::config::{BasicConfig, Config, ConfigBuilder, ConfigState, ConfigWrapper, GotchaConfigLoader};
+use crate::config::{Config, ConfigBuilder, ConfigState, ConfigWrapper, GotchaConfigLoader, ServerConfig};
 use crate::error::{GotchaError, GotchaResult};
 use crate::router::{GotchaRouter, Responder};
 use crate::GotchaContext;
@@ -721,11 +721,11 @@ where
                     Err(e) => {
                         tracing::warn!("Failed to load accumulated configuration: {e}, using defaults");
                         ConfigWrapper {
-                            basic: BasicConfig {
+                            server: ServerConfig {
                                 host: self.host.clone(),
                                 port: self.port,
                             },
-                            application: C::default(),
+                            app: C::default(),
                         }
                     }
                 }
@@ -736,11 +736,11 @@ where
                 Err(e) => {
                     tracing::warn!("Failed to load configuration: {e}, using defaults");
                     ConfigWrapper {
-                        basic: BasicConfig {
+                        server: ServerConfig {
                             host: self.host.clone(),
                             port: self.port,
                         },
-                        application: C::default(),
+                        app: C::default(),
                     }
                 }
             },

@@ -25,10 +25,10 @@
 pub use crate::builder::{EmptyConfig, EmptyState, Gotcha};
 
 // Essential traits and types
-pub use crate::config::{ConfigWrapper, GotchaConfigLoader};
+pub use crate::config::{ConfigWrapper, GotchaConfigLoader, ServerConfig};
 pub use crate::error::{GotchaError, GotchaResult};
 pub use crate::router::Responder;
-pub use crate::{state, GotchaApp, GotchaConfig, GotchaContext, GotchaRouter};
+pub use crate::{config, state, GotchaApp, GotchaConfig, GotchaContext, GotchaRouter};
 
 // Common Axum extractors and utilities
 pub use axum::extract::{Extension, Json, Path, Query, State};

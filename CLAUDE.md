@@ -109,7 +109,7 @@ Each example demonstrates specific features:
 
 ### Configuration Management  
 - Configuration files must be in `configurations/` directory
-- Use TOML format with `[basic]` section for server settings and `[application]` for custom config
+- Use TOML format: the application's own settings at the top level, framework settings in the reserved `[server]` section
 - Environment variables can be injected using `${VAR_NAME}` syntax
 - Profile switching via `GOTCHA_ACTIVE_PROFILE` environment variable
 
