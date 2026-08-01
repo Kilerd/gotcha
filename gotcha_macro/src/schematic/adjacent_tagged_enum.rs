@@ -151,29 +151,31 @@ pub(crate) fn handler(
         }
 
         fn generate_schema() -> ::gotcha_core::EnhancedSchema {
-            let mut schema = ::gotcha_core::EnhancedSchema {
-                schema: ::gotcha_core::oas::Schema {
-                    _type: None,
-                    format: None,
-                    nullable: None,
-                    description: Self::doc(),
-                    extras: Default::default(),
-                },
-                required: Self::required(),
-            };
+            ::gotcha_core::registry::schema_or_ref(Self::name(), Self::required(), || {
+                let mut schema = ::gotcha_core::EnhancedSchema {
+                    schema: ::gotcha_core::oas::Schema {
+                        _type: None,
+                        format: None,
+                        nullable: None,
+                        description: Self::doc(),
+                        extras: Default::default(),
+                    },
+                    required: Self::required(),
+                };
 
-            let branches: Vec<::std::collections::HashMap<String, ::gotcha_core::serde_json::Value>> = vec![
-                #(
-                    #variants_codegen,
-                )*
-            ];
+                let branches: Vec<::std::collections::HashMap<String, ::gotcha_core::serde_json::Value>> = vec![
+                    #(
+                        #variants_codegen,
+                    )*
+                ];
 
-            let mut discriminator: ::std::collections::HashMap<String, ::gotcha_core::serde_json::Value> = ::std::collections::HashMap::new();
-            discriminator.insert("propertyName".to_string(), ::gotcha_core::serde_json::to_value(#tag_name_str).unwrap());
+                let mut discriminator: ::std::collections::HashMap<String, ::gotcha_core::serde_json::Value> = ::std::collections::HashMap::new();
+                discriminator.insert("propertyName".to_string(), ::gotcha_core::serde_json::to_value(#tag_name_str).unwrap());
 
-            schema.schema.extras.insert("oneOf".to_string(), ::gotcha_core::serde_json::to_value(branches).unwrap());
-            schema.schema.extras.insert("discriminator".to_string(), ::gotcha_core::serde_json::to_value(discriminator).unwrap());
-            schema
+                schema.schema.extras.insert("oneOf".to_string(), ::gotcha_core::serde_json::to_value(branches).unwrap());
+                schema.schema.extras.insert("discriminator".to_string(), ::gotcha_core::serde_json::to_value(discriminator).unwrap());
+                schema
+            })
         }
 
         fn flatten_schema() -> Option<::gotcha_core::serde_json::Value> {

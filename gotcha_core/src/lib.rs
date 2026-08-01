@@ -26,6 +26,8 @@ use oas::Schema;
 /// `::gotcha_core::serde_json::` without a direct `serde_json` dependency.
 pub use serde_json;
 
+pub mod registry;
+
 pub mod responsible;
 pub use responsible::Responsible;
 

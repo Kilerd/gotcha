@@ -110,26 +110,28 @@ pub(crate) fn handler(
         }
 
         fn generate_schema() -> ::gotcha_core::EnhancedSchema {
-            let mut schema = ::gotcha_core::EnhancedSchema {
-                schema: ::gotcha_core::oas::Schema {
-                    _type: None,
-                    format: None,
-                    nullable: None,
-                    description: Self::doc(),
-                    extras: Default::default(),
-                },
-                required: Self::required(),
-            };
+            ::gotcha_core::registry::schema_or_ref(Self::name(), Self::required(), || {
+                let mut schema = ::gotcha_core::EnhancedSchema {
+                    schema: ::gotcha_core::oas::Schema {
+                        _type: None,
+                        format: None,
+                        nullable: None,
+                        description: Self::doc(),
+                        extras: Default::default(),
+                    },
+                    required: Self::required(),
+                };
 
-            let branches: Vec<::gotcha_core::serde_json::Value> = vec![
-                #(
-                    #variants_codegen,
-                )*
-            ];
+                let branches: Vec<::gotcha_core::serde_json::Value> = vec![
+                    #(
+                        #variants_codegen,
+                    )*
+                ];
 
-            // untagged enum: oneOf without discriminator
-            schema.schema.extras.insert("oneOf".to_string(), ::gotcha_core::serde_json::to_value(branches).unwrap());
-            schema
+                // untagged enum: oneOf without discriminator
+                schema.schema.extras.insert("oneOf".to_string(), ::gotcha_core::serde_json::to_value(branches).unwrap());
+                schema
+            })
         }
 
         fn flatten_schema() -> Option<::gotcha_core::serde_json::Value> {

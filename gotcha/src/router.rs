@@ -5,8 +5,6 @@ use axum::handler::Handler;
 pub use axum::response::IntoResponse as Responder;
 use axum::routing::{MethodFilter, MethodRouter, Route};
 use axum::Router;
-#[cfg(feature = "openapi")]
-use oas::Operation;
 use tower_layer::Layer;
 use tower_service::Service;
 
@@ -32,8 +30,10 @@ macro_rules! implement_method {
 /// A router for Gotcha web applications.
 pub struct GotchaRouter<State = ()> {
     #[cfg(feature = "openapi")]
-    /// The operations for the router.
-    pub(crate) operations: std::collections::HashMap<(String, Method), Operation>,
+    /// The operations for the router, kept as their `Operable` descriptors: the `Operation` is
+    /// only built during `into_axum_router`, so every route's schemas are generated inside a
+    /// single collection scope and can share `components/schemas`.
+    pub(crate) operations: std::collections::HashMap<(String, Method), &'static Operable>,
     /// Optional transform applied to the generated OpenAPI spec before it is served,
     /// set via [`GotchaRouter::openapi`]. Lets apps customize `info`, `servers`,
     /// `security`, `components`, etc.
@@ -103,7 +103,6 @@ impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
         #[cfg(feature = "openapi")]
         if let Some(operable) = handle_operable {
             tracing::info!("generating openapi spec for {}[{}]", &operable.type_name, &path);
-            let operation = operable.generate(path.to_string());
             let method = match method {
                 MethodFilter::DELETE => Method::DELETE,
                 MethodFilter::GET => Method::GET,
@@ -115,7 +114,7 @@ impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
                 MethodFilter::TRACE => Method::TRACE,
                 _ => todo!(),
             };
-            self.operations.insert((path.to_string(), method), operation);
+            self.operations.insert((path.to_string(), method), operable);
         }
 
         let router = MethodRouter::new().on(method, handler);
@@ -157,7 +156,7 @@ impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
                 let new_path = format!("{}/{}", path, path_str);
                 ((new_path, method), value)
             })
-            .collect::<HashMap<(String, Method), Operation>>();
+            .collect::<HashMap<(String, Method), &'static Operable>>();
         Self {
             #[cfg(feature = "openapi")]
             operations: self.operations.into_iter().chain(operations).collect(),
@@ -261,6 +260,7 @@ impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
         cfg_if::cfg_if! {
             if #[cfg(feature = "openapi")] {
                 let mut openapi_spec = crate::openapi::generate_openapi(self.operations);
+
                 if let Some(transform) = self.openapi_transform {
                     openapi_spec = transform(openapi_spec);
                 }
