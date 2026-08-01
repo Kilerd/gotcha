@@ -167,6 +167,45 @@ impl<T> ParameterProvider for State<T> {}
 
 impl<T> ParameterProvider for Extension<T> {}
 
+/// The whole header map is untyped, so there is nothing to document — but a handler must still be
+/// able to take it. Individual headers are documented with `gotcha::Header<T>`.
+impl ParameterProvider for axum::http::HeaderMap {}
+
+/// axum's own typed headers document themselves: [`axum_extra::headers::Header`] already carries
+/// the header name, so `TypedHeader<UserAgent>` needs no extra declaration. Header values are text
+/// on the wire, so the schema is a string.
+impl<T: axum_extra::headers::Header> ParameterProvider for axum_extra::TypedHeader<T> {
+    fn generate(_url: String) -> Either<Vec<Parameter>, RequestBody> {
+        let schema = Schema {
+            _type: Some("string".to_string()),
+            format: None,
+            nullable: None,
+            description: None,
+            extras: Default::default(),
+        };
+        Either::Left(vec![build_param(T::name().as_str().to_string(), ParameterIn::Header, true, schema, None)])
+    }
+}
+
+/// axum treats `Option<E>` as "extract `E`, or `None` if it isn't there", so the parameters `E`
+/// contributes are documented but no longer required.
+impl<T: ParameterProvider> ParameterProvider for Option<T> {
+    fn generate(url: String) -> Either<Vec<Parameter>, RequestBody> {
+        match T::generate(url) {
+            Either::Left(params) => Either::Left(
+                params
+                    .into_iter()
+                    .map(|mut param| {
+                        param.required = Some(false);
+                        param
+                    })
+                    .collect(),
+            ),
+            body => body,
+        }
+    }
+}
+
 impl ParameterProvider for Request {}
 
 impl ParameterProvider for axum::extract::multipart::Multipart {
