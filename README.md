@@ -180,9 +180,18 @@ The server settings are their own extractor, `State<ServerConfig>`; `State<Confi
 still gives you both at once and derefs to your config.
 
 Configuration supports:
-- Environment variable resolution: `${ENV_VAR}`
+- Environment variable resolution inside values: `${ENV_VAR}`
 - Path variable resolution: `${app.database.name}`
 - Profile-based overrides via `GOTCHA_ACTIVE_PROFILE` environment variable
+- Environment overrides with the `APP_` prefix, where `__` separates nested sections:
+
+  | variable | overrides |
+  |---|---|
+  | `APP_APP_NAME=x` | the top-level `app_name` field |
+  | `APP_SERVER__PORT=8080` | `port` inside `[server]` |
+
+  A single underscore stays part of the field name, so snake_case fields are addressable, and
+  typed fields (numbers, booleans) parse the value rather than rejecting it.
 
 ### Task Scheduling
 

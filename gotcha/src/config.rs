@@ -274,6 +274,53 @@ mod tests {
         assert_eq!(config.server.port, ServerConfig::default().port, "a missing [server] uses defaults");
     }
 
+    /// Environment overrides: `__` separates path segments, so a single underscore is free for
+    /// snake_case field names, and a typed field accepts the (necessarily string) env value.
+    ///
+    /// Serialized because it mutates process-wide environment and working directory.
+    #[test]
+    fn environment_overrides_typed_and_snake_case_fields() {
+        #[derive(Serialize, Deserialize, Default, Debug, Clone)]
+        struct App {
+            name: String,
+            database_url: String,
+            max_connections: u32,
+        }
+
+        let dir = std::env::temp_dir().join("gotcha-config-env");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("application.toml");
+        std::fs::write(
+            &path,
+            "name = \"from-file\"\ndatabase_url = \"from-file\"\nmax_connections = 1\n\n[server]\nport = 3000\nhost = \"127.0.0.1\"\n",
+        )
+        .unwrap();
+
+        std::env::set_var("GOTCHATEST_NAME", "from-env");
+        std::env::set_var("GOTCHATEST_DATABASE_URL", "postgres://env");
+        std::env::set_var("GOTCHATEST_MAX_CONNECTIONS", "99");
+        std::env::set_var("GOTCHATEST_SERVER__PORT", "9090");
+
+        let config: ConfigWrapper<App> = Config::builder().file(&path).env("GOTCHATEST").build().expect("loads");
+
+        for key in [
+            "GOTCHATEST_NAME",
+            "GOTCHATEST_DATABASE_URL",
+            "GOTCHATEST_MAX_CONNECTIONS",
+            "GOTCHATEST_SERVER__PORT",
+        ] {
+            std::env::remove_var(key);
+        }
+
+        assert_eq!(config.name, "from-env");
+        // A single underscore stays part of the field name rather than becoming a path separator.
+        assert_eq!(config.database_url, "postgres://env");
+        // A typed field accepts the env string and parses it.
+        assert_eq!(config.max_connections, 99);
+        // `__` addresses a nested section.
+        assert_eq!(config.server.port, 9090);
+    }
+
     #[test]
     fn required_missing_file_fails_to_build() {
         let result: ConfigResult<TestConfig> = Config::builder().file("definitely-does-not-exist-abc123.toml").build();
