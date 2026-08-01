@@ -17,23 +17,49 @@ pub enum ConfigError {
 /// Configuration result type
 pub type ConfigResult<T> = Result<T, ConfigError>;
 
-/// Configuration wrapper for backward compatibility
+/// The loaded configuration: the application's own settings plus the framework's.
+///
+/// The application's settings are **flattened to the top level** of the file, so they read as the
+/// primary content and the framework's own settings sit in a reserved `[server]` section:
+///
+/// ```toml
+/// name = "my-app"
+/// database_url = "postgres://localhost/app"
+///
+/// [server]
+/// host = "0.0.0.0"
+/// port = 8080
+/// ```
+///
+/// This derefs to the application config, so `config.name` reads the application's field directly
+/// rather than going through a wrapper level. Handlers usually skip the wrapper entirely and
+/// extract `State<YourConfig>` — see the `#[config]` attribute.
 #[derive(Clone, Serialize, Deserialize, Debug, Default)]
 pub struct ConfigWrapper<T: DeserializeOwned + Serialize + Default> {
-    pub basic: BasicConfig,
+    /// Framework settings, from the reserved `[server]` section.
+    #[serde(default)]
+    pub server: ServerConfig,
 
-    #[serde(bound = "", default)]
-    pub application: T,
+    /// The application's own settings, living at the top level of the file.
+    #[serde(bound = "", flatten)]
+    pub app: T,
 }
 
-/// Basic server configuration
+impl<T: DeserializeOwned + Serialize + Default> std::ops::Deref for ConfigWrapper<T> {
+    type Target = T;
+    fn deref(&self) -> &T {
+        &self.app
+    }
+}
+
+/// Where the server binds, from the reserved `[server]` section.
 #[derive(Clone, Deserialize, Serialize, Debug)]
-pub struct BasicConfig {
+pub struct ServerConfig {
     pub host: String,
     pub port: u16,
 }
 
-impl Default for BasicConfig {
+impl Default for ServerConfig {
     fn default() -> Self {
         Self {
             host: "127.0.0.1".to_string(),
@@ -209,11 +235,90 @@ mod tests {
     #[test]
     fn test_config_wrapper() {
         let wrapper = ConfigWrapper {
-            basic: BasicConfig::default(),
-            application: TestConfig::default(),
+            server: ServerConfig::default(),
+            app: TestConfig::default(),
         };
 
-        assert_eq!(wrapper.application.name, "");
+        assert_eq!(wrapper.app.name, "");
+        // Deref reaches the application config without going through a wrapper level.
+        assert_eq!(wrapper.name, "");
+    }
+
+    #[test]
+    fn application_settings_live_at_the_top_level() {
+        // The application's own keys sit at the top level of the file; only the framework's
+        // settings are nested, under the reserved `[server]` section.
+        let dir = std::env::temp_dir().join("gotcha-config-shape");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("application.toml");
+        std::fs::write(&path, "name = \"my-app\"\nvalue = 42\n\n[server]\nhost = \"0.0.0.0\"\nport = 9000\n").unwrap();
+
+        let config: ConfigWrapper<TestConfig> = Config::builder().file(&path).build().expect("loads");
+
+        assert_eq!(config.name, "my-app", "application keys read directly");
+        assert_eq!(config.value, 42, "non-string types survive flattening");
+        assert_eq!(config.server.host, "0.0.0.0");
+        assert_eq!(config.server.port, 9000);
+    }
+
+    #[test]
+    fn server_section_falls_back_to_defaults() {
+        let dir = std::env::temp_dir().join("gotcha-config-noserver");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("application.toml");
+        std::fs::write(&path, "name = \"only-app\"\nvalue = 1\n").unwrap();
+
+        let config: ConfigWrapper<TestConfig> = Config::builder().file(&path).build().expect("loads");
+
+        assert_eq!(config.name, "only-app");
+        assert_eq!(config.server.port, ServerConfig::default().port, "a missing [server] uses defaults");
+    }
+
+    /// Environment overrides: `__` separates path segments, so a single underscore is free for
+    /// snake_case field names, and a typed field accepts the (necessarily string) env value.
+    ///
+    /// Serialized because it mutates process-wide environment and working directory.
+    #[test]
+    fn environment_overrides_typed_and_snake_case_fields() {
+        #[derive(Serialize, Deserialize, Default, Debug, Clone)]
+        struct App {
+            name: String,
+            database_url: String,
+            max_connections: u32,
+        }
+
+        let dir = std::env::temp_dir().join("gotcha-config-env");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("application.toml");
+        std::fs::write(
+            &path,
+            "name = \"from-file\"\ndatabase_url = \"from-file\"\nmax_connections = 1\n\n[server]\nport = 3000\nhost = \"127.0.0.1\"\n",
+        )
+        .unwrap();
+
+        std::env::set_var("GOTCHATEST_NAME", "from-env");
+        std::env::set_var("GOTCHATEST_DATABASE_URL", "postgres://env");
+        std::env::set_var("GOTCHATEST_MAX_CONNECTIONS", "99");
+        std::env::set_var("GOTCHATEST_SERVER__PORT", "9090");
+
+        let config: ConfigWrapper<App> = Config::builder().file(&path).env("GOTCHATEST").build().expect("loads");
+
+        for key in [
+            "GOTCHATEST_NAME",
+            "GOTCHATEST_DATABASE_URL",
+            "GOTCHATEST_MAX_CONNECTIONS",
+            "GOTCHATEST_SERVER__PORT",
+        ] {
+            std::env::remove_var(key);
+        }
+
+        assert_eq!(config.name, "from-env");
+        // A single underscore stays part of the field name rather than becoming a path separator.
+        assert_eq!(config.database_url, "postgres://env");
+        // A typed field accepts the env string and parses it.
+        assert_eq!(config.max_connections, 99);
+        // `__` addresses a nested section.
+        assert_eq!(config.server.port, 9090);
     }
 
     #[test]

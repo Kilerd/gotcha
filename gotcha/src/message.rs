@@ -143,8 +143,8 @@ mod tests {
     fn send_dispatches_and_reads_state() {
         let context = GotchaContext {
             config: ConfigWrapper {
-                basic: Default::default(),
-                application: EmptyConfig::default(),
+                server: Default::default(),
+                app: EmptyConfig::default(),
             },
             state: AppState { greeting: "Hello".to_string() },
         };

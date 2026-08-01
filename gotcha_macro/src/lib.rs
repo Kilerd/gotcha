@@ -155,6 +155,60 @@ pub fn derive_parameter(input: TokenStream) -> TokenStream {
 ///     format!("{:?}", state.started_at)
 /// }
 /// ```
+/// Marks a struct as the application configuration so it can be extracted directly with
+/// axum's `State<T>` in handlers.
+///
+/// It generates `impl FromRef<GotchaContext<S, Self>> for Self`, pulling the application's own
+/// settings out of the loaded configuration. Without this, handlers would have to extract
+/// `State<ConfigWrapper<Config>>` and reach through the wrapper.
+///
+/// The struct must be `Clone` and non-generic, and must satisfy the config bounds
+/// (`Serialize + Deserialize + Default`).
+///
+/// ```ignore
+/// use gotcha::prelude::*;
+/// use serde::{Deserialize, Serialize};
+///
+/// #[config]
+/// #[derive(Clone, Default, Serialize, Deserialize)]
+/// struct Config {
+///     name: String,
+/// }
+///
+/// async fn handler(State(config): State<Config>) -> impl Responder {
+///     config.name.clone()
+/// }
+/// ```
+#[proc_macro_attribute]
+pub fn config(_attr: TokenStream, item: TokenStream) -> TokenStream {
+    let input = syn::parse_macro_input!(item as syn::DeriveInput);
+    let ident = input.ident.clone();
+
+    let generated = if input.generics.params.is_empty() {
+        quote::quote! {
+            impl<__GotchaState: ::core::clone::Clone + ::core::marker::Send + ::core::marker::Sync + 'static>
+                ::gotcha::axum::extract::FromRef<::gotcha::GotchaContext<__GotchaState, #ident>> for #ident
+            {
+                fn from_ref(context: &::gotcha::GotchaContext<__GotchaState, #ident>) -> Self {
+                    ::core::clone::Clone::clone(&context.config.app)
+                }
+            }
+        }
+    } else {
+        syn::Error::new_spanned(
+            &input.generics,
+            "#[config] does not support generic structs; implement `FromRef<GotchaContext<S, Self>>` manually",
+        )
+        .to_compile_error()
+    };
+
+    quote::quote! {
+        #input
+        #generated
+    }
+    .into()
+}
+
 #[proc_macro_attribute]
 pub fn state(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let input = syn::parse_macro_input!(item as syn::DeriveInput);

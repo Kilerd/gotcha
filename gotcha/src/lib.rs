@@ -84,7 +84,7 @@ pub use axum::extract::{Extension, Json, Path, Query, State};
 pub use axum::response::IntoResponse as Responder;
 pub use axum::routing::{delete, get, patch, post, put};
 pub use axum_macros::debug_handler;
-pub use config::ConfigWrapper;
+pub use config::{ConfigWrapper, ServerConfig};
 pub use either::Either;
 
 pub use once_cell::sync::Lazy;
@@ -100,7 +100,7 @@ pub use crate::config::GotchaConfigLoader;
 pub use crate::error::{GotchaError, GotchaResult};
 /// Attribute macro that makes a struct usable as `State<T>` in handlers by
 /// generating a `FromRef<GotchaContext<T, C>>` impl. See [`GotchaContext`].
-pub use gotcha_macro::state;
+pub use gotcha_macro::{config, state};
 
 #[cfg(feature = "message")]
 pub mod message;
@@ -175,6 +175,18 @@ where
     }
 }
 
+/// Lets a handler take `State<ServerConfig>` to read the bind address. `ServerConfig` is one of
+/// this crate's own types, so unlike the application's config this needs no attribute macro.
+impl<State, Config> FromRef<GotchaContext<State, Config>> for crate::config::ServerConfig
+where
+    State: Clone + Send + Sync + 'static,
+    Config: Clone + Send + Sync + 'static + Serialize + for<'de> Deserialize<'de> + Default,
+{
+    fn from_ref(context: &GotchaContext<State, Config>) -> Self {
+        context.config.server.clone()
+    }
+}
+
 /// Marker trait bundling the bounds every Gotcha application `Config` must meet.
 ///
 /// Blanket-implemented for every qualifying type. It exists so macro-generated
@@ -245,8 +257,8 @@ pub trait GotchaApp: Sized + Send + Sync {
                 }
             }
 
-            let ip = Ipv4Addr::from_str(&config.basic.host).map_err(|_| GotchaError::InvalidAddress(config.basic.host.clone()))?;
-            let addr = SocketAddrV4::new(ip, config.basic.port);
+            let ip = Ipv4Addr::from_str(&config.server.host).map_err(|_| GotchaError::InvalidAddress(config.server.host.clone()))?;
+            let addr = SocketAddrV4::new(ip, config.server.port);
             let listener = tokio::net::TcpListener::bind(addr).await.map_err(|source| GotchaError::Bind {
                 addr: addr.to_string(),
                 source,
