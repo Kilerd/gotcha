@@ -15,10 +15,12 @@ default = ["http1"]
 http1 = ["axum/http1", "axum/tokio"]
 prometheus = ["dep:axum-prometheus"]
 openapi = ["dep:oas", "dep:gotcha_core", "gotcha_core/axum"]
-cors = ["dep:tower-http"]
+# These enable only their own half of `tower-http`. That matters: `tower-http/cors` has no
+# dependencies at all, while `tower-http/fs` pulls in mime_guess, httpdate, percent-encoding and a
+# dozen more, so a CORS-only application should not pay for the static file machinery.
+cors = ["dep:tower-http", "tower-http/cors"]
 static_files = ["dep:tower-http", "tower-http/fs"]
 task = ["dep:cron", "tokio/time"]
-message = ["tokio/rt"]
 
 
 [dependencies]
@@ -26,7 +28,9 @@ async-trait = "0.1.60"
 gotcha_macro = { version = "0.3", path = "../gotcha_macro" }
 gotcha_core = { version = "0.3", path = "../gotcha_core", optional = true }
 serde = {version = "1", features = ["derive"]}
-tokio = {version = "1"}
+# `rt` is needed by the message system, which is always available (it gated nothing but a
+# 160-line module and this one tokio feature).
+tokio = {version = "1", features = ["rt"]}
 tracing = "0.1"
 tracing-subscriber = {version="0.3", features=["env-filter"]}
 log = "0.4"
@@ -47,7 +51,8 @@ convert_case = "0.6.0"
 once_cell = "1"
 axum-prometheus = { version = "0.7.0", optional = true }
 axum-macros = "0.4"
-tower-http = { version = "0.6", optional = true, features = ["cors", "fs"] }
+# No features here — the `cors` / `static_files` flags each turn on the one they need.
+tower-http = { version = "0.6", optional = true, default-features = false }
 cfg-if = { workspace = true }
 thiserror = "1.0"
 serde_json = "1"    

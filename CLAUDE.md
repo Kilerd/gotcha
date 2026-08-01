@@ -65,10 +65,9 @@ cargo build --all-features
 The framework uses Cargo features for modular functionality:
 - `openapi` - Automatic OpenAPI documentation generation via `oas` crate
 - `prometheus` - Metrics integration with `axum-prometheus`
-- `cors` - CORS support via `tower-http`
-- `static_files` - Static file serving capabilities
+- `cors` - CORS layer via `tower-http` (no extra dependencies)
+- `static_files` - Static file serving via `tower-http`
 - `task` - Background task scheduling with cron support
-- `message` - Built-in message passing system
 
 ### Configuration System
 - Uses `mofa` crate for advanced configuration loading
