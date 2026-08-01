@@ -16,6 +16,7 @@ use crate::Schematic;
 
 /// ParameterProvider is a trait that defines the value which can be used as a parameter.
 pub trait ParameterProvider {
+    /// What this extractor contributes to the operation, given the route path.
     fn generate(_url: String) -> Either<Vec<Parameter>, RequestBody> {
         Either::Left(vec![])
     }

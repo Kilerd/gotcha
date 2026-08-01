@@ -57,29 +57,43 @@ pub(crate) async fn scalar_html() -> impl Responder {
     Html(include_str!("../../statics/scalar.html"))
 }
 
+/// What one handler argument contributes: either operation parameters or the request body.
 pub type ParamType = Either<Vec<Parameter>, RequestBody>;
 
+/// Builds an argument's [`ParamType`] given the route path (needed to name path parameters).
 pub type ParamConstructor = Box<dyn Fn(String) -> ParamType + Sync + Send + 'static>;
 
+/// Rewrites axum's `:name` path segments into OpenAPI's `{name}` form.
 pub fn replace_path_variable(path: String) -> String {
     let regex = Regex::new(PATH_VARIABLE_PATTERN).unwrap();
     regex.replace_all(&path, |caps: &regex::Captures| format!("{{{}}}", &caps[0][1..])).to_string()
 }
 
 #[derive()]
+/// Everything the `#[api]` macro records about one handler, collected via `inventory`.
 pub struct Operable {
+    /// Fully qualified name of the handler function, used to match a route to its `Operable`.
     pub type_name: &'static str,
+    /// The operation id.
     pub id: &'static str,
+    /// Tag the operation is grouped under.
     pub group: Option<&'static str>,
+    /// Explicit summary; when absent it is derived from the id in Title Case.
     pub summary: Option<&'static str>,
+    /// Description, taken from the handler's doc comment.
     pub description: Option<&'static str>,
+    /// Whether the operation is marked deprecated.
     pub deprecated: bool,
+    /// Name of a security scheme this operation requires.
     pub security: Option<&'static str>,
+    /// One constructor per handler argument.
     pub parameters: &'static Lazy<Vec<ParamConstructor>>,
+    /// Builds the operation's responses from the handler's return type.
     pub responses: &'static Lazy<Box<dyn Fn() -> Responses + Sync + Send + 'static>>,
 }
 
 impl Operable {
+    /// Build the OpenAPI operation for this handler at `path`.
     pub fn generate(&self, path: String) -> Operation {
         let tags = self.group.map(|group| vec![group.to_string()]);
         let mut params = vec![];

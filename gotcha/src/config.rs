@@ -11,6 +11,7 @@ use thiserror::Error;
 #[derive(Error, Debug)]
 pub enum ConfigError {
     #[error("Configuration error: {0}")]
+    /// A configuration source could not be read, parsed, or merged.
     Error(String),
 }
 
@@ -55,7 +56,9 @@ impl<T: DeserializeOwned + Serialize + Default> std::ops::Deref for ConfigWrappe
 /// Where the server binds, from the reserved `[server]` section.
 #[derive(Clone, Deserialize, Serialize, Debug)]
 pub struct ServerConfig {
+    /// Address the server binds to.
     pub host: String,
+    /// Port the server listens on.
     pub port: u16,
 }
 
@@ -71,8 +74,11 @@ impl Default for ServerConfig {
 /// Simple configuration builder state
 #[derive(Clone, Debug, Default)]
 pub struct ConfigState {
+    /// Configuration files added to the builder, in the order they were added.
     pub file_paths: Vec<PathBuf>,
+    /// Environment variable prefixes the builder reads from.
     pub env_prefixes: Vec<String>,
+    /// Whether `${VAR}` substitution is enabled.
     pub enable_vars: bool,
 }
 

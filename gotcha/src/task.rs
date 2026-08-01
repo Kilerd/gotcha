@@ -49,6 +49,8 @@ use tracing::info;
 
 use crate::GotchaContext;
 
+/// Registers background tasks that run alongside the server, each with access to the application
+/// context.
 pub struct TaskScheduler<T1: Clone + Send + Sync + 'static, T2: Clone + Send + Sync + 'static + Serialize + for<'de> Deserialize<'de> + Default> {
     context: GotchaContext<T1, T2>,
 }
@@ -58,6 +60,7 @@ where
     T1: Clone + Send + Sync + 'static,
     T2: Clone + Send + Sync + 'static + Serialize + for<'de> Deserialize<'de> + Default,
 {
+    /// Create a scheduler bound to the application context tasks will receive.
     pub fn new(context: GotchaContext<T1, T2>) -> Self {
         Self { context }
     }
@@ -83,6 +86,7 @@ where
         tokio::spawn(cron_proc_macro_wrapper(self.context.clone(), schedule, name, task));
     }
 
+    /// Run `task` every `interval`, starting one interval from now.
     pub fn interval<F, FF>(&self, name: impl AsRef<str>, interval: std::time::Duration, task: F)
     where
         F: Fn(GotchaContext<T1, T2>) -> FF + Send + 'static,
@@ -105,6 +109,7 @@ where
     }
 }
 
+/// Drives a cron task; called by the scheduler, not directly.
 pub async fn cron_proc_macro_wrapper<T1, T2, F, FF>(context: GotchaContext<T1, T2>, schedule: Schedule, name: String, task: F)
 where
     T1: Clone + Send + Sync + 'static,
@@ -122,6 +127,7 @@ where
     }
 }
 
+/// Drives an interval task; called by the scheduler, not directly.
 pub async fn interval_proc_macro_wrapper<T1, T2, F, FF>(context: GotchaContext<T1, T2>, interval: std::time::Duration, name: String, task: F)
 where
     T1: Clone + Send + Sync + 'static,

@@ -44,6 +44,7 @@ pub use serde_json::{json, Value as JsonValue};
 pub use crate::async_trait;
 
 // Common result type
+/// A `Result` whose error defaults to a boxed `std::error::Error`, for `main` and quick handlers.
 pub type Result<T, E = Box<dyn std::error::Error + Send + Sync>> = std::result::Result<T, E>;
 
 // Feature-specific exports
@@ -58,6 +59,7 @@ pub use crate::TaskScheduler;
 
 // Utility macros for common patterns
 #[macro_export]
+/// Defines an async handler function with less ceremony.
 macro_rules! handler {
     // Simple async closure handler
     ($body:expr) => {
@@ -71,6 +73,7 @@ macro_rules! handler {
 }
 
 #[macro_export]
+/// Builds a `Json` response from a `serde_json::json!` literal.
 macro_rules! json_response {
     ($data:expr) => {
         axum::Json(serde_json::json!($data))
@@ -78,6 +81,7 @@ macro_rules! json_response {
 }
 
 #[macro_export]
+/// Starts a server on the given address with the given routes, for examples and prototypes.
 macro_rules! quick_server {
     (
         $(($method:ident, $path:literal, $handler:expr)),* $(,)?

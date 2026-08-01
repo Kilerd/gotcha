@@ -92,11 +92,28 @@ impl<T> std::ops::Deref for Cookie<T> {
 #[derive(Debug)]
 pub enum ParamRejection {
     /// A required parameter was absent.
-    Missing { kind: &'static str, name: &'static str },
+    Missing {
+        /// `"header"` or `"cookie"`.
+        kind: &'static str,
+        /// The parameter name.
+        name: &'static str,
+    },
     /// The parameter was present but could not be parsed.
-    Invalid { kind: &'static str, name: &'static str, message: String },
+    Invalid {
+        /// `"header"` or `"cookie"`.
+        kind: &'static str,
+        /// The parameter name.
+        name: &'static str,
+        /// Why the value was rejected.
+        message: String,
+    },
     /// The header value was not valid UTF-8, so it cannot be parsed as text.
-    NotText { kind: &'static str, name: &'static str },
+    NotText {
+        /// `"header"` or `"cookie"`.
+        kind: &'static str,
+        /// The parameter name.
+        name: &'static str,
+    },
 }
 
 impl IntoResponse for ParamRejection {
