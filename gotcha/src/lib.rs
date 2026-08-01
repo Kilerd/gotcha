@@ -8,10 +8,10 @@
 //! - Built on top of Axum for high performance and reliability
 //! - OpenAPI documentation generation (optional)
 //! - Prometheus metrics integration (optional)
-//! - CORS support (optional)
-//! - Static file serving (optional)
-//! - Task scheduling
+//! - CORS support and static file serving (optional)
+//! - Task scheduling (optional)
 //! - Configuration management
+//! - Request validation
 //! - Message system
 //! - State management
 //!
@@ -72,10 +72,14 @@
 //!
 //! ## Optional Features
 //!
-//! - `openapi` - Enables OpenAPI documentation generation
-//! - `prometheus` - Enables Prometheus metrics
-//! - `cors` - Enables CORS support
-//! - `static_files` - Enables static file serving capabilities
+//! Each one gates a dependency that not every application needs; everything else — configuration,
+//! the message system, validation, header/cookie parameters — is always available.
+//!
+//! - `openapi` - OpenAPI documentation generation (`oas`, `gotcha_core`)
+//! - `prometheus` - Prometheus metrics (`axum-prometheus`)
+//! - `cors` - CORS layer (`tower-http/cors`, which has no dependencies of its own)
+//! - `static_files` - Static file serving (`tower-http/fs`, which pulls in mime and range handling)
+//! - `task` - Background task scheduling (`cron`)
 //!
 
 pub use async_trait::async_trait;
@@ -102,7 +106,6 @@ pub use crate::error::{GotchaError, GotchaResult};
 /// generating a `FromRef<GotchaContext<T, C>>` impl. See [`GotchaContext`].
 pub use gotcha_macro::{config, state};
 
-#[cfg(feature = "message")]
 pub mod message;
 #[cfg(feature = "openapi")]
 pub use gotcha_core::Responsible;
@@ -114,7 +117,6 @@ pub use gotcha_macro::api;
 #[cfg(feature = "openapi")]
 pub use oas;
 
-#[cfg(feature = "message")]
 pub use crate::message::{Message, Messager};
 #[cfg(feature = "openapi")]
 pub use crate::openapi::Operable;

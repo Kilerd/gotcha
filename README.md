@@ -106,16 +106,15 @@ Enable additional features as needed:
 
 ```toml
 [dependencies]
-gotcha = { version = "0.3", features = ["openapi", "prometheus", "cors", "static_files", "task", "message"] }
+gotcha = { version = "0.3", features = ["openapi", "prometheus", "cors", "static_files", "task"] }
 ```
 
 Available features:
 - `openapi` - Automatic OpenAPI/Swagger documentation
 - `prometheus` - Metrics collection and exposition
-- `cors` - Cross-Origin Resource Sharing support  
+- `cors` - Cross-Origin Resource Sharing support
 - `static_files` - Static file serving capabilities
 - `task` - Background task scheduling with cron support
-- `message` - Built-in message passing system
 
 ## 📖 Documentation & Examples
 
