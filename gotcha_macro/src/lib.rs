@@ -83,9 +83,10 @@ pub fn api(args: TokenStream, input_stream: TokenStream) -> TokenStream {
 /// An explicit `description` overrides the field's doc comment, and `example` /
 /// `default` preserve their JSON type (`example = 42` stays a number, not `"42"`).
 ///
-/// Validation constraints (min/max, length, regex, …) are intentionally *not* part of
-/// `#[schematic]`; they are handled by request validation as a single source of truth, so
-/// a constraint is never written twice.
+/// Validation constraints belong in `#[validate(...)]` (the validator crate), not `#[schematic]`,
+/// so a rule is written once. Where they map cleanly they are also reflected in the schema:
+/// `range` → minimum/maximum, `length` → minLength/maxLength (minItems/maxItems for collections),
+/// `email`/`url` → format.
 ///
 /// ```rust,ignore
 /// #[derive(Schematic, Serialize, Deserialize)]
