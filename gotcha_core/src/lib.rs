@@ -65,6 +65,12 @@ pub trait Schematic {
     fn fields() -> Vec<(&'static str, EnhancedSchema)> {
         vec![]
     }
+    /// Whether a value of this type is sent as an empty body. Only the unit type is, and
+    /// [`Responsible`](crate::Responsible) documents it as a response with no content rather than
+    /// as a JSON body.
+    fn empty_body() -> bool {
+        false
+    }
     /// Generate the schema of the type.
     fn generate_schema() -> EnhancedSchema {
         EnhancedSchema {
@@ -117,6 +123,10 @@ impl_primitive_type! { bool, "bool", "boolean"}
 impl_primitive_type! { f32, "f32", "number"}
 impl_primitive_type! { f64, "f64", "number"}
 
+/// The unit type means "no value". As a *return* type that is an empty body, which
+/// [`Responsible`](crate::Responsible) documents as a response carrying no content. In the rare
+/// case it appears as a schema (`Json<()>`, which serializes as `null`) it produces an empty
+/// schema — `"void"` is not a valid OpenAPI type and made the generated document invalid.
 impl Schematic for () {
     fn name() -> &'static str {
         "void"
@@ -128,6 +138,23 @@ impl Schematic for () {
 
     fn type_() -> &'static str {
         "void"
+    }
+
+    fn empty_body() -> bool {
+        true
+    }
+
+    fn generate_schema() -> EnhancedSchema {
+        EnhancedSchema {
+            schema: Schema {
+                _type: None,
+                format: None,
+                nullable: None,
+                description: None,
+                extras: Default::default(),
+            },
+            required: false,
+        }
     }
 }
 

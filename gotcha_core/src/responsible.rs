@@ -44,7 +44,28 @@ fn json_response<T: Schematic>() -> Responses {
     response
 }
 
-// todo: add response for ()
+/// A response with no body.
+///
+/// axum sends `200` with an empty body for a handler that returns `()` — `impl IntoResponse for ()`
+/// defers to `Body::empty()`, and `http::Response::new` defaults to `StatusCode::OK`. It is *not*
+/// a `204`, so this documents `200` with no content to match what the server actually sends. A
+/// handler that wants `204` returns `StatusCode::NO_CONTENT` explicitly.
+fn empty_body_response() -> Responses {
+    let mut response = Responses {
+        default: None,
+        data: BTreeMap::default(),
+    };
+    response.data.insert(
+        "200".to_string(),
+        Referenceable::Data(Response {
+            description: "no content".to_string(),
+            headers: None,
+            content: None,
+            links: None,
+        }),
+    );
+    response
+}
 
 #[cfg(feature = "axum")]
 impl<T> Responsible for axum::Json<T>
@@ -61,7 +82,14 @@ where
     T: Schematic,
 {
     fn response() -> Responses {
-        json_response::<T>()
+        // A handler returning `()` sends an empty body, so it documents a `200` with no content.
+        // Wrapping the unit in `Json` is different — that really does send `null` — and goes
+        // through the `Json<T>` impl above instead.
+        if T::empty_body() {
+            empty_body_response()
+        } else {
+            json_response::<T>()
+        }
     }
 }
 

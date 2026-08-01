@@ -93,9 +93,12 @@ pub(crate) fn request_handler(args: TokenStream, input_stream: TokenStream) -> T
         .collect();
     let ret_pos = &input.sig.output;
     let ret_schematic = match ret_pos {
+        // A handler with no return type returns `()`, which documents as `204 No Content`.
+        // This used to be `( () as ::gotcha::Responsible)` — a cast to a *trait*, which does not
+        // compile (E0782), so such a handler could not be annotated at all.
         ReturnType::Default => {
             quote! {
-                Box::new(|| { ( () as ::gotcha::Responsible).response() })
+                Box::new(|| { <() as ::gotcha::Responsible>::response() })
             }
         }
 
