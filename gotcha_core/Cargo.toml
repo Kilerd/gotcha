@@ -6,6 +6,12 @@ version = "0.3.0"
 license = "MIT"
 repository = "https://github.com/Kilerd/gotcha/"
 
+# docs.rs builds with every feature, so the OpenAPI layer and the rest of the optional surface
+# actually appear; `docsrs` turns on the per-item "requires feature X" badges.
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
 [lib]
 doctest = true
 

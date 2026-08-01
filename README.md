@@ -22,7 +22,7 @@ An enhanced web framework built on top of Axum, providing additional features an
 
 ### Simple Builder API (Recommended for new projects)
 
-```rust
+```rust,no_run
 use gotcha::prelude::*;
 
 #[tokio::main]
@@ -49,14 +49,20 @@ struct User {
 
 ### Advanced Trait API (For complex applications)
 
-```rust
-use gotcha::{ConfigWrapper, GotchaApp, GotchaContext, GotchaResult, GotchaRouter, State};
-use serde::{Deserialize, Serialize};
+```rust,no_run
+use gotcha::prelude::*;
 
+#[config]
 #[derive(Debug, Deserialize, Serialize, Clone, Default)]
 pub struct Config {
     pub database_url: String,
     pub redis_url: String,
+}
+
+#[state]
+#[derive(Clone, Default)]
+pub struct AppState {
+    pub started_at: u64,
 }
 
 pub struct App {}
@@ -65,7 +71,7 @@ impl GotchaApp for App {
     type State = AppState;
     type Config = Config;
 
-    fn routes(&self, router: GotchaRouter<GotchaContext<Self::State, Self::Config>>) 
+    fn routes(&self, router: GotchaRouter<GotchaContext<Self::State, Self::Config>>)
         -> GotchaRouter<GotchaContext<Self::State, Self::Config>> {
         router
             .get("/", hello_world)
@@ -73,13 +79,19 @@ impl GotchaApp for App {
     }
 
     async fn state(&self, config: &ConfigWrapper<Self::Config>) -> GotchaResult<Self::State> {
-        // Initialize database connections, etc.
-        Ok(AppState::new(&config.database_url).await?)
+        // Open database connections here; `config` is already loaded.
+        let _ = &config.database_url;
+        Ok(AppState::default())
     }
 }
 
-async fn hello_world(_state: State<ConfigWrapper<Config>>) -> &'static str {
-    "Hello World"
+// The application's own config and state extract directly, thanks to `#[config]` / `#[state]`.
+async fn hello_world(State(config): State<Config>) -> impl Responder {
+    config.redis_url.clone()
+}
+
+async fn get_user(Path(id): Path<u32>, State(_state): State<AppState>) -> impl Responder {
+    format!("user {id}")
 }
 
 #[tokio::main]
@@ -122,8 +134,8 @@ Available features:
 
 With the `openapi` feature enabled, use the `#[api]` macro for automatic documentation:
 
-```rust
-use gotcha::{api, Json, Path, Schematic};
+```rust,ignore
+use gotcha::prelude::*;
 
 #[derive(Schematic, Serialize, Deserialize)]
 struct User {
@@ -135,7 +147,7 @@ struct User {
 /// Get user by ID
 #[api(id = "get_user", group = "users")]
 async fn get_user(Path(id): Path<u32>) -> Json<User> {
-    // Implementation here
+    Json(User { id, name: "Ada".into(), email: "ada@example.com".into() })
 }
 ```
 
@@ -194,12 +206,25 @@ Configuration supports:
 
 ### Task Scheduling
 
-```rust
-use gotcha::{GotchaApp, GotchaResult, TaskScheduler};
+Requires the `task` feature.
+
+```rust,ignore
+use gotcha::prelude::*;
 use std::time::Duration;
 
+# pub struct App {}
 impl GotchaApp for App {
-    // ... other implementations
+    type State = ();
+    type Config = EmptyConfig;
+
+    fn routes(&self, router: GotchaRouter<GotchaContext<Self::State, Self::Config>>)
+        -> GotchaRouter<GotchaContext<Self::State, Self::Config>> {
+        router
+    }
+
+    async fn state(&self, _config: &ConfigWrapper<Self::Config>) -> GotchaResult<Self::State> {
+        Ok(())
+    }
 
     async fn tasks(&self, scheduler: &mut TaskScheduler<Self::State, Self::Config>) -> GotchaResult<()> {
         // Daily cleanup at 2 AM (cron fields: sec min hour day month weekday)
@@ -219,7 +244,7 @@ impl GotchaApp for App {
 
 Gotcha is organized as a Rust workspace with the following structure:
 
-```
+```text
 gotcha/
 ├── gotcha/           # Main framework crate
 ├── gotcha_macro/     # Procedural macros
@@ -299,7 +324,7 @@ cd examples/message && cargo run   # Message system
 
 ## 📄 License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the MIT License - see the [LICENSE](https://github.com/Kilerd/gotcha/blob/main/LICENSE) file for details.
 
 ## 🔗 Related Projects
 

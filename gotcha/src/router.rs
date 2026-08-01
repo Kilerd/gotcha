@@ -17,8 +17,10 @@ use crate::Operable;
 #[cfg(feature = "openapi")]
 use std::collections::HashMap;
 
+/// Generates the per-HTTP-method shorthand (`get`, `post`, …) on the router.
 macro_rules! implement_method {
     ($method:expr, $fn_name: tt ) => {
+        #[doc = concat!("Route `", stringify!($fn_name), "` requests for `path` to `handler`.")]
         pub fn $fn_name<H: Handler<T, State>, T: 'static>(self, path: &str, handler: H) -> Self {
             self.method_route(path, $method, handler)
         }
@@ -211,6 +213,7 @@ impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
         }
     }
 
+    /// Handle requests that match no route.
     pub fn fallback<H, T>(self, handler: H) -> Self
     where
         H: Handler<T, State>,

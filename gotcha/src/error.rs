@@ -21,7 +21,12 @@ pub enum GotchaError {
 
     /// The server failed to bind to the given address.
     #[error("failed to bind server to {addr}: {source}")]
-    Bind { addr: String, source: std::io::Error },
+    Bind {
+        /// The address the server tried to bind to.
+        addr: String,
+        /// Why the bind failed.
+        source: std::io::Error,
+    },
 
     /// An I/O error from the runtime (e.g. `axum::serve`).
     #[error(transparent)]

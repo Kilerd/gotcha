@@ -1,86 +1,12 @@
-//! # Gotcha
-//!
-//! Gotcha is an enhanced web framework based on Axum, providing additional features and conveniences
-//! for building web applications in Rust.
-//!
-//! ## Features
-//!
-//! - Built on top of Axum for high performance and reliability
-//! - OpenAPI documentation generation (optional)
-//! - Prometheus metrics integration (optional)
-//! - CORS support and static file serving (optional)
-//! - Task scheduling (optional)
-//! - Configuration management
-//! - Request validation
-//! - Message system
-//! - State management
-//!
-//! ## Simple Example (New Builder API)
-//!
-//! ```no_run
-//! use gotcha::prelude::*;
-//!
-//! #[tokio::main]
-//! async fn main() -> Result<(), Box<dyn std::error::Error>> {
-//!     Gotcha::new()
-//!         .get("/", || async { "Hello World" })
-//!         .get("/hello/:name", |Path(name): Path<String>| async move {
-//!             format!("Hello, {}!", name)
-//!         })
-//!         .listen("127.0.0.1:3000")
-//!         .await?;
-//!     Ok(())
-//! }
-//! ```
-//!
-//! ## Advanced Example (Traditional Trait API)
-//!
-//! ```no_run
-//! use gotcha::{ConfigWrapper, GotchaApp, GotchaContext, GotchaResult, GotchaRouter, Responder, State};
-//! use serde::{Deserialize, Serialize};
-//!
-//! pub async fn hello_world(_state: State<ConfigWrapper<Config>>) -> impl Responder {
-//!     "hello world"
-//! }
-//!
-//! #[derive(Debug, Deserialize, Serialize, Clone, Default)]
-//! pub struct Config {
-//!     pub name: String,
-//! }
-//!
-//! pub struct App {}
-//!
-//! impl GotchaApp for App {
-//!     type State = ();
-//!     type Config = Config;
-//!
-//!     fn routes(&self, router: GotchaRouter<GotchaContext<Self::State, Self::Config>>) -> GotchaRouter<GotchaContext<Self::State, Self::Config>> {
-//!         router.get("/", hello_world)
-//!     }
-//!
-//!     async fn state(&self, _config: &ConfigWrapper<Self::Config>) -> GotchaResult<Self::State> {
-//!         Ok(())
-//!     }
-//! }
-//!
-//! #[tokio::main]
-//! async fn main() -> Result<(), Box<dyn std::error::Error>> {
-//!     App {}.run().await?;
-//!     Ok(())
-//! }
-//! ```
-//!
-//! ## Optional Features
-//!
-//! Each one gates a dependency that not every application needs; everything else — configuration,
-//! the message system, validation, header/cookie parameters — is always available.
-//!
-//! - `openapi` - OpenAPI documentation generation (`oas`, `gotcha_core`)
-//! - `prometheus` - Prometheus metrics (`axum-prometheus`)
-//! - `cors` - CORS layer (`tower-http/cors`, which has no dependencies of its own)
-//! - `static_files` - Static file serving (`tower-http/fs`, which pulls in mime and range handling)
-//! - `task` - Background task scheduling (`cron`)
-//!
+// The crate documentation is the README, so the front page and the repository landing page cannot
+// drift apart — and its examples become doctests, so they cannot rot either.
+#![doc = include_str!("../README.md")]
+// Every public item carries documentation. This is denied rather than warned so an undocumented
+// item fails the build instead of quietly accumulating (64 had, before this was turned on).
+#![deny(missing_docs)]
+// `doc(cfg(..))` is nightly-only, so it is applied on docs.rs (which sets `--cfg docsrs`) and
+// skipped everywhere else. It puts a "requires feature X" badge on each gated item.
+#![cfg_attr(docsrs, feature(doc_cfg))]
 
 pub use async_trait::async_trait;
 use axum::extract::FromRef;
@@ -108,17 +34,22 @@ pub use gotcha_macro::{config, state};
 
 pub mod message;
 #[cfg(feature = "openapi")]
+#[cfg_attr(docsrs, doc(cfg(feature = "openapi")))]
 pub use gotcha_core::Responsible;
 
 #[cfg(feature = "openapi")]
+#[cfg_attr(docsrs, doc(cfg(feature = "openapi")))]
 pub use crate::openapi::schematic::{ParameterProvider, Schematic};
 #[cfg(feature = "openapi")]
+#[cfg_attr(docsrs, doc(cfg(feature = "openapi")))]
 pub use gotcha_macro::api;
 #[cfg(feature = "openapi")]
+#[cfg_attr(docsrs, doc(cfg(feature = "openapi")))]
 pub use oas;
 
 pub use crate::message::{Message, Messager};
 #[cfg(feature = "openapi")]
+#[cfg_attr(docsrs, doc(cfg(feature = "openapi")))]
 pub use crate::openapi::Operable;
 pub use crate::params::{Cookie, CookieParam, Header, HeaderParam, ParamRejection};
 pub use crate::validation::{Valid, ValidRejection};
@@ -133,37 +64,52 @@ pub mod builder;
 pub mod config;
 pub mod error;
 #[cfg(feature = "openapi")]
+#[cfg_attr(docsrs, doc(cfg(feature = "openapi")))]
 pub mod openapi;
 pub mod params;
 pub mod prelude;
+/// The router that tracks OpenAPI operations alongside axum routes.
 pub mod router;
 
 #[cfg(feature = "task")]
+#[cfg_attr(docsrs, doc(cfg(feature = "task")))]
 pub mod task;
 pub mod validation;
 
 #[cfg(feature = "prometheus")]
+#[cfg_attr(docsrs, doc(cfg(feature = "prometheus")))]
+/// Prometheus metrics, re-exported from `axum-prometheus`.
 pub mod prometheus {
     pub use axum_prometheus::metrics::*;
 }
 
+/// Middleware layers re-exported from `tower-http`.
 pub mod layers {
     #[cfg(feature = "cors")]
     pub use tower_http::cors::{self, CorsLayer};
 }
 
 #[cfg(feature = "openapi")]
+#[cfg_attr(docsrs, doc(cfg(feature = "openapi")))]
 pub use crate::openapi::schematic::EnhancedSchema;
 
 pub use serde_json;
 #[cfg(feature = "task")]
+#[cfg_attr(docsrs, doc(cfg(feature = "task")))]
 pub use task::TaskScheduler;
 #[cfg(feature = "static_files")]
+#[cfg_attr(docsrs, doc(cfg(feature = "static_files")))]
 pub use tower_http::services::{ServeDir, ServeFile};
 
 #[derive(Clone)]
+/// The axum state the framework injects: the loaded configuration plus the application state.
+///
+/// Handlers rarely name this directly — `#[state]` and `#[config]` make `State<AppState>` and
+/// `State<AppConfig>` extractable instead.
 pub struct GotchaContext<State: Clone + Send + Sync + 'static, Config: Clone + Send + Sync + 'static + Serialize + for<'de> Deserialize<'de> + Default> {
+    /// The loaded configuration.
     pub config: ConfigWrapper<Config>,
+    /// The application state.
     pub state: State,
 }
 
@@ -197,10 +143,17 @@ where
 pub trait GotchaConfig: Clone + Send + Sync + 'static + Serialize + for<'de> Deserialize<'de> + Default {}
 impl<T> GotchaConfig for T where T: Clone + Send + Sync + 'static + Serialize + for<'de> Deserialize<'de> + Default {}
 
+/// The trait API: implement it to describe an application, then call `run()`.
+///
+/// The builder ([`Gotcha`]) is the simpler alternative; both assemble the router through the same
+/// path, so they behave identically.
 pub trait GotchaApp: Sized + Send + Sync {
+    /// The application state, shared by every handler.
     type State: Clone + Send + Sync + 'static;
+    /// The application's own configuration, read from the top level of the config file.
     type Config: Clone + Send + Sync + 'static + Serialize + for<'de> Deserialize<'de> + Default;
 
+    /// Load the configuration. The default honours `GOTCHA_ACTIVE_PROFILE`.
     fn config(&self) -> impl std::future::Future<Output = GotchaResult<ConfigWrapper<Self::Config>>> + Send {
         async move {
             let config = GotchaConfigLoader::load::<ConfigWrapper<Self::Config>>(std::env::var("GOTCHA_ACTIVE_PROFILE").ok())?;
@@ -208,6 +161,7 @@ pub trait GotchaApp: Sized + Send + Sync {
         }
     }
 
+    /// Install the tracing subscriber. The default reads `RUST_LOG`.
     fn logger(&self) -> GotchaResult<()> {
         tracing_subscriber::registry()
             .with(fmt::layer())
@@ -222,15 +176,19 @@ pub trait GotchaApp: Sized + Send + Sync {
         Ok(())
     }
 
+    /// Register the application's routes.
     fn routes(&self, router: GotchaRouter<GotchaContext<Self::State, Self::Config>>) -> GotchaRouter<GotchaContext<Self::State, Self::Config>>;
 
+    /// Build the application state, given the loaded configuration.
     fn state(&self, config: &ConfigWrapper<Self::Config>) -> impl std::future::Future<Output = GotchaResult<Self::State>> + Send;
 
     #[cfg(feature = "task")]
+    /// Register background tasks. The default registers none.
     fn tasks(&self, _task_scheduler: &mut TaskScheduler<Self::State, Self::Config>) -> impl std::future::Future<Output = GotchaResult<()>> + Send {
         async { Ok(()) }
     }
 
+    /// Assemble the final axum router. Override only to wrap the whole application.
     fn build_router(&self, context: GotchaContext<Self::State, Self::Config>) -> impl std::future::Future<Output = GotchaResult<axum::Router>> + Send {
         async move {
             let router = GotchaRouter::<GotchaContext<Self::State, Self::Config>>::default();
@@ -239,6 +197,7 @@ pub trait GotchaApp: Sized + Send + Sync {
         }
     }
 
+    /// Load configuration, build state and routes, then serve until shutdown.
     fn run(self) -> impl std::future::Future<Output = GotchaResult<()>> + Send {
         async move {
             use std::net::{Ipv4Addr, SocketAddrV4};

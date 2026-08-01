@@ -13,7 +13,9 @@ use oas::{MediaType, Referenceable, Response, Responses};
 
 use crate::Schematic;
 
+/// Maps a handler's return type to the operation's OpenAPI responses.
 pub trait Responsible {
+    /// The responses this return type produces.
     fn response() -> Responses;
 }
 
@@ -100,6 +102,7 @@ where
 /// `E: Schematic` and for axum's `(StatusCode, Json<E>)` idiom; custom error types can implement
 /// it directly.
 pub trait ErrorResponsible {
+    /// Add this error type's responses to the operation's existing ones.
     fn error_responses(responses: &mut Responses);
 }
 

@@ -1,3 +1,8 @@
+// Every public item carries documentation, enforced rather than merely encouraged.
+#![deny(missing_docs)]
+// `doc(cfg(..))` is nightly-only; docs.rs sets `--cfg docsrs`, so the "requires feature X" badges
+// appear there and are skipped elsewhere.
+#![cfg_attr(docsrs, feature(doc_cfg))]
 //! # Gotcha Core
 //!
 //! Lightweight schema core for the [Gotcha](https://github.com/Kilerd/gotcha/) web framework.
@@ -32,12 +37,17 @@ pub mod responsible;
 pub use responsible::Responsible;
 
 #[cfg(feature = "axum")]
+#[cfg_attr(docsrs, doc(cfg(feature = "axum")))]
 pub mod parameter;
 #[cfg(feature = "axum")]
+#[cfg_attr(docsrs, doc(cfg(feature = "axum")))]
 pub use parameter::ParameterProvider;
 
+/// A schema plus whether the value it describes is required where it appears.
 pub struct EnhancedSchema {
+    /// The OpenAPI schema itself.
     pub schema: Schema,
+    /// Whether the value must be present.
     pub required: bool,
 }
 
@@ -62,6 +72,7 @@ pub trait Schematic {
         None
     }
 
+    /// The type's fields, used to build object schemas and to flatten query parameters.
     fn fields() -> Vec<(&'static str, EnhancedSchema)> {
         vec![]
     }
