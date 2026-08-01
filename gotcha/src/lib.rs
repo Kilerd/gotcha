@@ -118,7 +118,11 @@ pub use oas;
 pub use crate::message::{Message, Messager};
 #[cfg(feature = "openapi")]
 pub use crate::openapi::Operable;
+pub use crate::params::{Cookie, CookieParam, Header, HeaderParam, ParamRejection};
 pub use crate::validation::{Valid, ValidRejection};
+/// axum's typed-header extractor and the header types it works with. `TypedHeader<T>` documents
+/// itself as an OpenAPI header parameter (the name comes from `headers::Header`).
+pub use axum_extra::{headers, TypedHeader};
 /// Derive and trait for request validation (re-exported from the `validator` crate).
 /// Use with the [`Valid`] extractor.
 pub use validator::Validate;
@@ -128,6 +132,7 @@ pub mod config;
 pub mod error;
 #[cfg(feature = "openapi")]
 pub mod openapi;
+pub mod params;
 pub mod prelude;
 pub mod router;
 
