@@ -36,7 +36,7 @@ use axum::http::Method;
 use axum::response::Html;
 use convert_case::{Case, Casing};
 use either::Either;
-use oas::{Info, OpenAPIV3, Operation, Parameter, PathItem, Referenceable, RequestBody, Responses, SecurityRequirement, Tag};
+use oas::{Components, Info, OpenAPIV3, Operation, Parameter, PathItem, Referenceable, RequestBody, Responses, SecurityRequirement, Tag};
 use once_cell::sync::Lazy;
 use regex::Regex;
 
@@ -122,7 +122,34 @@ impl Operable {
 
 inventory::collect!(Operable);
 
-pub fn generate_openapi(operations: HashMap<(String, Method), Operation>) -> OpenAPIV3 {
+/// Assemble the spec from the routes' [`Operable`] descriptors.
+///
+/// Every operation is generated inside a single [`registry::collect`](gotcha_core::registry::collect)
+/// scope, so each named schema is emitted once under `components/schemas` and referenced by `$ref`
+/// at its use sites (which is also what lets recursive types produce a finite spec).
+pub fn generate_openapi(operables: HashMap<(String, Method), &'static Operable>) -> OpenAPIV3 {
+    let (operations, schemas) = gotcha_core::registry::collect(|| {
+        operables
+            .into_iter()
+            .map(|((path, method), operable)| {
+                let operation = operable.generate(path.clone());
+                ((path, method), operation)
+            })
+            .collect::<HashMap<(String, Method), Operation>>()
+    });
+
+    let components = (!schemas.is_empty()).then(|| Components {
+        schemas: Some(schemas.into_iter().map(|(name, schema)| (name, Referenceable::Data(schema))).collect()),
+        responses: None,
+        parameters: None,
+        examples: None,
+        request_bodies: None,
+        headers: None,
+        security_schemes: None,
+        links: None,
+        callbacks: None,
+    });
+
     let mut spec = OpenAPIV3 {
         info: Info {
             title: "Gotcha".to_string(),
@@ -134,7 +161,7 @@ pub fn generate_openapi(operations: HashMap<(String, Method), Operation>) -> Ope
         },
         paths: BTreeMap::default(),
         servers: None,
-        components: None,
+        components,
         security: None,
         tags: None,
         openapi: "3.0.0".to_string(),

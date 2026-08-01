@@ -35,24 +35,36 @@ pub(crate) fn handler(
             #doc
         }
         fn generate_schema() -> ::gotcha_core::EnhancedSchema {
-            let mut schema = ::gotcha_core::EnhancedSchema {
-                schema: ::gotcha_core::oas::Schema {
-                    _type: Some(Self::type_().to_string()),
-                    format:None,
-                    nullable:None,
-                    description: Self::doc(),
-                    extras:Default::default()
-                },
-                required: Self::required(),
-            };
-            let enum_variants:Vec<&'static str> = vec![ #(#variant_vec ,)* ];
-            schema.schema.extras.insert("enum".to_string(), ::gotcha_core::serde_json::to_value(enum_variants).unwrap());
-            schema
+            ::gotcha_core::registry::schema_or_ref(Self::name(), Self::required(), || {
+                let mut schema = ::gotcha_core::EnhancedSchema {
+                    schema: ::gotcha_core::oas::Schema {
+                        _type: Some(Self::type_().to_string()),
+                        format:None,
+                        nullable:None,
+                        description: Self::doc(),
+                        extras:Default::default()
+                    },
+                    required: Self::required(),
+                };
+                let enum_variants:Vec<&'static str> = vec![ #(#variant_vec ,)* ];
+                schema.schema.extras.insert("enum".to_string(), ::gotcha_core::serde_json::to_value(enum_variants).unwrap());
+                schema
+            })
         }
 
         fn flatten_schema() -> Option<::gotcha_core::serde_json::Value> {
-            // Simple enums return their schema for flattening
-            Some(Self::generate_schema().schema.to_value())
+            // Built inline rather than through `generate_schema`, which hands back a `$ref` during
+            // spec assembly — a flattened enum has to merge its actual shape into the parent.
+            let mut schema = ::gotcha_core::oas::Schema {
+                _type: Some(Self::type_().to_string()),
+                format:None,
+                nullable:None,
+                description: Self::doc(),
+                extras:Default::default()
+            };
+            let enum_variants:Vec<&'static str> = vec![ #(#variant_vec ,)* ];
+            schema.extras.insert("enum".to_string(), ::gotcha_core::serde_json::to_value(enum_variants).unwrap());
+            Some(schema.to_value())
         }
     };
 

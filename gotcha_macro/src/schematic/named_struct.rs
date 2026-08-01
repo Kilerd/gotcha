@@ -185,18 +185,23 @@ pub(crate) fn handler(
         #flatten_schema_impl
 
         fn generate_schema() -> ::gotcha_core::EnhancedSchema {
-            let mut schema = ::gotcha_core::EnhancedSchema {
-                schema: ::gotcha_core::oas::Schema {
-                    _type: Some(Self::type_().to_string()),
-                    format:None,
-                    nullable:Self::nullable(),
-                    description: Self::doc(),
-                    extras:Default::default()
-                },
-                required: Self::required(),
-            };
+            // During spec assembly this registers the schema under `name()` and returns a `$ref`
+            // to it (which is also what makes recursive types terminate); outside that scope it
+            // just builds the schema inline.
+            ::gotcha_core::registry::schema_or_ref(Self::name(), Self::required(), || {
+                let mut schema = ::gotcha_core::EnhancedSchema {
+                    schema: ::gotcha_core::oas::Schema {
+                        _type: Some(Self::type_().to_string()),
+                        format:None,
+                        nullable:Self::nullable(),
+                        description: Self::doc(),
+                        extras:Default::default()
+                    },
+                    required: Self::required(),
+                };
 
-            #generate_schema_impl
+                #generate_schema_impl
+            })
         }
     };
 
