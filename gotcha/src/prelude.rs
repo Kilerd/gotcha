@@ -31,8 +31,12 @@ pub use crate::router::Responder;
 pub use crate::{config, state, GotchaApp, GotchaConfig, GotchaContext, GotchaRouter};
 
 // Common Axum extractors and utilities
-pub use axum::extract::{Extension, Json, Path, Query, State};
+pub use axum::extract::ws::{WebSocket, WebSocketUpgrade};
+pub use axum::extract::{Extension, Form, Json, Multipart, Path, Query, State};
+pub use axum::extract::{MatchedPath, OriginalUri};
 pub use axum::http::{HeaderMap, Method, StatusCode};
+pub use axum::middleware;
+pub use axum::response::sse::{Event, KeepAlive, Sse};
 pub use axum::response::{Html, Redirect, Response};
 pub use axum::routing::{delete, get, patch, post, put};
 

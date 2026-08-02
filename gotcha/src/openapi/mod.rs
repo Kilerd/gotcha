@@ -23,7 +23,7 @@
 //! }
 //!
 //! fn routes(router: GotchaRouter) -> GotchaRouter {
-//!     router.get("/users/:id", get_user)
+//!     router.get("/users/{id}", get_user)
 //! }
 //! ```
 //!
@@ -44,10 +44,13 @@ use crate::Responder;
 
 pub mod schematic;
 
-// Match `:name` path parameters up to the next `/`, mirroring axum (and
-// `ParameterProvider`). The previous `[a-z_]`-only pattern skipped `:userId`,
-// `:id2`, `:ID`, leaving them un-templated in the OpenAPI paths.
-static PATH_VARIABLE_PATTERN: &str = r":[^/]+";
+/// Match a `{name}` path parameter.
+///
+/// Since axum 0.8 routes are written the way OpenAPI writes them — `/users/{id}` — so this no
+/// longer rewrites anything. It stays as the single place that knows the syntax: [`crate::openapi`]
+/// uses it to normalise a path, and `ParameterProvider` uses the same shape to pull out parameter
+/// names. Before 0.8 axum used `:id`, and every path had to be translated here.
+pub(crate) static PATH_VARIABLE_PATTERN: &str = r"\{([^}]+)\}";
 
 pub(crate) async fn openapi_html() -> impl Responder {
     Html(include_str!("../../statics/redoc.html"))
@@ -63,10 +66,20 @@ pub type ParamType = Either<Vec<Parameter>, RequestBody>;
 /// Builds an argument's [`ParamType`] given the route path (needed to name path parameters).
 pub type ParamConstructor = Box<dyn Fn(String) -> ParamType + Sync + Send + 'static>;
 
-/// Rewrites axum's `:name` path segments into OpenAPI's `{name}` form.
+/// Normalise a route path into the form OpenAPI uses for path templating.
+///
+/// Since axum 0.8 the two agree — a route is registered as `/users/{id}` and documented as
+/// `/users/{id}` — so this is the identity. It is kept because the framework still owns the
+/// question "what does a documented path look like", and because axum 0.7 needed a real
+/// translation here (`:id` -> `{id}`).
 pub fn replace_path_variable(path: String) -> String {
-    let regex = Regex::new(PATH_VARIABLE_PATTERN).unwrap();
-    regex.replace_all(&path, |caps: &regex::Captures| format!("{{{}}}", &caps[0][1..])).to_string()
+    path
+}
+
+/// The parameter names a route path captures, in order: `/users/{id}/books/{isbn}` -> `id`, `isbn`.
+pub fn path_variable_names(path: &str) -> Vec<String> {
+    let regex = Regex::new(PATH_VARIABLE_PATTERN).expect("path variable pattern is valid");
+    regex.captures_iter(path).map(|caps| caps[1].to_string()).collect()
 }
 
 #[derive()]
@@ -228,12 +241,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_path_variable_pattern() {
-        assert_eq!(replace_path_variable("/users".to_string()), "/users");
-        assert_eq!(replace_path_variable("/users/:id".to_string()), "/users/{id}");
-        assert_eq!(replace_path_variable("/users/:id/:name".to_string()), "/users/{id}/{name}");
-        // camelCase, digits and uppercase are now templated too (previously skipped)
-        assert_eq!(replace_path_variable("/users/:userId".to_string()), "/users/{userId}");
-        assert_eq!(replace_path_variable("/items/:id2/:ID".to_string()), "/items/{id2}/{ID}");
+    fn documented_paths_match_the_registered_route() {
+        // axum 0.8 and OpenAPI write path parameters the same way, so a route is documented
+        // exactly as it was registered.
+        for path in ["/users", "/users/{id}", "/users/{id}/{name}", "/users/{userId}", "/items/{id2}/{ID}"] {
+            assert_eq!(replace_path_variable(path.to_string()), path);
+        }
+    }
+
+    #[test]
+    fn path_variables_are_extracted_in_order() {
+        assert_eq!(path_variable_names("/users/{id}/books/{isbn}"), ["id", "isbn"]);
+        // Names are not restricted to lowercase.
+        assert_eq!(path_variable_names("/items/{id2}/{ID}"), ["id2", "ID"]);
+        assert!(path_variable_names("/users").is_empty());
     }
 }

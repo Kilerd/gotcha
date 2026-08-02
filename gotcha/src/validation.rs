@@ -39,7 +39,6 @@
 
 use std::borrow::Cow;
 
-use async_trait::async_trait;
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{FromRequest, Request};
 use axum::http::StatusCode;
@@ -168,7 +167,6 @@ fn render_param(value: &serde_json::Value) -> String {
     }
 }
 
-#[async_trait]
 impl<S, T> FromRequest<S> for Valid<Json<T>>
 where
     T: DeserializeOwned + Validate,

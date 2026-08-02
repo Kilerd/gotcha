@@ -64,11 +64,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }))
         })
         // Path parameter example
-        .get("/hello/:name", |Path(name): Path<String>| async move {
+        .get("/hello/{name}", |Path(name): Path<String>| async move {
             format!("👋 Hello, {}! Welcome to Gotcha!", name)
         })
         // JSON response with path parameter
-        .get("/users/:id", |Path(id): Path<u32>| async move {
+        .get("/users/{id}", |Path(id): Path<u32>| async move {
             // In a real application, you would fetch this from a database
             let user = User {
                 id,

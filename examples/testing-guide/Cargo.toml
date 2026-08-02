@@ -11,11 +11,11 @@ gotcha_core = { path = "../../gotcha_core" }
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-axum = "0.7"
+axum = "0.8"
 uuid = { version = "1", features = ["serde", "v4"] }
+axum-test = "17"
 
 [dev-dependencies]
-axum-test = "16"
 tower = "0.5"
 http = "1"
 assert-json-diff = "2"

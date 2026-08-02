@@ -9,8 +9,18 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 pub use async_trait::async_trait;
+/// WebSocket upgrade and the socket itself. The frame type stays behind `ws::Message`, since
+/// [`Message`](crate::Message) is already the message-system trait.
+pub use axum::extract::ws::{self, WebSocket, WebSocketUpgrade};
 use axum::extract::FromRef;
-pub use axum::extract::{Extension, Json, Path, Query, State};
+pub use axum::extract::{Extension, Form, Json, Multipart, Path, Query, State};
+/// The request path as matched by the router (`/users/{id}`) and the URI before any nesting
+/// rewrote it. Both need axum features that this crate turns on.
+pub use axum::extract::{MatchedPath, OriginalUri};
+/// Writing custom middleware — `middleware::from_fn` and friends.
+pub use axum::middleware;
+/// Server-sent events.
+pub use axum::response::sse::{self, Event, KeepAlive, Sse};
 pub use axum::response::IntoResponse as Responder;
 pub use axum::routing::{delete, get, patch, post, put};
 pub use axum_macros::debug_handler;

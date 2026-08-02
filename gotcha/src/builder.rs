@@ -428,7 +428,7 @@ where
     ///
     /// let app = Gotcha::new()
     ///     .get("/", || async { "Hello World" })
-    ///     .get("/users/:id", get_user);
+    ///     .get("/users/{id}", get_user);
     ///
     /// async fn get_user() -> impl Responder {
     ///     "User info"
@@ -559,8 +559,8 @@ where
     /// Add a layer to the application
     pub fn layer<L>(mut self, layer: L) -> Self
     where
-        L: Layer<axum::routing::Route> + Clone + Send + 'static,
-        L::Service: Service<Request> + Clone + Send + 'static,
+        L: Layer<axum::routing::Route> + Clone + Send + Sync + 'static,
+        L::Service: Service<Request> + Clone + Send + Sync + 'static,
         <L::Service as Service<Request>>::Response: Responder + 'static,
         <L::Service as Service<Request>>::Error: Into<std::convert::Infallible> + 'static,
         <L::Service as Service<Request>>::Future: Send + 'static,

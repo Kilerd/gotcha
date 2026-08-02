@@ -25,10 +25,10 @@ axum = ["dep:axum", "dep:axum-extra", "dep:regex", "dep:either"]
 [dependencies]
 gotcha_macro = { version = "0.3", path = "../gotcha_macro" }
 oas = "0.1"
-axum = { version = "0.7", default-features = false, features = ["json", "query", "multipart"], optional = true }
+axum = { version = "0.8", default-features = false, features = ["json", "query", "multipart"], optional = true }
 # `TypedHeader<T>` lives here since axum 0.7; the impl must be in this crate because that is where
 # `ParameterProvider` is defined (orphan rule).
-axum-extra = { version = "0.9", default-features = false, features = ["typed-header"], optional = true }
+axum-extra = { version = "0.10", default-features = false, features = ["typed-header"], optional = true }
 regex = { version = "1", optional = true }
 either = { version = "1", optional = true }
 serde = { version = "1", features = ["derive"] }

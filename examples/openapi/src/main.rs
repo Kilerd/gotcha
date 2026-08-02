@@ -99,13 +99,13 @@ impl GotchaApp for App {
         router
             .get("/", hello_world)
             .post("/pets", new_pet)
-            .get("/pets/:pet_id", get_pet)
-            .put("/pets/:pet_id", update_pet_info)
-            .put("/pets/:pet_id/address/:address_id", update_pet_address_detail)
+            .get("/pets/{pet_id}", get_pet)
+            .put("/pets/{pet_id}", update_pet_info)
+            .put("/pets/{pet_id}/address/{address_id}", update_pet_address_detail)
             // Test skip functionality
-            .post("/test/skip-json/:key_id", test_skip::test_skip_json)
-            .post("/test/skip-query/:key_id", test_skip::test_skip_query)
-            .post("/test/no-skip/:key_id", test_skip::test_no_skip)
+            .post("/test/skip-json/{key_id}", test_skip::test_skip_json)
+            .post("/test/skip-query/{key_id}", test_skip::test_skip_query)
+            .post("/test/no-skip/{key_id}", test_skip::test_no_skip)
     }
 
     async fn state(&self, _config: &ConfigWrapper<Self::Config>) -> Result<Self::State, gotcha::GotchaError> {

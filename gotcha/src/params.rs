@@ -24,7 +24,6 @@
 //! }
 //! ```
 
-use async_trait::async_trait;
 use axum::extract::FromRequestParts;
 use axum::http::request::Parts;
 use axum::http::StatusCode;
@@ -139,7 +138,6 @@ fn resolve<T>(
     }
 }
 
-#[async_trait]
 impl<S, T> FromRequestParts<S> for Header<T>
 where
     T: HeaderParam,
@@ -157,7 +155,6 @@ where
     }
 }
 
-#[async_trait]
 impl<S, T> FromRequestParts<S> for Cookie<T>
 where
     T: CookieParam,

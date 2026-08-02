@@ -42,7 +42,8 @@ fn build_param(name: String, _in: ParameterIn, required: bool, schema: Schema, d
 
 impl<T1: Schematic> ParameterProvider for Path<(T1,)> {
     fn generate(url: String) -> Either<Vec<Parameter>, RequestBody> {
-        let pattern = regex::Regex::new(r":([^/]+)").unwrap();
+        // Since axum 0.8 a captured segment is written `{name}`, matching OpenAPI's own syntax.
+        let pattern = regex::Regex::new(r"\{([^}]+)\}").unwrap();
         let param_names_in_path: Vec<String> = pattern.captures_iter(&url).map(|digits| digits.get(1).unwrap().as_str().to_string()).collect();
 
         let t1_param = build_param(
@@ -58,7 +59,8 @@ impl<T1: Schematic> ParameterProvider for Path<(T1,)> {
 
 impl<T1: Schematic, T2: Schematic> ParameterProvider for Path<(T1, T2)> {
     fn generate(url: String) -> Either<Vec<Parameter>, RequestBody> {
-        let pattern = regex::Regex::new(r":([^/]+)").unwrap();
+        // Since axum 0.8 a captured segment is written `{name}`, matching OpenAPI's own syntax.
+        let pattern = regex::Regex::new(r"\{([^}]+)\}").unwrap();
         let param_names_in_path: Vec<String> = pattern.captures_iter(&url).map(|digits| digits.get(1).unwrap().as_str().to_string()).collect();
 
         let t1_param = build_param(
@@ -97,7 +99,8 @@ impl<T: Schematic> ParameterProvider for Path<T> {
             }
         } else {
             // Case 2: Simple type like Uuid - extract parameter name from URL
-            let pattern = regex::Regex::new(r":([^/]+)").unwrap();
+            // Since axum 0.8 a captured segment is written `{name}`, matching OpenAPI's own syntax.
+            let pattern = regex::Regex::new(r"\{([^}]+)\}").unwrap();
             let param_names_in_path: Vec<String> = pattern.captures_iter(&url).map(|digits| digits.get(1).unwrap().as_str().to_string()).collect();
 
             if let Some(param_name) = param_names_in_path.first() {

@@ -206,8 +206,8 @@ impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
     /// ```
     pub fn layer<L>(self, layer: L) -> Self
     where
-        L: Layer<Route> + Clone + Send + 'static,
-        L::Service: Service<Request> + Clone + Send + 'static,
+        L: Layer<Route> + Clone + Send + Sync + 'static,
+        L::Service: Service<Request> + Clone + Send + Sync + 'static,
         <L::Service as Service<Request>>::Response: Responder + 'static,
         <L::Service as Service<Request>>::Error: Into<Infallible> + 'static,
         <L::Service as Service<Request>>::Future: Send + 'static,
@@ -233,6 +233,37 @@ impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
             #[cfg(feature = "openapi")]
             openapi_transform: self.openapi_transform,
             router: self.router.fallback(handler),
+        }
+    }
+
+    /// Handle unmatched requests with a `Service` rather than a handler.
+    ///
+    /// Useful for delegating to something that is already a tower service — serving a
+    /// single-page application's `index.html` with `ServeFile`, say, or forwarding to a
+    /// proxy — where [`fallback`](Self::fallback) would need a wrapper handler.
+    ///
+    /// ```rust,ignore
+    /// use gotcha::GotchaRouter;
+    /// use gotcha::axum::{body::Body, extract::Request, response::Response};
+    ///
+    /// let router: GotchaRouter<()> = GotchaRouter::default()
+    ///     .fallback_service(tower::service_fn(|_: Request| async {
+    ///         Ok::<_, std::convert::Infallible>(Response::new(Body::from("not found")))
+    ///     }));
+    /// ```
+    pub fn fallback_service<Svc, ResBody>(self, service: Svc) -> Self
+    where
+        Svc: Service<Request, Response = axum::http::Response<ResBody>, Error = Infallible> + Clone + Send + Sync + 'static,
+        Svc::Future: Send + 'static,
+        ResBody: axum::body::HttpBody<Data = axum::body::Bytes> + Send + 'static,
+        ResBody::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
+    {
+        Self {
+            #[cfg(feature = "openapi")]
+            operations: self.operations,
+            #[cfg(feature = "openapi")]
+            openapi_transform: self.openapi_transform,
+            router: self.router.fallback_service(service),
         }
     }
 

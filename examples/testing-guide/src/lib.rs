@@ -237,10 +237,10 @@ impl GotchaApp for App {
         router
             .get("/health", health_check)
             .get("/users", list_users)
-            .get("/users/:id", get_user)
+            .get("/users/{id}", get_user)
             .post("/users", create_user)
-            .put("/users/:id", update_user)
-            .delete("/users/:id", delete_user)
+            .put("/users/{id}", update_user)
+            .delete("/users/{id}", delete_user)
     }
 }
 

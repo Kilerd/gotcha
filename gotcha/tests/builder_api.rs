@@ -7,7 +7,7 @@ use gotcha::prelude::*;
 async fn test_builder_api_compiles() {
     let _gotcha = Gotcha::new()
         .get("/", || async { "Hello World" })
-        .get("/hello/:name", |Path(name): Path<String>| async move { format!("Hello, {}!", name) })
+        .get("/hello/{name}", |Path(name): Path<String>| async move { format!("Hello, {}!", name) })
         .post("/echo", |body: String| async move { format!("Echo: {}", body) })
         .routes(|router| router.get("/nested/ping", || async { "pong" }));
 
