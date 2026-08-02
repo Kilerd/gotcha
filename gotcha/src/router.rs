@@ -105,18 +105,26 @@ impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
         #[cfg(feature = "openapi")]
         if let Some(operable) = handle_operable {
             tracing::info!("generating openapi spec for {}[{}]", &operable.type_name, &path);
-            let method = match method {
-                MethodFilter::DELETE => Method::DELETE,
-                MethodFilter::GET => Method::GET,
-                MethodFilter::HEAD => Method::HEAD,
-                MethodFilter::OPTIONS => Method::OPTIONS,
-                MethodFilter::PATCH => Method::PATCH,
-                MethodFilter::POST => Method::POST,
-                MethodFilter::PUT => Method::PUT,
-                MethodFilter::TRACE => Method::TRACE,
-                _ => todo!(),
+            let documented_method = match method {
+                MethodFilter::DELETE => Some(Method::DELETE),
+                MethodFilter::GET => Some(Method::GET),
+                MethodFilter::HEAD => Some(Method::HEAD),
+                MethodFilter::OPTIONS => Some(Method::OPTIONS),
+                MethodFilter::PATCH => Some(Method::PATCH),
+                MethodFilter::POST => Some(Method::POST),
+                MethodFilter::PUT => Some(Method::PUT),
+                MethodFilter::TRACE => Some(Method::TRACE),
+                // `MethodFilter` is `#[non_exhaustive]`. A method axum adds later should leave the
+                // route working and merely undocumented, rather than bringing the application down
+                // while it registers its routes (this used to be a `todo!()`).
+                _ => None,
             };
-            self.operations.insert((path.to_string(), method), operable);
+            match documented_method {
+                Some(method) => {
+                    self.operations.insert((path.to_string(), method), operable);
+                }
+                None => tracing::warn!("unrecognised method filter for {path}; the route works but is left out of the OpenAPI spec"),
+            }
         }
 
         let router = MethodRouter::new().on(method, handler);
