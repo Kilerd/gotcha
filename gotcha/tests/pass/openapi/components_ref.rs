@@ -58,7 +58,7 @@ fn main() {
 
     let mut operables = std::collections::HashMap::new();
     operables.insert(("/tree".to_string(), Method::GET), operable(get_tree));
-    operables.insert(("/users/:id".to_string(), Method::GET), operable(get_user));
+    operables.insert(("/users/{id}".to_string(), Method::GET), operable(get_user));
     operables.insert(("/users".to_string(), Method::GET), operable(list_users));
     operables.insert(("/eval".to_string(), Method::GET), operable(eval_expr));
 

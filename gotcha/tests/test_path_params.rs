@@ -6,7 +6,7 @@ fn test_path_uuid_parameter() {
     use uuid::Uuid;
 
     // Test that Path<Uuid> generates a parameter
-    let url = "/users/:user_id".to_string();
+    let url = "/users/{user_id}".to_string();
     let result = <Path<Uuid> as ParameterProvider>::generate(url);
 
     match result {
@@ -33,7 +33,7 @@ fn test_path_tuple_parameter() {
     use uuid::Uuid;
 
     // Test that Path<(Uuid,)> also works (this should already work)
-    let url = "/users/:user_id".to_string();
+    let url = "/users/{user_id}".to_string();
     let result = <Path<(Uuid,)> as ParameterProvider>::generate(url);
 
     match result {
@@ -56,7 +56,7 @@ fn test_multiple_path_params() {
     use uuid::Uuid;
 
     // Test multiple parameters with Path<(Uuid, String)>
-    let url = "/users/:user_id/posts/:post_id".to_string();
+    let url = "/users/{user_id}/posts/{post_id}".to_string();
     let result = <Path<(Uuid, String)> as ParameterProvider>::generate(url);
 
     match result {

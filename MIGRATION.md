@@ -1,15 +1,29 @@
 # Migration Guide
 
-- [0.3 → 0.4](#03--04) — **every application must edit its configuration file**
+- [0.3 → 0.4](#03--04) — **every application must edit its route paths and configuration file**
 - [0.2 → 0.3: API simplification](#02--03-api-simplification)
 
 ---
 
 # 0.3 → 0.4
 
-The configuration file layout changed, so **this release cannot be adopted without editing your configuration**. Everything else is a smaller adjustment.
+Two changes require edits in every application: **route paths** and the **configuration file**. Everything else is a smaller adjustment.
 
-## 1. Configuration files: application settings move to the top level
+## 1. Route paths use `{name}`, not `:name`
+
+Gotcha now builds on axum 0.8, which changed how a captured path segment is written — and rejects the old form outright rather than silently treating it as a literal:
+
+```rust,ignore
+// before                                  // after
+router.get("/users/:id", get_user)         router.get("/users/{id}", get_user)
+router.get("/f/*rest", serve)              router.get("/f/{*rest}", serve)
+```
+
+A path that still starts a segment with `:` fails at startup with *"Path segments must not start with `:`. For capture groups, use `{capture}`"*.
+
+This is the syntax OpenAPI already used, so gotcha no longer translates between the two — a route is documented exactly as it is registered.
+
+## 2. Configuration files: application settings move to the top level
 
 The framework's own settings now live in a reserved `[server]` section, and your application's settings are the top level of the file — they used to be nested under `[application]` while `[basic]` took the top spot.
 
@@ -26,7 +40,7 @@ database_url = "postgres://..."
 
 Both profile files (`application.toml` and `application_{profile}.toml`) need the same treatment.
 
-## 2. Reading configuration in code
+## 3. Reading configuration in code
 
 ```rust,ignore
 // before                         // after
@@ -52,7 +66,7 @@ async fn handler(State(config): State<Config>) -> impl Responder {
 
 The bind settings are their own extractor, `State<ServerConfig>`. `State<ConfigWrapper<Config>>` still works if you want both at once.
 
-## 3. Environment overrides use `__` between sections
+## 4. Environment overrides use `__` between sections
 
 Nested paths are separated by a **double** underscore, which leaves single underscores free for snake_case field names:
 
@@ -67,7 +81,7 @@ APP_DATABASE_URL=...      # -> the top-level `database_url` field
 
 Typed fields (numbers, booleans) are now parsed from the environment string instead of failing to merge.
 
-## 4. The `message` feature is gone
+## 5. The `message` feature is gone
 
 The message system is always available. Drop it from your feature list:
 
@@ -80,12 +94,14 @@ gotcha = { version = "0.4", features = ["openapi"] }
 
 `cors` and `static_files` keep their names, but each now enables only its own half of `tower-http` — a CORS-only application no longer compiles the static-file stack.
 
-## 5. Smaller changes
+## 6. Smaller changes
 
 - **Validation rejections return `422`**, not `400`. `400` is still used for a malformed body. Every error now carries a readable `message`.
 - **`Result<T, E>` handlers** need `E: ErrorResponsible`. This is implemented for any `E: Schematic` and for axum's `(StatusCode, Json<E>)` idiom, so most code needs no change.
 - **Handlers returning nothing** now compile (they previously failed with `E0782`) and document an empty body.
 - **`Operable`** gained `summary` and `security` fields; only relevant if you construct it by hand rather than through `#[api]`.
+- **axum 0.8** also removed `#[async_trait]` from its extractor traits. A hand-written `FromRequest` / `FromRequestParts` impl should drop the attribute and use a plain `async fn`.
+- **New re-exports**, so these no longer need `gotcha::axum::…`: `Form`, `Multipart`, `Sse` / `Event` / `KeepAlive`, `WebSocketUpgrade` / `WebSocket`, `middleware`, `MatchedPath`, `OriginalUri`. `GotchaRouter` also gained `fallback_service`.
 
 ---
 
@@ -201,7 +217,7 @@ impl GotchaApp for App {
     fn routes(&self, router: GotchaRouter<GotchaContext<Self::State, Self::Config>>) 
         -> GotchaRouter<GotchaContext<Self::State, Self::Config>> {
         router
-            .get("/users/:id", get_user)
+            .get("/users/{id}", get_user)
             .post("/users", create_user)
     }
 
@@ -231,7 +247,7 @@ pub struct User {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Gotcha::new()
-        .get("/users/:id", |Path(id): Path<u32>| async move {
+        .get("/users/{id}", |Path(id): Path<u32>| async move {
             Json(User { id, name: format!("User {}", id) })
         })
         .post("/users", |Json(user): Json<User>| async move {
@@ -406,7 +422,7 @@ impl GotchaApp for App {
 })
 
 // Structured responses
-.get("/user/:id", |Path(id): Path<u32>| async move {
+.get("/user/{id}", |Path(id): Path<u32>| async move {
     let user = User { id, name: "John" };
     Json(user)
 })

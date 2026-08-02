@@ -55,7 +55,7 @@ where
 }
 fn main() {
     let operable = extract(path_tuple).unwrap();
-    let operation = operable.generate("/pets/:pet_id".to_string());
+    let operation = operable.generate("/pets/{pet_id}".to_string());
     assert!(operation.operation_id == Some("path_tuple".to_string()));
     assert!(operation.description == None);
     assert!(operation.deprecated == Some(false));
@@ -63,12 +63,12 @@ fn main() {
 
 
     let operable = extract(query_params).unwrap();
-    let operation = operable.generate("/pets/:pet_id".to_string());
+    let operation = operable.generate("/pets/{pet_id}".to_string());
 
 
     let operable = extract(json_payload).unwrap();
-    let operation = operable.generate("/pets/:pet_id".to_string());
+    let operation = operable.generate("/pets/{pet_id}".to_string());
 
     let operable = extract_with_state(state_extract).unwrap();
-    let operation = operable.generate("/pets/:pet_id".to_string());
+    let operation = operable.generate("/pets/{pet_id}".to_string());
 }

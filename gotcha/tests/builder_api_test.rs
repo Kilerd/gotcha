@@ -48,6 +48,6 @@ fn test_chaining_works() {
         .port(8080)
         .get("/", || async { "home" })
         .post("/users", || async { "create user" })
-        .put("/users/:id", || async { "update user" })
-        .delete("/users/:id", || async { "delete user" });
+        .put("/users/{id}", || async { "update user" })
+        .delete("/users/{id}", || async { "delete user" });
 }

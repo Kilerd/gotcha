@@ -12,6 +12,7 @@ An enhanced web framework built on top of Axum, providing additional features an
 - 📚 **Automatic OpenAPI** - Generate documentation from your code
 - 📊 **Prometheus Metrics** - Built-in metrics collection
 - 🌐 **CORS Support** - Cross-origin resource sharing
+- 🔌 **WebSocket & SSE** - Real-time endpoints, re-exported and ready
 - 📁 **Static Files** - Serve static content effortlessly
 - ⏰ **Task Scheduling** - Cron and interval-based background tasks
 - 💌 **Message System** - Built-in inter-service communication
@@ -29,7 +30,7 @@ use gotcha::prelude::*;
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Gotcha::new()
         .get("/", || async { "Hello World" })
-        .get("/hello/:name", |Path(name): Path<String>| async move {
+        .get("/hello/{name}", |Path(name): Path<String>| async move {
             format!("Hello, {}!", name)
         })
         .post("/users", |Json(user): Json<User>| async move {
@@ -75,7 +76,7 @@ impl GotchaApp for App {
         -> GotchaRouter<GotchaContext<Self::State, Self::Config>> {
         router
             .get("/", hello_world)
-            .get("/users/:id", get_user)
+            .get("/users/{id}", get_user)
     }
 
     async fn state(&self, config: &ConfigWrapper<Self::Config>) -> GotchaResult<Self::State> {

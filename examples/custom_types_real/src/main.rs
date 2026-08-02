@@ -86,13 +86,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             Json(users_vec)
         })
         // Get user by ID
-        .get("/users/:id", |Path(id): Path<u64>, ctx: State<GotchaContext<AppState, AppConfig>>| async move {
-            let users = ctx.state.users.read().await;
-            match users.get(&id) {
-                Some(user) => Ok(Json(user.clone())),
-                None => Err((StatusCode::NOT_FOUND, "User not found")),
-            }
-        })
+        .get(
+            "/users/{id}",
+            |Path(id): Path<u64>, ctx: State<GotchaContext<AppState, AppConfig>>| async move {
+                let users = ctx.state.users.read().await;
+                match users.get(&id) {
+                    Some(user) => Ok(Json(user.clone())),
+                    None => Err((StatusCode::NOT_FOUND, "User not found")),
+                }
+            },
+        )
         // Create new user
         .post("/users", || async {
             Json(serde_json::json!({
