@@ -1,6 +1,97 @@
-# Migration Guide: API Simplification
+# Migration Guide
 
-This guide helps you migrate from the traditional trait-based API to the new simplified builder API introduced in Gotcha v0.3.0.
+- [0.3 → 0.4](#03--04) — **every application must edit its configuration file**
+- [0.2 → 0.3: API simplification](#02--03-api-simplification)
+
+---
+
+# 0.3 → 0.4
+
+The configuration file layout changed, so **this release cannot be adopted without editing your configuration**. Everything else is a smaller adjustment.
+
+## 1. Configuration files: application settings move to the top level
+
+The framework's own settings now live in a reserved `[server]` section, and your application's settings are the top level of the file — they used to be nested under `[application]` while `[basic]` took the top spot.
+
+```toml
+# before (0.3)                    # after (0.4)
+[basic]                           name = "my-app"
+host = "127.0.0.1"                database_url = "postgres://localhost/app"
+port = 8080
+                                  [server]
+[application]                     host = "127.0.0.1"
+name = "my-app"                   port = 8080
+database_url = "postgres://..."
+```
+
+Both profile files (`application.toml` and `application_{profile}.toml`) need the same treatment.
+
+## 2. Reading configuration in code
+
+```rust,ignore
+// before                         // after
+config.application.name           config.name
+config.basic.port                 config.server.port
+```
+
+`ConfigWrapper<T>` now dereferences to your own config type, which is what makes `config.name` work.
+
+Handlers can skip the wrapper entirely. Annotate your config type with `#[config]` and extract it directly:
+
+```rust,ignore
+#[config]
+#[derive(Clone, Default, Serialize, Deserialize)]
+struct Config {
+    name: String,
+}
+
+async fn handler(State(config): State<Config>) -> impl Responder {
+    config.name.clone()
+}
+```
+
+The bind settings are their own extractor, `State<ServerConfig>`. `State<ConfigWrapper<Config>>` still works if you want both at once.
+
+## 3. Environment overrides use `__` between sections
+
+Nested paths are separated by a **double** underscore, which leaves single underscores free for snake_case field names:
+
+```console
+# before (never actually worked for typed fields — it failed the whole load)
+APP_SERVER_PORT=8080
+
+# after
+APP_SERVER__PORT=8080     # -> [server] port
+APP_DATABASE_URL=...      # -> the top-level `database_url` field
+```
+
+Typed fields (numbers, booleans) are now parsed from the environment string instead of failing to merge.
+
+## 4. The `message` feature is gone
+
+The message system is always available. Drop it from your feature list:
+
+```toml
+# before
+gotcha = { version = "0.3", features = ["openapi", "message"] }
+# after
+gotcha = { version = "0.4", features = ["openapi"] }
+```
+
+`cors` and `static_files` keep their names, but each now enables only its own half of `tower-http` — a CORS-only application no longer compiles the static-file stack.
+
+## 5. Smaller changes
+
+- **Validation rejections return `422`**, not `400`. `400` is still used for a malformed body. Every error now carries a readable `message`.
+- **`Result<T, E>` handlers** need `E: ErrorResponsible`. This is implemented for any `E: Schematic` and for axum's `(StatusCode, Json<E>)` idiom, so most code needs no change.
+- **Handlers returning nothing** now compile (they previously failed with `E0782`) and document an empty body.
+- **`Operable`** gained `summary` and `security` fields; only relevant if you construct it by hand rather than through `#[api]`.
+
+---
+
+# 0.2 → 0.3: API simplification
+
+This section helps you migrate from the traditional trait-based API to the simplified builder API introduced in Gotcha v0.3.0. Note that the configuration examples below use the 0.3 layout — see the 0.4 section above for the current one.
 
 ## TL;DR
 
