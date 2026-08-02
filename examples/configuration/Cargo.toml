@@ -6,7 +6,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-gotcha = {version="0.3", path = "../../gotcha", features = ["http1"]}
+gotcha = {version="0.4", path = "../../gotcha", features = ["http1"]}
 serde = {version="1", features=["derive"]}
 serde_json = "1"
 tokio = {version = "1", features = ["macros", 'rt-multi-thread', 'fs']}

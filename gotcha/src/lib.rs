@@ -10,7 +10,7 @@
 
 pub use async_trait::async_trait;
 /// WebSocket upgrade and the socket itself. The frame type stays behind `ws::Message`, since
-/// [`Message`](crate::Message) is already the message-system trait.
+/// [`Message`] is already the message-system trait.
 pub use axum::extract::ws::{self, WebSocket, WebSocketUpgrade};
 use axum::extract::FromRef;
 pub use axum::extract::{Extension, Form, Json, Multipart, Path, Query, State};
