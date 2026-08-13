@@ -84,12 +84,29 @@ impl<T1: Schematic, T2: Schematic> ParameterProvider for Path<(T1, T2)> {
 
 impl<T: Schematic> ParameterProvider for Path<T> {
     fn generate(url: String) -> Either<Vec<Parameter>, RequestBody> {
+        // Case 1: a struct extractor — each field becomes one path parameter. Read the fields
+        // directly (as `Query` does) instead of scraping `properties` out of the generated
+        // schema: during spec assembly a collection scope is active, so a derived struct's
+        // `generate_schema()` returns a bare `$ref` carrying no properties at all.
+        let fields = T::fields();
+        if !fields.is_empty() {
+            return Either::Left(
+                fields
+                    .into_iter()
+                    .map(|(name, schema)| {
+                        let desc = schema.schema.description.clone();
+                        build_param(name.to_string(), ParameterIn::Path, schema.required, schema.schema, desc)
+                    })
+                    .collect(),
+            );
+        }
+
         let mut ret = vec![];
         let mut schema = T::generate_schema();
 
-        // Check if this is a struct with properties or a simple type
+        // Check if this is a hand-written impl exposing properties or a simple type
         if let Some(mut properties) = schema.schema.extras.remove("properties") {
-            // Case 1: Struct with properties - each property becomes a path parameter
+            // Case 2: object schema with properties - each property becomes a path parameter
             if let Some(properties) = properties.as_object_mut() {
                 properties.iter_mut().for_each(|(key, value)| {
                     let schema = serde_json::from_value(value.clone()).unwrap();
@@ -98,7 +115,7 @@ impl<T: Schematic> ParameterProvider for Path<T> {
                 })
             }
         } else {
-            // Case 2: Simple type like Uuid - extract parameter name from URL
+            // Case 3: Simple type like Uuid - extract parameter name from URL
             // Since axum 0.8 a captured segment is written `{name}`, matching OpenAPI's own syntax.
             let pattern = regex::Regex::new(r"\{([^}]+)\}").unwrap();
             let param_names_in_path: Vec<String> = pattern.captures_iter(&url).map(|digits| digits.get(1).unwrap().as_str().to_string()).collect();
