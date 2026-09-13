@@ -231,6 +231,26 @@ complete document: top-level `security` is global even when set by a child. Use 
 security for individual routes. Later writes win; maps and lists are not implicitly merged.
 See [the migration guide](MIGRATION.md#unreleased-openapi-transform-composition) for details.
 
+Response contracts come from HTTP return types: `Json<T>` documents JSON, `String` documents
+plain text, `Html<T>` documents HTML, and byte bodies document binary content. `Schematic` only
+describes data. Use `WithStatus<T, STATUS>` for a status shared by the response and its document:
+
+```rust
+use gotcha::prelude::*;
+
+#[cfg_attr(feature = "openapi", gotcha::api)]
+async fn create() -> WithStatus<Json<String>, 201> {
+    WithStatus::new(Json("created".into()))
+}
+```
+
+`Result<T, E>` combines both HTTP response contracts. Custom response/error types can implement
+`Responsible` alongside `Schematic`, using the helpers in `gotcha::response`. For dynamic status
+codes, `#[api(responses(response(status = 404, body = "ApiError")), drop_default)]` declares the
+additional response and removes the inferred default. Declarations describe the contract; they
+do not change the handler's HTTP behavior. See [the migration guide](MIGRATION.md#unreleased-http-response-contracts)
+for custom errors, media types, and inference/override rules.
+
 ### Configuration System
 
 Create a `configurations/application.toml` file. Your application's own settings live at the top

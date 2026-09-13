@@ -27,6 +27,7 @@ pub use crate::builder::{EmptyConfig, EmptyState, Gotcha};
 // Essential traits and types
 pub use crate::config::{ConfigWrapper, GotchaConfigLoader, ServerConfig};
 pub use crate::error::{GotchaError, GotchaResult};
+pub use crate::response::WithStatus;
 pub use crate::router::Responder;
 pub use crate::{config, state, GotchaApp, GotchaConfig, GotchaContext, GotchaRouter};
 

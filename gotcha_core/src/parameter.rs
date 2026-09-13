@@ -1,7 +1,7 @@
 //! The [`ParameterProvider`] trait maps an axum extractor type to the OpenAPI parameters /
 //! request body it contributes to an operation.
 //!
-//! Like [`crate::Responsible`], it lives in this crate (behind the `axum` feature) rather
+//! It lives in this crate (behind the `axum` feature) rather
 //! than in `gotcha` because the generic `Path<T>` impl overlaps the tuple impls
 //! `Path<(T1,)>` / `Path<(T1, T2)>`. The compiler can only prove those do not overlap — i.e.
 //! that `(T1,)` does not implement [`Schematic`] — in the crate where `Schematic` is defined.

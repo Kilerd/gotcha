@@ -1,5 +1,6 @@
 # Migration Guide
 
+- [Unreleased: HTTP response contracts](#unreleased-http-response-contracts)
 - [Unreleased: application and route composition](#unreleased-application-and-route-composition)
 - [Unreleased: documented method routers](#unreleased-documented-method-routers)
 - [Unreleased: OpenAPI transform composition](#unreleased-openapi-transform-composition)
@@ -8,6 +9,82 @@
 - [Unreleased: ordered configuration sources](#unreleased-ordered-configuration-sources)
 - [0.3 → 0.4](#03--04) — **every application must edit its route paths and configuration file**
 - [0.2 → 0.3: API simplification](#02--03-api-simplification)
+
+---
+
+# Unreleased: HTTP response contracts
+
+**`Schematic` no longer implies `Responsible`.** A data schema does not determine how a value is
+sent over HTTP. Custom return types implement `Responsible` separately, alongside `IntoResponse`;
+they can still derive `Schematic`. Ordinary JSON data should be returned as `Json<T>`.
+The HTTP-specific `Schematic::empty_body` hook has been removed; `()` has its own response impl.
+
+Built-in contracts now match the response representation:
+
+| Return type | Documented response |
+| --- | --- |
+| `String`, `&str`, boxed/Cow strings | `200 text/plain` |
+| `Json<T>` | `200 application/json`, using `T`'s schema |
+| `Html<T>` | `200 text/html` |
+| `Bytes`, `Vec<u8>`, byte slices, boxed/Cow bytes | `200 application/octet-stream`, binary string schema |
+| `()` | `200`, no body; `Json<()>` remains JSON |
+| `(StatusCode, T)` | `default`, with `T`'s response bodies; the status is a runtime value |
+| `StatusCode` / raw `Response` | `default`, with no body schema inferred |
+
+Media keys omit parameters such as `charset=utf-8`. Regenerate client/spec snapshots that
+previously described text or binary responses as JSON.
+
+Use `WithStatus<T, STATUS>` to keep a fixed status in the return type and the actual response:
+
+```rust
+use gotcha::{Json, WithStatus};
+
+let created: WithStatus<_, 201> = WithStatus::new(Json("created"));
+let no_content: WithStatus<_, 204> = WithStatus::new(());
+```
+
+This wrapper is available without the `openapi` feature. Statuses outside 100..=599 fail during
+compilation when constructed. Informational statuses, 204, 205, and 304 discard bodies and body
+headers. As with Axum's status tuple, the outer status overrides an inner error status too;
+prefer `Result<WithStatus<Json<User>, 201>, E>` to keep `E`'s status independent.
+
+**`Result<T, E>` now requires `Responsible` on both sides.** `ErrorResponsible` and its schema
+blanket impl have been removed. Migrate custom errors to `Responsible`, or use an explicit HTTP
+type such as `WithStatus<Json<ApiError>, 409>`. A schema-only error no longer automatically adds
+`default`. To retain a dynamic JSON error contract, implement `Responsible` using
+`gotcha::response::default_response::<ApiError>("application/json", "Error")`.
+
+For runtime status tuples or additional responses, declare the contract on the handler:
+
+```rust,ignore
+#[api(
+    responses(
+        response(status = 404, body = "ApiError", description = "Not found"),
+        response(status = 409, body = "ApiError", description = "Duplicate")
+    ),
+    drop_default
+)]
+async fn lookup() -> Result<Json<User>, (StatusCode, Json<ApiError>)> {
+    // Return the documented statuses here.
+}
+```
+
+`body` names a **data type implementing `Schematic`**, not `Json<T>` or another HTTP wrapper.
+`content_type` defaults to `application/json` when a body is present; set it explicitly for CSV
+or other media. Omit `body` for an empty response. Duplicate statuses, invalid body types and
+body declarations on bodyless statuses are rejected by the macro.
+
+Explicit entries replace inference for their status only. `drop_default` removes the inferred
+default, and at least one response must remain. These declarations change documentation only;
+the handler remains responsible for sending the declared status and content type. Declared body
+schemas participate in the same component collection and reference rewriting as inferred bodies.
+
+Public helpers in `gotcha::response` support custom contracts: `response::<T>(status, media,
+description)`, `empty_response(status, description)`, `default_response::<T>(media, description)`,
+and `merge_responses(&mut target, other)`. The latter is also used by `Result`: duplicate statuses
+retain media alternatives, differing schemas for one media type form `anyOf`, and identical
+definitions are reused. Later header/link/example keys win. Distinct response-level `$ref`s
+cannot be unioned and fail at assembly; use inline responses with schema-level references instead.
 
 ---
 
@@ -332,7 +409,7 @@ gotcha = { version = "0.4", features = ["openapi"] }
 ## 6. Smaller changes
 
 - **Validation rejections return `422`**, not `400`. `400` is still used for a malformed body. Every error now carries a readable `message`.
-- **`Result<T, E>` handlers** need `E: ErrorResponsible`. This is implemented for any `E: Schematic` and for axum's `(StatusCode, Json<E>)` idiom, so most code needs no change.
+- **`Result<T, E>` handlers** now require `Responsible` on both sides; see [HTTP response contracts](#unreleased-http-response-contracts) for migrating schema-only errors and the former `ErrorResponsible` trait.
 - **Handlers returning nothing** now compile (they previously failed with `E0782`) and document an empty body.
 - **`Operable`** gained `summary` and `security` fields; only relevant if you construct it by hand rather than through `#[api]`.
 - **axum 0.8** also removed `#[async_trait]` from its extractor traits. A hand-written `FromRequest` / `FromRequestParts` impl should drop the attribute and use a plain `async fn`.

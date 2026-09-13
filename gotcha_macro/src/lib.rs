@@ -49,6 +49,12 @@ pub(crate) mod utils;
 /// - `summary` - Human-readable operation summary (defaults to the id in Title Case)
 /// - `deprecated` - Marks the operation as deprecated, e.g. `#[api(deprecated)]`
 /// - `security` - Name of a required security scheme, e.g. `#[api(security = "bearerAuth")]`
+/// - `responses(response(status = 404, body = "ApiError", description = "Not found"))` -
+///   Explicit response declarations, replacing inferred entries for those statuses. `body`
+///   is an optional Rust type string; `content_type` defaults to `application/json` for bodies.
+/// - `drop_default` - Remove the inferred `default` response. At least one response must remain.
+///
+/// Response declarations describe HTTP behavior; they do not change what the handler sends.
 ///
 /// ## Example
 ///
