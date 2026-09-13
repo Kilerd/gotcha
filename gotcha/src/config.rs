@@ -2,7 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
-use mofa::{ConfigLoader, EnvironmentSource, FileSource};
+use mofa::{ConfigLoader, EnvironmentSource, FileSource, Source};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -71,111 +71,128 @@ impl Default for ServerConfig {
     }
 }
 
-/// Simple configuration builder state
+/// One configuration source, read when [`ConfigBuilder::build`] is called.
+#[derive(Clone, Debug)]
+pub enum ConfigSource {
+    /// A TOML configuration file.
+    File {
+        /// Path to the file, resolved at build time.
+        path: PathBuf,
+        /// Whether a missing file is an error. Other read or parse errors always fail.
+        required: bool,
+    },
+    /// Environment variables with the given prefix.
+    Env {
+        /// Prefix understood by mofa's environment source, such as `APP`.
+        prefix: String,
+    },
+}
+
+impl Source for ConfigSource {
+    fn load(&self) -> Result<mofa::toml::Value, Box<dyn std::error::Error>> {
+        match self {
+            Self::Env { prefix } => EnvironmentSource::new(prefix).load(),
+            Self::File { path, required } => match FileSource::new(path.clone()).load() {
+                Ok(value) => Ok(value),
+                Err(error)
+                    if error
+                        .downcast_ref::<std::io::Error>()
+                        .is_some_and(|error| error.kind() == std::io::ErrorKind::NotFound) =>
+                {
+                    if *required {
+                        Err(format!("required configuration file not found: {}", path.display()).into())
+                    } else {
+                        Ok(mofa::toml::Value::Table(Default::default()))
+                    }
+                }
+                Err(error) => Err(format!("could not load configuration file {}: {error}", path.display()).into()),
+            },
+        }
+    }
+}
+
+/// A reusable configuration description, not a snapshot of loaded values.
+///
+/// Sources are read in insertion order; later sources override earlier values. Cloning or
+/// restoring this state preserves that order, file requirements, and variable substitution.
 #[derive(Clone, Debug, Default)]
 pub struct ConfigState {
-    /// Configuration files added to the builder, in the order they were added.
-    pub file_paths: Vec<PathBuf>,
-    /// Environment variable prefixes the builder reads from.
-    pub env_prefixes: Vec<String>,
+    /// File and environment sources, in the order they were added.
+    pub sources: Vec<ConfigSource>,
     /// Whether `${VAR}` substitution is enabled.
     pub enable_vars: bool,
 }
 
-/// Simple configuration builder
+/// Builds configuration from an ordered list of sources.
+///
+/// Registration does no file I/O. Files and environment variables are read by [`Self::build`].
+#[derive(Clone)]
 pub struct ConfigBuilder {
-    loader: ConfigLoader,
     state: ConfigState,
-    /// Required files (added via [`ConfigBuilder::file`]) that did not exist;
-    /// reported as an error at `build()` time.
-    missing_required: Vec<PathBuf>,
 }
 
 impl ConfigBuilder {
     /// Create new builder
     pub fn new() -> Self {
-        Self {
-            loader: ConfigLoader::new(),
-            state: ConfigState::default(),
-            missing_required: Vec::new(),
-        }
+        Self { state: ConfigState::default() }
     }
 
-    /// Add environment source
+    /// Add an environment source, overriding matching values from earlier sources.
     pub fn env(mut self, prefix: &str) -> Self {
-        self.state.env_prefixes.push(prefix.to_string());
-        self.loader.add_source(EnvironmentSource::new(prefix));
+        self.state.sources.push(ConfigSource::Env { prefix: prefix.to_string() });
         self
     }
 
     /// Add a required file source. Unlike [`ConfigBuilder::file_optional`], a
     /// missing file here causes `build()` to fail.
     pub fn file<P: AsRef<Path>>(mut self, path: P) -> Self {
-        let path = path.as_ref().to_path_buf();
-        self.state.file_paths.push(path.clone());
-        if path.exists() {
-            self.loader.add_source(FileSource::new(path));
-        } else {
-            self.missing_required.push(path);
-        }
+        self.state.sources.push(ConfigSource::File {
+            path: path.as_ref().to_path_buf(),
+            required: true,
+        });
         self
     }
 
-    /// Add optional file source
+    /// Add an optional file source. Only a missing file is ignored; read and parse errors fail.
     pub fn file_optional<P: AsRef<Path>>(mut self, path: P) -> Self {
-        let path = path.as_ref().to_path_buf();
-        self.state.file_paths.push(path.clone());
-        if path.exists() {
-            self.loader.add_source(FileSource::new(path));
-        }
+        self.state.sources.push(ConfigSource::File {
+            path: path.as_ref().to_path_buf(),
+            required: false,
+        });
         self
     }
 
     /// Enable variable substitution
     pub fn enable_vars(mut self) -> Self {
         self.state.enable_vars = true;
-        self.loader.enable_path_variable_processor();
-        self.loader.enable_environment_variable_processor();
         self
     }
 
-    /// Build configuration
-    pub fn build<T: for<'de> Deserialize<'de>>(mut self) -> ConfigResult<T> {
-        if !self.missing_required.is_empty() {
-            return Err(ConfigError::Error(format!(
-                "required configuration file(s) not found: {:?}",
-                self.missing_required
-            )));
+    /// Read and merge sources in insertion order, then resolve variables and deserialize.
+    ///
+    /// Later sources override earlier matching values. File existence is checked here, so
+    /// files created after registration are included and required files removed since then fail.
+    pub fn build<T: for<'de> Deserialize<'de>>(self) -> ConfigResult<T> {
+        let mut loader = ConfigLoader::new();
+        for source in self.state.sources {
+            loader.add_source(source);
         }
         if self.state.enable_vars {
-            self.loader.enable_path_variable_processor();
-            self.loader.enable_environment_variable_processor();
+            loader.enable_path_variable_processor();
+            loader.enable_environment_variable_processor();
         }
 
-        self.loader.construct().map_err(|e| ConfigError::Error(e.to_string()))
+        loader.construct().map_err(|e| ConfigError::Error(e.to_string()))
     }
 
-    /// Get builder state for cloning
+    /// Copy the complete source description without loading any values.
     pub fn state(&self) -> ConfigState {
         self.state.clone()
     }
 
-    /// Create builder from state
+    /// Restore the source description without reordering or reading its sources.
     pub fn from_state(state: ConfigState) -> Self {
-        let mut builder = Self::new();
-
-        // Re-add sources
-        for prefix in &state.env_prefixes {
-            builder = builder.env(prefix);
-        }
-        for path in &state.file_paths {
-            builder = builder.file_optional(path);
-        }
-        if state.enable_vars {
-            builder = builder.enable_vars();
-        }
-
-        builder
+        Self { state }
     }
 }
 
