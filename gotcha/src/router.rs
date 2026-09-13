@@ -12,7 +12,7 @@ use tower_service::Service;
 use axum::http::Method;
 
 #[cfg(feature = "openapi")]
-use crate::Operable;
+use crate::{openapi::transforms::OpenApiTransforms, Operable};
 
 #[cfg(feature = "openapi")]
 use std::collections::HashMap;
@@ -50,11 +50,9 @@ pub struct GotchaRouter<State = ()> {
     /// only built during `into_axum_router`, so every route's schemas are generated inside a
     /// single collection scope and can share `components/schemas`.
     pub(crate) operations: std::collections::HashMap<(String, Method), &'static Operable>,
-    /// Optional transform applied to the generated OpenAPI spec before it is served,
-    /// set via [`GotchaRouter::openapi`]. Lets apps customize `info`, `servers`,
-    /// `security`, `components`, etc.
+    /// Child transforms in composition order, followed by this router's own transforms.
     #[cfg(feature = "openapi")]
-    pub(crate) openapi_transform: Option<Box<dyn FnOnce(oas::OpenAPIV3) -> oas::OpenAPIV3 + Send>>,
+    openapi_transforms: OpenApiTransforms,
     pub(crate) router: Router<State>,
 }
 impl<State: Clone + Send + Sync + 'static> Default for GotchaRouter<State> {
@@ -63,7 +61,7 @@ impl<State: Clone + Send + Sync + 'static> Default for GotchaRouter<State> {
             #[cfg(feature = "openapi")]
             operations: Default::default(),
             #[cfg(feature = "openapi")]
-            openapi_transform: None,
+            openapi_transforms: Default::default(),
             router: Router::new(),
         }
     }
@@ -88,7 +86,7 @@ impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
             #[cfg(feature = "openapi")]
             operations: self.operations,
             #[cfg(feature = "openapi")]
-            openapi_transform: self.openapi_transform,
+            openapi_transforms: self.openapi_transforms,
             router: self.router.route(path, method_router),
         }
     }
@@ -147,7 +145,7 @@ impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
             #[cfg(feature = "openapi")]
             operations: self.operations,
             #[cfg(feature = "openapi")]
-            openapi_transform: self.openapi_transform,
+            openapi_transforms: self.openapi_transforms,
             router: self.router.route(path, router),
         }
     }
@@ -163,6 +161,8 @@ impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
 
     /// Nest a router inside another router, using Axum's path-joining rules for documentation.
     /// A child root `/` becomes `/api` under `/api`, but `/api/` under `/api/`.
+    /// With `openapi`, the child's transforms are retained and run before this router's
+    /// own transforms, on the final complete document.
     /// # Examples
     ///
     /// ```rust,no_run
@@ -182,12 +182,14 @@ impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
             #[cfg(feature = "openapi")]
             operations: self.operations.into_iter().chain(operations).collect(),
             #[cfg(feature = "openapi")]
-            openapi_transform: self.openapi_transform,
+            openapi_transforms: self.openapi_transforms.with_child(router.openapi_transforms),
             router: self.router.nest(path, router.router),
         }
     }
 
-    /// merge two routers
+    /// Merge two routers.
+    /// With `openapi`, `other` is a child for transform ordering: its transforms run
+    /// before this router's own transforms, on the final complete document.
     /// # Examples
     ///
     /// ```rust,no_run
@@ -201,7 +203,7 @@ impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
             #[cfg(feature = "openapi")]
             operations: self.operations.into_iter().chain(other.operations).collect(),
             #[cfg(feature = "openapi")]
-            openapi_transform: self.openapi_transform,
+            openapi_transforms: self.openapi_transforms.with_child(other.openapi_transforms),
             router: self.router.merge(other.router),
         }
     }
@@ -227,7 +229,7 @@ impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
             #[cfg(feature = "openapi")]
             operations: self.operations,
             #[cfg(feature = "openapi")]
-            openapi_transform: self.openapi_transform,
+            openapi_transforms: self.openapi_transforms,
             router: self.router.layer(layer),
         }
     }
@@ -242,7 +244,7 @@ impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
             #[cfg(feature = "openapi")]
             operations: self.operations,
             #[cfg(feature = "openapi")]
-            openapi_transform: self.openapi_transform,
+            openapi_transforms: self.openapi_transforms,
             router: self.router.fallback(handler),
         }
     }
@@ -273,7 +275,7 @@ impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
             #[cfg(feature = "openapi")]
             operations: self.operations,
             #[cfg(feature = "openapi")]
-            openapi_transform: self.openapi_transform,
+            openapi_transforms: self.openapi_transforms,
             router: self.router.fallback_service(service),
         }
     }
@@ -283,6 +285,17 @@ impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
     /// The transform receives the fully-generated [`oas::OpenAPIV3`] (with every route's
     /// operation already filled in) and returns the spec to serve, so you can set the
     /// title/version, add servers, security schemes, components, and so on.
+    ///
+    /// Repeated calls append transforms in registration order. At assembly, child subtrees
+    /// run in `nest`/`merge` insertion order, then this router's own transforms run, even if
+    /// registered before its children. Each callback runs exactly once, never per request.
+    /// `merge` treats its argument as a child, so grouping routers can change precedence.
+    ///
+    /// Every callback receives the complete document, including prefixed paths and collected
+    /// components. `info`, `components`, and top-level `security` are global, including when
+    /// set by a child. For route-local security, edit the relevant operation's `security`
+    /// using its final path. Later writes win; maps and lists are not implicitly merged.
+    /// Edit their entries to preserve unrelated values instead of replacing the whole field.
     ///
     /// ```rust,no_run
     /// use gotcha::GotchaRouter;
@@ -298,7 +311,7 @@ impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
     where
         F: FnOnce(oas::OpenAPIV3) -> oas::OpenAPIV3 + Send + 'static,
     {
-        self.openapi_transform = Some(Box::new(transform));
+        self.openapi_transforms.push(Box::new(transform));
         self
     }
 
@@ -312,11 +325,7 @@ impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
     pub(crate) fn into_axum_router(self, state: State) -> Router {
         cfg_if::cfg_if! {
             if #[cfg(feature = "openapi")] {
-                let mut openapi_spec = crate::openapi::generate_openapi(self.operations);
-
-                if let Some(transform) = self.openapi_transform {
-                    openapi_spec = transform(openapi_spec);
-                }
+                let openapi_spec = self.openapi_transforms.apply(crate::openapi::generate_openapi(self.operations));
                 self.router
                     .with_state(state)
                     .route("/openapi.json", axum::routing::get(move || async move { axum::Json(openapi_spec.clone()) }))
@@ -382,24 +391,6 @@ mod tests {
 
         let root_with_slash = canonicalize_nested_path("/v1/", "/");
         assert_eq!(canonicalize_nested_path("/api", &root_with_slash), "/api/v1/");
-    }
-
-    #[test]
-    fn openapi_transform_runs_during_assembly() {
-        // Capture the title the transform sees, to prove `.openapi(..)` is stored and applied
-        // when the router is finalized (the transformed spec is what gets served).
-        let captured: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
-        let sink = captured.clone();
-
-        let router: GotchaRouter<()> = GotchaRouter::default().openapi(move |mut spec| {
-            spec.info.title = "Custom API".to_string();
-            spec.info.version = "9.9.9".to_string();
-            *sink.lock().unwrap() = Some(spec.info.title.clone());
-            spec
-        });
-        let _ = router.into_axum_router(());
-
-        assert_eq!(captured.lock().unwrap().as_deref(), Some("Custom API"));
     }
 
     #[test]

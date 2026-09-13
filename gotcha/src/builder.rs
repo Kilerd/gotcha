@@ -528,12 +528,18 @@ where
     }
 
     /// Nest a sub-application at a path
+    ///
+    /// With `openapi`, retains the child's transforms and runs them on the complete document
+    /// before this application's own transforms.
     pub fn nest(mut self, path: &str, other: Self) -> Self {
         self.router = self.router.nest(path, other.router);
         self
     }
 
     /// Merge with another Gotcha application
+    ///
+    /// With `openapi`, treats `other` as a child for transform ordering: its transforms run
+    /// on the complete document before this application's own transforms.
     pub fn merge(mut self, other: Self) -> Self {
         self.router = self.router.merge(other.router);
         self
@@ -564,8 +570,11 @@ where
 
     /// Customize the generated OpenAPI spec before it is served at `/openapi.json`.
     ///
-    /// See [`GotchaRouter::openapi`](crate::GotchaRouter::openapi). The transform can set the
-    /// title/version, add servers, security schemes, components, etc.
+    /// Repeated calls append transforms. Child subtrees run in `nest`/`merge` insertion order,
+    /// then this application's own transforms run in registration order, once at assembly.
+    /// All transforms receive the complete document; top-level security is global even when
+    /// set by a child. See [`GotchaRouter::openapi`](crate::GotchaRouter::openapi) for scope and
+    /// conflict rules, shared with the trait API.
     ///
     /// ```rust,no_run
     /// use gotcha::Gotcha;
@@ -747,6 +756,38 @@ impl Gotcha<EmptyState, EmptyConfig> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(feature = "openapi")]
+    #[test]
+    fn builder_forwards_all_openapi_transforms_to_router_assembly() {
+        let captured = std::sync::Arc::new(std::sync::Mutex::new(None));
+        let sink = captured.clone();
+        let app = Gotcha::new()
+            .openapi(|mut spec| {
+                spec.info.title.push_str(" parent");
+                spec
+            })
+            .nest(
+                "/child",
+                Gotcha::new().openapi(|mut spec| {
+                    spec.info.title = "nested".into();
+                    spec
+                }),
+            )
+            .merge(Gotcha::new().openapi(|mut spec| {
+                spec.info.title.push_str(" merged");
+                spec
+            }))
+            .openapi(move |spec| {
+                *sink.lock().unwrap() = Some(spec.info.title.clone());
+                spec
+            });
+        let _ = app.router.into_axum_router(GotchaContext {
+            state: EmptyState::default(),
+            config: ConfigWrapper::default(),
+        });
+        assert_eq!(captured.lock().unwrap().as_deref(), Some("nested merged parent"));
+    }
 
     #[derive(Clone, Default, Serialize, Deserialize)]
     struct TestConfig {
