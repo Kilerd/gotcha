@@ -1,5 +1,6 @@
 # Migration Guide
 
+- [Unreleased: application and route composition](#unreleased-application-and-route-composition)
 - [Unreleased: documented method routers](#unreleased-documented-method-routers)
 - [Unreleased: OpenAPI transform composition](#unreleased-openapi-transform-composition)
 - [Unreleased: nested OpenAPI paths](#unreleased-nested-openapi-paths)
@@ -7,6 +8,39 @@
 - [Unreleased: ordered configuration sources](#unreleased-ordered-configuration-sources)
 - [0.3 → 0.4](#03--04) — **every application must edit its route paths and configuration file**
 - [0.2 → 0.3: API simplification](#02--03-api-simplification)
+
+---
+
+# Unreleased: application and route composition
+
+**`Gotcha::nest` and `Gotcha::merge` now accept `GotchaRouter<GotchaContext<S, C>>`, not another
+`Gotcha<S, C>`.** Previously they extracted only the child's router and silently discarded its
+state, configuration and sources, listening address, and background task registrations.
+
+Replace route-only child builders with route modules:
+
+```rust
+use gotcha::{Gotcha, GotchaRouter};
+
+let api = GotchaRouter::default().get("/items", || async { "items" });
+let health = GotchaRouter::default().get("/health", || async { "ok" });
+let app = Gotcha::new().nest("/api", api).merge(health);
+```
+
+Route modules share the application's context type and receive its resolved state and config.
+They retain their routes, middleware, and OpenAPI metadata/transforms. The existing nested path
+and child-before-parent transform rules continue to apply.
+
+Move child `.state(...)`, `.config(...)`, configuration-source calls, `.host(...)`, `.port(...)`,
+and `.tasks(...)` registrations to the top-level application deliberately. If multiple modules
+need tasks, register each module's task setup with that application's `.tasks(...)`; route modules
+do not own a scheduler. There is no automatic merge of competing application settings or tasks,
+and no conversion that extracts routes while discarding the rest of an application.
+
+Full child applications now fail to compile at `nest`/`merge`, including children with task
+registrations. Applications that need independent state/configuration and lifecycles should be
+started independently. To reuse a trait application's `routes` method, supply a router with the
+same context type; doing so reuses only routes, not its `state`, `tasks`, or startup hooks.
 
 ---
 
@@ -460,54 +494,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-### Example 3: Mixed Approach (Gradual Migration)
+### Example 3: Reusing Route Modules
 
-You can use both APIs in the same application:
+Extract reusable routes into a function whose context type matches the hosting application:
 
 ```rust
 use gotcha::prelude::*;
 
-// Existing trait-based app (unchanged)
-pub struct ApiV1 {}
+type Context = GotchaContext<EmptyState, EmptyConfig>;
 
-impl GotchaApp for ApiV1 {
-    type State = DatabasePool;
-    type Config = ApiConfig;
-    
-    fn routes(&self, router: GotchaRouter<GotchaContext<Self::State, Self::Config>>) 
-        -> GotchaRouter<GotchaContext<Self::State, Self::Config>> {
-        router
-            .get("/api/v1/complex", complex_handler)
-            .post("/api/v1/process", process_handler)
-    }
-    
-    async fn state(&self, config: &ConfigWrapper<Self::Config>) -> Result<Self::State, Box<dyn std::error::Error>> {
-        DatabasePool::connect(&config.application.database_url).await
-    }
+fn api_routes() -> GotchaRouter<Context> {
+    GotchaRouter::default().get("/items", || async { "items" })
 }
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Start with new builder API
-    let builder = Gotcha::new()
-        // Simple routes using new API
-        .get("/", || async { "Welcome!" })
-        .get("/health", || async { 
-            Json(json!({"status": "ok"})) 
-        });
-    
-    // Nest the existing trait-based app
-    let api_v1 = ApiV1 {};
-    let v1_router = /* build ApiV1 router and extract it */;
-    
-    builder
-        .nest("/", v1_router)
-        .listen("127.0.0.1:3000")
-        .await?;
-        
-    Ok(())
-}
+let app = Gotcha::new()
+    .get("/health", || async { "ok" })
+    .nest("/api/v1", api_routes());
 ```
+
+A trait-based application with the same context type can also include `api_routes()` in its
+`routes` method. In either case, the hosting application provides state, configuration and tasks;
+the route module is not an independently initialized application.
 
 ## Migration Strategies
 
