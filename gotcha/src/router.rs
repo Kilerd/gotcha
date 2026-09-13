@@ -147,7 +147,8 @@ impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
     implement_method!(MethodFilter::OPTIONS, options);
     implement_method!(MethodFilter::TRACE, trace);
 
-    /// nest a router inside another router
+    /// Nest a router inside another router, using Axum's path-joining rules for documentation.
+    /// A child root `/` becomes `/api` under `/api`, but `/api/` under `/api/`.
     /// # Examples
     ///
     /// ```rust,no_run
@@ -163,7 +164,15 @@ impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
             .into_iter()
             .map(|(key, value)| {
                 let (path_str, method) = key;
-                let new_path = format!("{}/{}", path, path_str);
+                // Match Axum's path_for_nested_route: the prefix's trailing slash is
+                // significant for a child root, and interior slashes are not normalized.
+                let new_path = if path.ends_with('/') {
+                    format!("{path}{}", path_str.trim_start_matches('/'))
+                } else if path_str == "/" {
+                    path.to_owned()
+                } else {
+                    format!("{path}{path_str}")
+                };
                 ((new_path, method), value)
             })
             .collect::<HashMap<(String, Method), &'static Operable>>();
