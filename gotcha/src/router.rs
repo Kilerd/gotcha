@@ -1,5 +1,6 @@
 use std::convert::Infallible;
 
+use crate::routing::GotchaMethodRouter;
 use axum::extract::Request;
 use axum::handler::Handler;
 pub use axum::response::IntoResponse as Responder;
@@ -13,6 +14,11 @@ use axum::http::Method;
 
 #[cfg(feature = "openapi")]
 use crate::{openapi::transforms::OpenApiTransforms, Operable};
+
+// Retain the existing hidden lookup path for callers of the descriptor API.
+#[doc(hidden)]
+#[cfg(feature = "openapi")]
+pub use crate::routing::extract_operable;
 
 #[cfg(feature = "openapi")]
 use std::collections::HashMap;
@@ -68,7 +74,7 @@ impl<State: Clone + Send + Sync + 'static> Default for GotchaRouter<State> {
 }
 
 impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
-    /// add a route to the router
+    /// Register a method router together with its annotated handlers' OpenAPI metadata.
     /// # Examples
     ///
     /// ```rust,no_run
@@ -79,16 +85,40 @@ impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
     /// }
     ///
     /// let router: GotchaRouter<()> = GotchaRouter::default()
-    ///     .route("/", axum::routing::get(hello_world));
+    ///     .route("/", gotcha::routing::get(hello_world));
     /// ```
-    pub fn route(self, path: &str, method_router: MethodRouter<State>) -> Self {
-        Self {
-            #[cfg(feature = "openapi")]
-            operations: self.operations,
-            #[cfg(feature = "openapi")]
-            openapi_transforms: self.openapi_transforms,
-            router: self.router.route(path, method_router),
-        }
+    /// Native Axum method routers must use [`route_raw`](Self::route_raw):
+    ///
+    /// ```compile_fail
+    /// use gotcha::GotchaRouter;
+    /// let router: GotchaRouter<()> = GotchaRouter::default()
+    ///     .route("/", gotcha::axum::routing::get(|| async { "hello" }));
+    /// ```
+    pub fn route(mut self, path: &str, method_router: GotchaMethodRouter<State>) -> Self {
+        self.router = self.router.route(path, method_router.router);
+        #[cfg(feature = "openapi")]
+        self.operations.extend(
+            method_router
+                .operations
+                .into_iter()
+                .map(|(method, operable)| ((path.to_owned(), method), operable)),
+        );
+        self
+    }
+
+    /// Register a native Axum method router without generating OpenAPI operations.
+    ///
+    /// Even `#[api]` handlers are undocumented here: their identities have already been erased
+    /// by Axum. Use [`route`](Self::route) with [`crate::routing`] to retain metadata.
+    ///
+    /// ```rust,no_run
+    /// use gotcha::GotchaRouter;
+    /// let router: GotchaRouter<()> = GotchaRouter::default()
+    ///     .route_raw("/", gotcha::axum::routing::get(|| async { "hello" }));
+    /// ```
+    pub fn route_raw(mut self, path: &str, method_router: MethodRouter<State>) -> Self {
+        self.router = self.router.route(path, method_router);
+        self
     }
 
     /// add a method route to the router
@@ -106,48 +136,12 @@ impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
     /// let router: GotchaRouter<()> = GotchaRouter::default()
     ///     .method_route("/", MethodFilter::GET, hello_world);
     /// ```
-    #[allow(unused_mut)]
-    pub fn method_route<H, T>(mut self, path: &str, method: MethodFilter, handler: H) -> Self
+    pub fn method_route<H, T>(self, path: &str, method: MethodFilter, handler: H) -> Self
     where
         H: Handler<T, State>,
         T: 'static,
     {
-        #[cfg(feature = "openapi")]
-        let handle_operable = extract_operable::<H, T, State>();
-        #[cfg(feature = "openapi")]
-        if let Some(operable) = handle_operable {
-            tracing::info!("generating openapi spec for {}[{}]", &operable.type_name, &path);
-            let documented_method = match method {
-                MethodFilter::DELETE => Some(Method::DELETE),
-                MethodFilter::GET => Some(Method::GET),
-                MethodFilter::HEAD => Some(Method::HEAD),
-                MethodFilter::OPTIONS => Some(Method::OPTIONS),
-                MethodFilter::PATCH => Some(Method::PATCH),
-                MethodFilter::POST => Some(Method::POST),
-                MethodFilter::PUT => Some(Method::PUT),
-                MethodFilter::TRACE => Some(Method::TRACE),
-                // `MethodFilter` is `#[non_exhaustive]`. A method axum adds later should leave the
-                // route working and merely undocumented, rather than bringing the application down
-                // while it registers its routes (this used to be a `todo!()`).
-                _ => None,
-            };
-            match documented_method {
-                Some(method) => {
-                    self.operations.insert((path.to_string(), method), operable);
-                }
-                None => tracing::warn!("unrecognised method filter for {path}; the route works but is left out of the OpenAPI spec"),
-            }
-        }
-
-        let router = MethodRouter::new().on(method, handler);
-
-        Self {
-            #[cfg(feature = "openapi")]
-            operations: self.operations,
-            #[cfg(feature = "openapi")]
-            openapi_transforms: self.openapi_transforms,
-            router: self.router.route(path, router),
-        }
+        self.route(path, crate::routing::on(method, handler))
     }
 
     implement_method!(MethodFilter::GET, get);
@@ -338,17 +332,6 @@ impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
     }
 }
 
-#[doc(hidden)]
-#[cfg(feature = "openapi")]
-pub fn extract_operable<H, T, State>() -> Option<&'static Operable>
-where
-    H: Handler<T, State>,
-    T: 'static,
-{
-    let handle_name = std::any::type_name::<H>();
-    inventory::iter::<Operable>.into_iter().find(|it| it.type_name.eq(handle_name))
-}
-
 #[cfg(all(test, feature = "openapi"))]
 mod tests {
     use std::sync::{Arc, Mutex};
@@ -395,8 +378,7 @@ mod tests {
 
     #[test]
     fn openapi_transform_survives_chained_builder_calls() {
-        // `.openapi(..)` set before other methods must not be dropped by the `Self { .. }`
-        // reconstructions in `route`/`layer`/etc.
+        // `.openapi(..)` set before other builder methods must survive reconstruction.
         let ran: Arc<Mutex<bool>> = Arc::new(Mutex::new(false));
         let flag = ran.clone();
 
@@ -405,10 +387,10 @@ mod tests {
                 *flag.lock().unwrap() = true;
                 spec
             })
-            .route("/health", axum::routing::get(|| async { "ok" }))
+            .route_raw("/health", axum::routing::get(|| async { "ok" }))
             .fallback(|| async { "not found" });
         let _ = router.into_axum_router(());
 
-        assert!(*ran.lock().unwrap(), "transform set before route()/fallback() must still apply");
+        assert!(*ran.lock().unwrap(), "transform set before route_raw()/fallback() must still apply");
     }
 }
