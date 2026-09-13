@@ -1,11 +1,61 @@
 # Migration Guide
 
+- [Unreleased: documented method routers](#unreleased-documented-method-routers)
 - [Unreleased: OpenAPI transform composition](#unreleased-openapi-transform-composition)
 - [Unreleased: nested OpenAPI paths](#unreleased-nested-openapi-paths)
 - [Unreleased: schema identity and component names](#unreleased-schema-identity-and-component-names)
 - [Unreleased: ordered configuration sources](#unreleased-ordered-configuration-sources)
 - [0.3 → 0.4](#03--04) — **every application must edit its route paths and configuration file**
 - [0.2 → 0.3: API simplification](#02--03-api-simplification)
+
+---
+
+# Unreleased: documented method routers
+
+**`Gotcha::route` and `GotchaRouter::route` now require `MethodRouter`.** This type carries
+HTTP handlers and their OpenAPI descriptors together. Previously, passing an Axum `MethodRouter`
+silently omitted even `#[api]` handlers from the generated document.
+
+For documented composition, use Gotcha's method constructors:
+
+```rust
+use gotcha::{routing::get, GotchaRouter};
+
+// With the openapi feature, annotate these handlers with #[gotcha::api].
+async fn list() -> String { "items".into() }
+async fn create() -> String { "created".into() }
+
+let router: GotchaRouter<()> = GotchaRouter::default()
+    .route("/items", get(list).post(create));
+```
+
+`gotcha::get/post/...` and the corresponding prelude exports now return this Gotcha type too.
+When using a plain Axum `Router`, import constructors from `axum::routing` explicitly.
+Existing `.get(path, handler)` / `.post(path, handler)` shortcuts keep their signatures and use
+the same registration path as `.route(...)`.
+
+To preserve native Axum behavior, change `.route(...)` to `.route_raw(...)` on either Gotcha API:
+
+```rust
+use gotcha::{axum, GotchaRouter};
+
+let router: GotchaRouter<()> = GotchaRouter::default()
+    .route_raw("/health", axum::routing::get(|| async { "ok" }));
+```
+
+Raw routes generate no operations, including for annotated handlers. No implicit conversion
+between Axum and Gotcha method routers is provided. Use raw routes for native services or other
+Axum-specific method-router APIs.
+
+Gotcha method routers support method chaining, `on`, `merge`, `clone`, and `layer`, retaining
+their descriptors through each operation. Components are still collected once for the complete
+document. Unannotated handlers run normally and remain undocumented; middleware does not infer
+response schemas or security requirements. Overlapping handlers follow Axum's conflict rules.
+
+Combined filters such as `routing::on(MethodFilter::GET.or(MethodFilter::POST), handler)` now
+document every selected OpenAPI method. Implicit HEAD handling for GET is unchanged and does
+not add a HEAD operation; explicitly register HEAD to document it. CONNECT remains executable
+but is not represented in OpenAPI 3.0.
 
 ---
 

@@ -30,6 +30,9 @@ pub use crate::error::{GotchaError, GotchaResult};
 pub use crate::router::Responder;
 pub use crate::{config, state, GotchaApp, GotchaConfig, GotchaContext, GotchaRouter};
 
+// Method routing with OpenAPI metadata
+pub use crate::routing::{delete, get, head, on, options, patch, post, put, trace, MethodRouter};
+
 // Common Axum extractors and utilities
 pub use axum::extract::ws::{WebSocket, WebSocketUpgrade};
 pub use axum::extract::{Extension, Form, Json, Multipart, Path, Query, State};
@@ -38,7 +41,6 @@ pub use axum::http::{HeaderMap, Method, StatusCode};
 pub use axum::middleware;
 pub use axum::response::sse::{Event, KeepAlive, Sse};
 pub use axum::response::{Html, Redirect, Response};
-pub use axum::routing::{delete, get, patch, post, put};
 
 // JSON handling
 pub use serde::{Deserialize, Serialize};

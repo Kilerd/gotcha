@@ -22,10 +22,10 @@ pub use axum::middleware;
 /// Server-sent events.
 pub use axum::response::sse::{self, Event, KeepAlive, Sse};
 pub use axum::response::IntoResponse as Responder;
-pub use axum::routing::{delete, get, patch, post, put};
 pub use axum_macros::debug_handler;
 pub use config::{ConfigWrapper, ServerConfig};
 pub use either::Either;
+pub use routing::{delete, get, head, on, options, patch, post, put, trace, MethodRouter};
 
 pub use once_cell::sync::Lazy;
 pub use router::GotchaRouter;
@@ -80,6 +80,7 @@ pub mod params;
 pub mod prelude;
 /// The router that tracks OpenAPI operations alongside axum routes.
 pub mod router;
+pub mod routing;
 
 #[cfg(feature = "task")]
 #[cfg_attr(docsrs, doc(cfg(feature = "task")))]

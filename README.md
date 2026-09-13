@@ -131,6 +131,31 @@ Available features:
 
 ## 📖 Documentation & Examples
 
+### Composing HTTP Methods
+
+Use Gotcha's method constructors to keep HTTP routing and OpenAPI metadata together:
+
+```rust
+use gotcha::prelude::*;
+
+#[cfg_attr(feature = "openapi", gotcha::api)]
+async fn list() -> String { "items".into() }
+#[cfg_attr(feature = "openapi", gotcha::api)]
+async fn create() -> String { "created".into() }
+
+let app = Gotcha::new().route("/items", get(list).post(create));
+```
+
+These constructors return `MethodRouter`, which supports `on`, `merge`, `clone`, and
+`layer` while retaining annotated handlers' metadata. The `.get(path, handler)` shortcuts use
+the same registration logic. With `openapi` enabled, `#[api]` handlers generate operations;
+unannotated handlers remain executable without generated operations.
+
+Use `.route_raw(path, axum::routing::get(handler))` for native Axum method routers. Raw routes
+do not generate OpenAPI operations, even for `#[api]` handlers. See
+[the migration guide](MIGRATION.md#unreleased-documented-method-routers) for existing `.route()`
+calls and the changed root/prelude exports.
+
 ### OpenAPI Documentation
 
 With the `openapi` feature enabled, use the `#[api]` macro for automatic documentation:

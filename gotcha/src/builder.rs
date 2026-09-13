@@ -25,7 +25,7 @@ use std::str::FromStr;
 
 use axum::extract::Request;
 use axum::handler::Handler;
-use axum::routing::MethodRouter;
+use axum::routing::MethodRouter as AxumMethodRouter;
 use serde::{Deserialize, Serialize};
 use tower_layer::Layer;
 use tower_service::Service;
@@ -33,6 +33,7 @@ use tower_service::Service;
 use crate::config::{Config, ConfigBuilder, ConfigWrapper, GotchaConfigLoader, ServerConfig};
 use crate::error::{GotchaError, GotchaResult};
 use crate::router::{GotchaRouter, Responder};
+use crate::routing::MethodRouter;
 use crate::GotchaContext;
 
 /// A one-shot closure that registers background tasks on the scheduler when the
@@ -496,9 +497,17 @@ where
         self
     }
 
-    /// Add a route with custom method
+    /// Add composed methods with their annotated handlers' OpenAPI metadata.
+    /// See [`crate::routing`] for constructors such as `get(handler).post(handler)`.
     pub fn route(mut self, path: &str, method_router: MethodRouter<GotchaContext<S, C>>) -> Self {
         self.router = self.router.route(path, method_router);
+        self
+    }
+
+    /// Add a native Axum method router without generating OpenAPI operations, even for
+    /// `#[api]` handlers. Use [`route`](Self::route) with [`crate::routing`] to retain metadata.
+    pub fn route_raw(mut self, path: &str, method_router: AxumMethodRouter<GotchaContext<S, C>>) -> Self {
+        self.router = self.router.route_raw(path, method_router);
         self
     }
 
@@ -756,6 +765,30 @@ impl Gotcha<EmptyState, EmptyConfig> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn builder_accepts_composed_and_raw_method_routers() {
+        use axum::body::{to_bytes, Body};
+        use tower::ServiceExt;
+
+        // The public builder delegates both entry points, with its application context type.
+        let app = Gotcha::new()
+            .route("/composed", crate::get(|| async { "get" }).post(|| async { "post" }))
+            .route_raw("/raw", axum::routing::get(|| async { "raw" }));
+        let router = app.router.into_axum_router(GotchaContext {
+            state: EmptyState::default(),
+            config: ConfigWrapper::default(),
+        });
+        for (method, path, expected) in [("GET", "/composed", "get"), ("POST", "/composed", "post"), ("GET", "/raw", "raw")] {
+            let response = router
+                .clone()
+                .oneshot(Request::builder().method(method).uri(path).body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(response.status(), axum::http::StatusCode::OK);
+            assert_eq!(to_bytes(response.into_body(), 1024).await.unwrap(), expected);
+        }
+    }
 
     #[cfg(feature = "openapi")]
     #[test]
