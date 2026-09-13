@@ -347,6 +347,44 @@ mod tests {
     use super::*;
 
     #[test]
+    fn canonicalize_nested_path_handles_join_boundaries() {
+        for (prefix, child, expected) in [
+            ("/api", "/hello", "/api/hello"),
+            ("/api/", "/hello", "/api/hello"),
+            ("/api", "/", "/api"),
+            ("/api/", "/", "/api/"),
+            ("/api", "/hello/", "/api/hello/"),
+            ("/api/", "/hello/", "/api/hello/"),
+        ] {
+            assert_eq!(canonicalize_nested_path(prefix, child), expected, "{prefix} + {child}");
+        }
+    }
+
+    #[test]
+    fn canonicalize_nested_path_preserves_significant_empty_segments() {
+        for (prefix, child, expected) in [
+            ("/api", "/v1//hello", "/api/v1//hello"),
+            ("/api//", "/hello", "/api//hello"),
+            ("/api", "//hello", "/api//hello"),
+            ("/api/", "//hello", "/api/hello"),
+        ] {
+            assert_eq!(canonicalize_nested_path(prefix, child), expected, "{prefix} + {child}");
+        }
+    }
+
+    #[test]
+    fn canonicalize_nested_path_composes_across_nesting_levels() {
+        let items = canonicalize_nested_path("/v1/", "/items/{id}");
+        assert_eq!(canonicalize_nested_path("/tenants/{tenant}", &items), "/tenants/{tenant}/v1/items/{id}");
+
+        let root = canonicalize_nested_path("/v1", "/");
+        assert_eq!(canonicalize_nested_path("/api/", &root), "/api/v1");
+
+        let root_with_slash = canonicalize_nested_path("/v1/", "/");
+        assert_eq!(canonicalize_nested_path("/api", &root_with_slash), "/api/v1/");
+    }
+
+    #[test]
     fn openapi_transform_runs_during_assembly() {
         // Capture the title the transform sees, to prove `.openapi(..)` is stored and applied
         // when the router is finalized (the transformed spec is what gets served).
