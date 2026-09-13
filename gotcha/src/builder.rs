@@ -30,7 +30,7 @@ use serde::{Deserialize, Serialize};
 use tower_layer::Layer;
 use tower_service::Service;
 
-use crate::config::{Config, ConfigBuilder, ConfigState, ConfigWrapper, GotchaConfigLoader, ServerConfig};
+use crate::config::{Config, ConfigBuilder, ConfigWrapper, GotchaConfigLoader, ServerConfig};
 use crate::error::{GotchaError, GotchaResult};
 use crate::router::{GotchaRouter, Responder};
 use crate::GotchaContext;
@@ -59,7 +59,7 @@ where
     port: u16,
     state: Option<S>,
     config: Option<ConfigWrapper<C>>,
-    config_builder: Option<ConfigState>,
+    config_builder: Option<ConfigBuilder>,
     #[cfg(feature = "task")]
     tasks: Vec<TaskRegistrar<S, C>>,
 }
@@ -246,6 +246,7 @@ where
     ///
     /// This adds to any existing configuration sources rather than replacing them.
     /// Equivalent to calling `.with_default_files().with_default_env()`
+    /// Errors from these explicitly selected sources are returned when the server starts.
     ///
     /// # Example
     /// ```no_run
@@ -262,6 +263,7 @@ where
     ///
     /// This adds to any existing configuration sources rather than replacing them.
     /// Multiple calls will add multiple environment prefixes.
+    /// Later sources override earlier values; loading errors are returned at server startup.
     ///
     /// # Example
     /// ```no_run
@@ -272,14 +274,8 @@ where
     ///     .with_env_config("GOTCHA"); // Both prefixes will be used
     /// ```
     pub fn with_env_config<P: AsRef<str>>(mut self, prefix: P) -> Self {
-        let mut state = self.config_builder.take().unwrap_or_else(|| ConfigState {
-            file_paths: Vec::new(),
-            env_prefixes: Vec::new(),
-            enable_vars: true,
-        });
-
-        state.env_prefixes.push(prefix.as_ref().to_string());
-        self.config_builder = Some(state);
+        let builder = self.config_builder.take().unwrap_or_else(|| ConfigBuilder::new().enable_vars());
+        self.config_builder = Some(builder.env(prefix.as_ref()));
         self
     }
 
@@ -287,6 +283,7 @@ where
     ///
     /// This adds to any existing configuration sources rather than replacing them.
     /// Multiple calls will add multiple file sources.
+    /// Later sources override earlier values. A missing, unreadable, or invalid file fails startup.
     ///
     /// # Example
     /// ```no_run
@@ -297,14 +294,8 @@ where
     ///     .with_file_config("local.toml"); // Both files will be loaded
     /// ```
     pub fn with_file_config<P: AsRef<std::path::Path>>(mut self, path: P) -> Self {
-        let mut state = self.config_builder.take().unwrap_or_else(|| ConfigState {
-            file_paths: Vec::new(),
-            env_prefixes: Vec::new(),
-            enable_vars: true,
-        });
-
-        state.file_paths.push(path.as_ref().to_path_buf());
-        self.config_builder = Some(state);
+        let builder = self.config_builder.take().unwrap_or_else(|| ConfigBuilder::new().enable_vars());
+        self.config_builder = Some(builder.file(path));
         self
     }
 
@@ -312,6 +303,7 @@ where
     ///
     /// This adds to any existing configuration sources rather than replacing them.
     /// Multiple calls will add multiple optional file sources.
+    /// Only missing files are ignored; unreadable or invalid files fail startup.
     ///
     /// # Example
     /// ```no_run
@@ -322,20 +314,15 @@ where
     ///     .with_optional_config("local.toml"); // Both files will be loaded if they exist
     /// ```
     pub fn with_optional_config<P: AsRef<std::path::Path>>(mut self, path: P) -> Self {
-        let mut state = self.config_builder.take().unwrap_or_else(|| ConfigState {
-            file_paths: Vec::new(),
-            env_prefixes: Vec::new(),
-            enable_vars: true,
-        });
-
-        state.file_paths.push(path.as_ref().to_path_buf());
-        self.config_builder = Some(state);
+        let builder = self.config_builder.take().unwrap_or_else(|| ConfigBuilder::new().enable_vars());
+        self.config_builder = Some(builder.file_optional(path));
         self
     }
 
     /// Add default configuration files (configurations/application.toml and profile-specific files)
     ///
     /// This adds to any existing configuration sources rather than replacing them.
+    /// Missing default files are optional; existing files that cannot be loaded fail startup.
     ///
     /// # Example
     /// ```no_run
@@ -345,18 +332,18 @@ where
     ///     .with_default_files();
     /// ```
     pub fn with_default_files(mut self) -> Self {
-        let mut state = self.config_builder.take().unwrap_or_default();
+        let mut builder = self.config_builder.take().unwrap_or_default();
 
         // Add default file paths
-        state.file_paths.push("configurations/application.toml".into());
+        builder = builder.file_optional("configurations/application.toml");
 
         // Add profile-specific file if profile is set
         if let Ok(profile) = std::env::var("GOTCHA_ACTIVE_PROFILE") {
             let profile_path = format!("configurations/application_{}.toml", profile);
-            state.file_paths.push(profile_path.into());
+            builder = builder.file_optional(profile_path);
         }
 
-        self.config_builder = Some(state);
+        self.config_builder = Some(builder);
         self
     }
 
@@ -372,10 +359,8 @@ where
     ///     .with_default_env();
     /// ```
     pub fn with_default_env(mut self) -> Self {
-        let mut state = self.config_builder.take().unwrap_or_default();
-
-        state.env_prefixes.push("APP".to_string());
-        self.config_builder = Some(state);
+        let builder = self.config_builder.take().unwrap_or_default();
+        self.config_builder = Some(builder.env("APP"));
         self
     }
 
@@ -392,10 +377,8 @@ where
     ///     .enable_variable_substitution();
     /// ```
     pub fn enable_variable_substitution(mut self) -> Self {
-        let mut state = self.config_builder.take().unwrap_or_default();
-
-        state.enable_vars = true;
-        self.config_builder = Some(state);
+        let builder = self.config_builder.take().unwrap_or_default();
+        self.config_builder = Some(builder.enable_vars());
         self
     }
 
@@ -704,32 +687,14 @@ where
 
     /// Build the application context (loads configuration and resolves state).
     ///
-    /// On configuration failure this logs a warning and falls back to defaults,
-    /// keeping the builder lenient. Use the trait API for strict config loading.
+    /// Explicitly configured sources propagate loading errors. With no explicit config or
+    /// sources, automatic default loading still warns and falls back to defaults on failure.
     async fn build_context(&self) -> GotchaResult<GotchaContext<S, C>> {
         let config = match (&self.config, &self.config_builder) {
             // Explicit config wins
             (Some(config), _) => config.clone(),
             // Accumulated configuration sources
-            (None, Some(state)) => {
-                let builder = ConfigBuilder::from_state(state.clone());
-                match builder.build::<ConfigWrapper<C>>() {
-                    Ok(config) => {
-                        tracing::info!("Configuration loaded successfully from accumulated sources");
-                        config
-                    }
-                    Err(e) => {
-                        tracing::warn!("Failed to load accumulated configuration: {e}, using defaults");
-                        ConfigWrapper {
-                            server: ServerConfig {
-                                host: self.host.clone(),
-                                port: self.port,
-                            },
-                            app: C::default(),
-                        }
-                    }
-                }
-            }
+            (None, Some(builder)) => builder.clone().build::<ConfigWrapper<C>>()?,
             // Default loading, falling back to defaults on failure
             (None, None) => match GotchaConfigLoader::load::<ConfigWrapper<C>>(std::env::var("GOTCHA_ACTIVE_PROFILE").ok()) {
                 Ok(config) => config,
@@ -776,5 +741,83 @@ impl Gotcha<EmptyState, EmptyConfig> {
     pub async fn quick_start() -> GotchaResult<Self> {
         tracing_subscriber::fmt::init();
         Ok(Self::new())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[derive(Clone, Default, Serialize, Deserialize)]
+    struct TestConfig {
+        value: String,
+        reference: String,
+    }
+
+    #[tokio::test]
+    async fn configuration_sources_preserve_order_and_explicit_error_policy() {
+        const CHILD: &str = "GOTCHA_CONFIG_BUILDER_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            let dir = tempfile::tempdir().unwrap();
+            std::fs::create_dir(dir.path().join("configurations")).unwrap();
+            std::fs::write(dir.path().join("configurations/application.toml"), "value = 'base'\nreference = '${value}'").unwrap();
+            std::fs::write(dir.path().join("configurations/application_review.toml"), "value = 'profile'").unwrap();
+            std::fs::write(dir.path().join("override.toml"), "value = 'override'").unwrap();
+            let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+            // Keep process-global environment and cwd changes outside the parent test process.
+            for (key, _) in std::env::vars_os().filter(|(key, _)| key.to_string_lossy().starts_with("APP_")) {
+                command.env_remove(key);
+            }
+            let output = command
+                .args([
+                    "--exact",
+                    "builder::tests::configuration_sources_preserve_order_and_explicit_error_policy",
+                    "--nocapture",
+                ])
+                .current_dir(dir.path())
+                .env(CHILD, "1")
+                .env("GOTCHA_ACTIVE_PROFILE", "review")
+                .env("APP_VALUE", "default-env")
+                .env("GOTCHABUILDER_VALUE", "custom-env")
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "child failed:\n{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        }
+
+        let app = || Gotcha::with_config::<TestConfig>();
+        for (builder, expected) in [
+            (app().with_default_config(), "default-env"),
+            (app().with_default_env().with_default_files(), "profile"),
+            (
+                app()
+                    .with_file_config("configurations/application.toml")
+                    .with_env_config("GOTCHABUILDER")
+                    .with_optional_config("override.toml"),
+                "override",
+            ),
+            (
+                app()
+                    .with_file_config("configurations/application.toml")
+                    .with_optional_config("override.toml")
+                    .with_env_config("GOTCHABUILDER"),
+                "custom-env",
+            ),
+        ] {
+            let context = builder.enable_variable_substitution().build_context().await.unwrap();
+            assert_eq!(context.config.value, expected);
+            assert_eq!(context.config.reference, expected, "variables use the final merged configuration");
+        }
+
+        std::fs::write("configurations/application.toml", "value = [").unwrap();
+        assert!(matches!(app().with_default_config().build_context().await, Err(GotchaError::Config(_))));
+        // Automatic default loading retains its existing fallback until the startup-policy work.
+        let context = app().build_context().await.unwrap();
+        assert_eq!(context.config.value, TestConfig::default().value);
     }
 }

@@ -1,7 +1,62 @@
 # Migration Guide
 
+- [Unreleased: ordered configuration sources](#unreleased-ordered-configuration-sources)
 - [0.3 → 0.4](#03--04) — **every application must edit its route paths and configuration file**
 - [0.2 → 0.3: API simplification](#02--03-api-simplification)
+
+---
+
+# Unreleased: ordered configuration sources
+
+Configuration sources now retain their insertion order when cloned or restored. Later sources
+override earlier matching values, including when files and environment prefixes are interleaved:
+
+```rust
+use gotcha::config::ConfigBuilder;
+
+let builder = ConfigBuilder::new()
+    .file("base.toml")
+    .env("APP")
+    .file_optional("local.toml");
+let restored = ConfigBuilder::from_state(builder.state());
+```
+
+Here `APP` overrides `base.toml`, and `local.toml` overrides both. Previously restoration grouped
+all environment sources before all files, changing precedence. `Gotcha::with_file_config`,
+`with_optional_config`, `with_env_config`, and the default-source helpers use this same ordering.
+To let environment values win, add their source after the files.
+
+**Direct `ConfigState` construction is a source-breaking change.** Replace `file_paths` and
+`env_prefixes` with the ordered `sources` list, specifying which files are required:
+
+```rust
+use gotcha::config::{ConfigSource, ConfigState};
+
+let state = ConfigState {
+    sources: vec![
+        ConfigSource::File { path: "base.toml".into(), required: true },
+        ConfigSource::Env { prefix: "APP".into() },
+        ConfigSource::File { path: "local.toml".into(), required: false },
+    ],
+    enable_vars: true,
+};
+```
+
+The chainable builder methods keep their signatures. State is a description of where to load
+configuration, not a snapshot: files and environment values are read at `build()` time. A file
+created after registration is now included, and a required file removed before loading fails.
+An optional file only ignores `NotFound`; invalid TOML, invalid UTF-8 and other read errors fail.
+
+**Explicit configuration-source failures now stop Builder startup.** Calls such as
+`with_file_config`, `with_optional_config`, and `with_default_config` propagate loading errors
+through `run()` / `listen()` instead of replacing the configuration with `Default`. Use
+`with_optional_config` for a file whose absence is acceptable. The conventional files selected
+by `with_default_files` are still optional, but errors in existing files propagate.
+
+An already supplied `.config(...)` value still takes precedence over accumulated sources.
+With no explicit configuration or sources, automatic default loading retains its existing
+warning-and-fallback behavior. A broader unification of startup policies is tracked separately
+in [#92](https://github.com/Kilerd/gotcha/issues/92).
 
 ---
 
