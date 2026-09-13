@@ -1,10 +1,34 @@
 # Migration Guide
 
+- [Unreleased: OpenAPI transform composition](#unreleased-openapi-transform-composition)
 - [Unreleased: nested OpenAPI paths](#unreleased-nested-openapi-paths)
 - [Unreleased: schema identity and component names](#unreleased-schema-identity-and-component-names)
 - [Unreleased: ordered configuration sources](#unreleased-ordered-configuration-sources)
 - [0.3 → 0.4](#03--04) — **every application must edit its route paths and configuration file**
 - [0.2 → 0.3: API simplification](#02--03-api-simplification)
+
+---
+
+# Unreleased: OpenAPI transform composition
+
+Repeated `.openapi(...)` calls now append callbacks instead of replacing the previous callback.
+`nest` and `merge` retain child callbacks instead of silently dropping them. Both `Gotcha` and
+`GotchaRouter` use these rules:
+
+1. Child subtrees run in `nest`/`merge` insertion order, with descendants before their parent.
+2. The current router's own callbacks then run in registration order, even if registered before
+   its children. The receiver of `merge` is the parent; regrouping merges can change precedence.
+3. Each callback runs once during router assembly, on the complete document with final prefixed
+   paths and collected components. Requests to `/openapi.json` reuse that result.
+
+**Previously discarded callbacks now execute.** Review callbacks that overwrite metadata or have
+side effects. Parent callbacks can explicitly override child edits. Later assignments win; there
+is no implicit merge of `info`, component maps, or security lists. Mutate individual map entries
+to preserve unrelated definitions, or explicitly replace a field to reset it.
+
+**Child callbacks configure the whole document.** Top-level `security` applies globally, including
+routes outside that child. For local requirements, edit `security` on specific operations using
+their final prefixed paths. Moving a callback into a nested router does not make it route-scoped.
 
 ---
 

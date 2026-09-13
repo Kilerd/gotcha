@@ -43,6 +43,7 @@ use regex::Regex;
 use crate::Responder;
 
 pub mod schematic;
+pub(crate) mod transforms;
 
 /// Match a `{name}` path parameter.
 ///

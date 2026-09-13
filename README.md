@@ -181,6 +181,13 @@ Visit these endpoints when running:
 - `/scalar` - Scalar documentation interface  
 - `/openapi.json` - Raw OpenAPI specification
 
+Customize the document with `.openapi(|mut spec| { /* edits */ spec })` on either `Gotcha` or
+`GotchaRouter`. Repeated calls compose in registration order. Child subtrees run in `nest`/`merge`
+insertion order, then the parent's own callbacks run, once at assembly. All callbacks edit the
+complete document: top-level `security` is global even when set by a child. Use operation-level
+security for individual routes. Later writes win; maps and lists are not implicitly merged.
+See [the migration guide](MIGRATION.md#unreleased-openapi-transform-composition) for details.
+
 ### Configuration System
 
 Create a `configurations/application.toml` file. Your application's own settings live at the top
