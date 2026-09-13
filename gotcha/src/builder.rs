@@ -536,21 +536,56 @@ where
         self
     }
 
-    /// Nest a sub-application at a path
+    /// Nest a route module at a path, using this application's state and configuration.
+    ///
+    /// The module carries routes, middleware, and OpenAPI metadata. Configure state,
+    /// configuration sources, listening addresses, and background tasks on the application.
     ///
     /// With `openapi`, retains the child's transforms and runs them on the complete document
     /// before this application's own transforms.
-    pub fn nest(mut self, path: &str, other: Self) -> Self {
-        self.router = self.router.nest(path, other.router);
+    ///
+    /// ```rust,no_run
+    /// use gotcha::{Gotcha, GotchaRouter};
+    /// let app = Gotcha::new()
+    ///     .nest("/api", GotchaRouter::default().get("/items", || async { "items" }));
+    /// ```
+    ///
+    /// A complete application is rejected rather than silently discarding its settings:
+    ///
+    /// ```compile_fail
+    /// use gotcha::Gotcha;
+    /// let child = Gotcha::new().port(9000).config(Default::default());
+    /// let app = Gotcha::new().nest("/api", child);
+    /// ```
+    pub fn nest(mut self, path: &str, router: GotchaRouter<GotchaContext<S, C>>) -> Self {
+        self.router = self.router.nest(path, router);
         self
     }
 
-    /// Merge with another Gotcha application
+    /// Merge a route module using this application's state and configuration.
     ///
-    /// With `openapi`, treats `other` as a child for transform ordering: its transforms run
+    /// As with [`nest`](Self::nest), application settings and tasks belong to the top level.
+    ///
+    /// With `openapi`, treats `router` as a child for transform ordering: its transforms run
     /// on the complete document before this application's own transforms.
-    pub fn merge(mut self, other: Self) -> Self {
-        self.router = self.router.merge(other.router);
+    ///
+    /// ```rust,no_run
+    /// use gotcha::{Gotcha, GotchaRouter};
+    /// let app = Gotcha::new()
+    ///     .merge(GotchaRouter::default().get("/health", || async { "ok" }));
+    /// ```
+    ///
+    /// A complete child application, including one with tasks, cannot be merged:
+    ///
+    /// ```compile_fail
+    /// use gotcha::Gotcha;
+    /// let child = Gotcha::new();
+    /// # #[cfg(feature = "task")]
+    /// let child = child.tasks(|_scheduler| {});
+    /// let app = Gotcha::new().merge(child);
+    /// ```
+    pub fn merge(mut self, router: GotchaRouter<GotchaContext<S, C>>) -> Self {
+        self.router = self.router.merge(router);
         self
     }
 
@@ -608,6 +643,8 @@ where
     /// The closure receives a [`TaskScheduler`](crate::TaskScheduler) when the
     /// server starts, on which you can register `cron` / `interval` jobs. This
     /// brings the builder to parity with `GotchaApp::tasks`.
+    /// Register module tasks here on the top-level application; `nest` and `merge` accept
+    /// only route modules and cannot accept another application's task registrations.
     ///
     /// # Example
     /// ```no_run
@@ -767,6 +804,45 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    async fn nested_and_merged_routes_share_the_application_context() {
+        use axum::{
+            body::{to_bytes, Body},
+            extract::State,
+        };
+        use std::sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc,
+        };
+        use tower::ServiceExt;
+
+        async fn read(State(context): State<GotchaContext<Arc<AtomicUsize>, TestConfig>>) -> String {
+            format!("{}:{}", context.config.value, context.state.fetch_add(1, Ordering::SeqCst))
+        }
+
+        let calls = Arc::new(AtomicUsize::new(41));
+        let app = Gotcha::with_types::<Arc<AtomicUsize>, TestConfig>()
+            .state(calls.clone())
+            .config(ConfigWrapper {
+                app: TestConfig {
+                    value: "parent".into(),
+                    ..Default::default()
+                },
+                server: ServerConfig::default(),
+            })
+            .nest("/api", GotchaRouter::default().get("/context", read))
+            .merge(GotchaRouter::default().get("/context", read));
+        let context = app.build_context().await.unwrap();
+        let router = app.router.into_axum_router(context);
+
+        for (path, expected) in [("/api/context", "parent:41"), ("/context", "parent:42")] {
+            let response = router.clone().oneshot(Request::builder().uri(path).body(Body::empty()).unwrap()).await.unwrap();
+            assert_eq!(response.status(), axum::http::StatusCode::OK);
+            assert_eq!(to_bytes(response.into_body(), 1024).await.unwrap(), expected);
+        }
+        assert_eq!(calls.load(Ordering::SeqCst), 43, "both modules update the application's shared state");
+    }
+
+    #[tokio::test]
     async fn builder_accepts_composed_and_raw_method_routers() {
         use axum::body::{to_bytes, Body};
         use tower::ServiceExt;
@@ -802,12 +878,12 @@ mod tests {
             })
             .nest(
                 "/child",
-                Gotcha::new().openapi(|mut spec| {
+                GotchaRouter::default().openapi(|mut spec| {
                     spec.info.title = "nested".into();
                     spec
                 }),
             )
-            .merge(Gotcha::new().openapi(|mut spec| {
+            .merge(GotchaRouter::default().openapi(|mut spec| {
                 spec.info.title.push_str(" merged");
                 spec
             }))

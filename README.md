@@ -156,6 +156,24 @@ do not generate OpenAPI operations, even for `#[api]` handlers. See
 [the migration guide](MIGRATION.md#unreleased-documented-method-routers) for existing `.route()`
 calls and the changed root/prelude exports.
 
+### Composing Route Modules
+
+`Gotcha::nest` and `Gotcha::merge` accept `GotchaRouter` modules. Configure state, configuration
+sources, listening addresses, and tasks on the top-level application; all modules receive its
+context. Routes, middleware, and OpenAPI metadata stay with the module.
+
+```rust
+use gotcha::prelude::*;
+
+let api = GotchaRouter::default().get("/items", || async { "items" });
+let health = GotchaRouter::default().get("/health", || async { "ok" });
+let app = Gotcha::new().nest("/api", api).merge(health);
+```
+
+Passing a complete `Gotcha` application is a compile error. For independently configured
+applications, run each separately. See [the migration guide](MIGRATION.md#unreleased-application-and-route-composition)
+for moving existing child settings and task registrations to the top level.
+
 ### OpenAPI Documentation
 
 With the `openapi` feature enabled, use the `#[api]` macro for automatic documentation:
