@@ -31,7 +31,7 @@ pub use crate::router::Responder;
 pub use crate::{config, state, GotchaApp, GotchaConfig, GotchaContext, GotchaRouter};
 
 // Method routing with OpenAPI metadata
-pub use crate::routing::{delete, get, head, on, options, patch, post, put, trace, GotchaMethodRouter};
+pub use crate::routing::{delete, get, head, on, options, patch, post, put, trace, MethodRouter};
 
 // Common Axum extractors and utilities
 pub use axum::extract::ws::{WebSocket, WebSocketUpgrade};

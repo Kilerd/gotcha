@@ -25,7 +25,7 @@ pub use axum::response::IntoResponse as Responder;
 pub use axum_macros::debug_handler;
 pub use config::{ConfigWrapper, ServerConfig};
 pub use either::Either;
-pub use routing::{delete, get, head, on, options, patch, post, put, trace, GotchaMethodRouter};
+pub use routing::{delete, get, head, on, options, patch, post, put, trace, MethodRouter};
 
 pub use once_cell::sync::Lazy;
 pub use router::GotchaRouter;

@@ -12,7 +12,7 @@
 
 # Unreleased: documented method routers
 
-**`Gotcha::route` and `GotchaRouter::route` now require `GotchaMethodRouter`.** This type carries
+**`Gotcha::route` and `GotchaRouter::route` now require `MethodRouter`.** This type carries
 HTTP handlers and their OpenAPI descriptors together. Previously, passing an Axum `MethodRouter`
 silently omitted even `#[api]` handlers from the generated document.
 

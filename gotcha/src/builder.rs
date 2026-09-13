@@ -25,7 +25,7 @@ use std::str::FromStr;
 
 use axum::extract::Request;
 use axum::handler::Handler;
-use axum::routing::MethodRouter;
+use axum::routing::MethodRouter as AxumMethodRouter;
 use serde::{Deserialize, Serialize};
 use tower_layer::Layer;
 use tower_service::Service;
@@ -33,7 +33,7 @@ use tower_service::Service;
 use crate::config::{Config, ConfigBuilder, ConfigWrapper, GotchaConfigLoader, ServerConfig};
 use crate::error::{GotchaError, GotchaResult};
 use crate::router::{GotchaRouter, Responder};
-use crate::routing::GotchaMethodRouter;
+use crate::routing::MethodRouter;
 use crate::GotchaContext;
 
 /// A one-shot closure that registers background tasks on the scheduler when the
@@ -499,14 +499,14 @@ where
 
     /// Add composed methods with their annotated handlers' OpenAPI metadata.
     /// See [`crate::routing`] for constructors such as `get(handler).post(handler)`.
-    pub fn route(mut self, path: &str, method_router: GotchaMethodRouter<GotchaContext<S, C>>) -> Self {
+    pub fn route(mut self, path: &str, method_router: MethodRouter<GotchaContext<S, C>>) -> Self {
         self.router = self.router.route(path, method_router);
         self
     }
 
     /// Add a native Axum method router without generating OpenAPI operations, even for
     /// `#[api]` handlers. Use [`route`](Self::route) with [`crate::routing`] to retain metadata.
-    pub fn route_raw(mut self, path: &str, method_router: MethodRouter<GotchaContext<S, C>>) -> Self {
+    pub fn route_raw(mut self, path: &str, method_router: AxumMethodRouter<GotchaContext<S, C>>) -> Self {
         self.router = self.router.route_raw(path, method_router);
         self
     }

@@ -19,7 +19,7 @@ use std::convert::Infallible;
 use axum::extract::Request;
 use axum::handler::Handler;
 pub use axum::routing::MethodFilter;
-use axum::routing::{MethodRouter, Route};
+use axum::routing::{MethodRouter as AxumMethodRouter, Route};
 use tower_layer::Layer;
 use tower_service::Service;
 
@@ -35,23 +35,23 @@ use {crate::Operable, axum::http::Method, std::collections::HashMap};
 /// A native Axum method router cannot be converted here: its erased handlers no longer expose
 /// their descriptor identities. Use `route_raw` for native services and other Axum-specific APIs.
 #[derive(Clone)]
-pub struct GotchaMethodRouter<State = ()> {
-    pub(crate) router: MethodRouter<State>,
+pub struct MethodRouter<State = ()> {
+    pub(crate) router: AxumMethodRouter<State>,
     #[cfg(feature = "openapi")]
     pub(crate) operations: HashMap<Method, &'static Operable>,
 }
 
-impl<State: Clone + Send + Sync + 'static> Default for GotchaMethodRouter<State> {
+impl<State: Clone + Send + Sync + 'static> Default for MethodRouter<State> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<State: Clone + Send + Sync + 'static> GotchaMethodRouter<State> {
+impl<State: Clone + Send + Sync + 'static> MethodRouter<State> {
     /// Create an empty method router.
     pub fn new() -> Self {
         Self {
-            router: MethodRouter::new(),
+            router: AxumMethodRouter::new(),
             #[cfg(feature = "openapi")]
             operations: HashMap::new(),
         }
@@ -99,19 +99,19 @@ impl<State: Clone + Send + Sync + 'static> GotchaMethodRouter<State> {
 }
 
 /// Create a method router for one or more methods, retaining an annotated handler's metadata.
-pub fn on<H, T, State>(filter: MethodFilter, handler: H) -> GotchaMethodRouter<State>
+pub fn on<H, T, State>(filter: MethodFilter, handler: H) -> MethodRouter<State>
 where
     H: Handler<T, State>,
     T: 'static,
     State: Clone + Send + Sync + 'static,
 {
-    GotchaMethodRouter::new().on(filter, handler)
+    MethodRouter::new().on(filter, handler)
 }
 
 macro_rules! method {
     ($name:ident, $filter:ident) => {
         #[doc = concat!("Create a method router for `", stringify!($filter), "`, retaining an annotated handler's metadata.")]
-        pub fn $name<H, T, State>(handler: H) -> GotchaMethodRouter<State>
+        pub fn $name<H, T, State>(handler: H) -> MethodRouter<State>
         where
             H: Handler<T, State>,
             T: 'static,
@@ -120,7 +120,7 @@ macro_rules! method {
             on(MethodFilter::$filter, handler)
         }
 
-        impl<State: Clone + Send + Sync + 'static> GotchaMethodRouter<State> {
+        impl<State: Clone + Send + Sync + 'static> MethodRouter<State> {
             #[doc = concat!("Add a `", stringify!($filter), "` handler and its OpenAPI descriptor, when annotated.")]
             pub fn $name<H, T>(self, handler: H) -> Self
             where

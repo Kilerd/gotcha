@@ -146,7 +146,7 @@ async fn create() -> String { "created".into() }
 let app = Gotcha::new().route("/items", get(list).post(create));
 ```
 
-These constructors return `GotchaMethodRouter`, which supports `on`, `merge`, `clone`, and
+These constructors return `MethodRouter`, which supports `on`, `merge`, `clone`, and
 `layer` while retaining annotated handlers' metadata. The `.get(path, handler)` shortcuts use
 the same registration logic. With `openapi` enabled, `#[api]` handlers generate operations;
 unannotated handlers remain executable without generated operations.

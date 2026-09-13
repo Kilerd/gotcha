@@ -1,10 +1,10 @@
 use std::convert::Infallible;
 
-use crate::routing::GotchaMethodRouter;
+use crate::routing::MethodRouter;
 use axum::extract::Request;
 use axum::handler::Handler;
 pub use axum::response::IntoResponse as Responder;
-use axum::routing::{MethodFilter, MethodRouter, Route};
+use axum::routing::{MethodFilter, MethodRouter as AxumMethodRouter, Route};
 use axum::Router;
 use tower_layer::Layer;
 use tower_service::Service;
@@ -94,7 +94,7 @@ impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
     /// let router: GotchaRouter<()> = GotchaRouter::default()
     ///     .route("/", gotcha::axum::routing::get(|| async { "hello" }));
     /// ```
-    pub fn route(mut self, path: &str, method_router: GotchaMethodRouter<State>) -> Self {
+    pub fn route(mut self, path: &str, method_router: MethodRouter<State>) -> Self {
         self.router = self.router.route(path, method_router.router);
         #[cfg(feature = "openapi")]
         self.operations.extend(
@@ -116,7 +116,7 @@ impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
     /// let router: GotchaRouter<()> = GotchaRouter::default()
     ///     .route_raw("/", gotcha::axum::routing::get(|| async { "hello" }));
     /// ```
-    pub fn route_raw(mut self, path: &str, method_router: MethodRouter<State>) -> Self {
+    pub fn route_raw(mut self, path: &str, method_router: AxumMethodRouter<State>) -> Self {
         self.router = self.router.route(path, method_router);
         self
     }
