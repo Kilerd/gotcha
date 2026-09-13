@@ -51,6 +51,14 @@ jobs:
       - name: Run tests
         run: cargo test --package gotcha  --features "${{ matrix.features }}"
 
+      - name: Prepare trybuild cache cleanup
+        # rust-cache probes both test target directories without awaiting errors.
+        # Remove this workaround once https://github.com/Swatinem/rust-cache/pull/387 ships.
+        run: |
+          if [ -d target/tests/trybuild ]; then
+            mkdir -p target/tests/target
+          fi
+
   test:
     name: Test
     runs-on: ubuntu-latest
