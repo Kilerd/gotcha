@@ -44,9 +44,20 @@ jobs:
 
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
+        with:
+          # Matrix jobs share a job id, but compile different dependency features.
+          key: ${{ matrix.features || 'default' }}
 
       - name: Run tests
         run: cargo test --package gotcha  --features "${{ matrix.features }}"
+
+      - name: Prepare trybuild cache cleanup
+        # rust-cache probes both test target directories without awaiting errors.
+        # Remove this workaround once https://github.com/Swatinem/rust-cache/pull/387 ships.
+        run: |
+          if [ -d target/tests/trybuild ]; then
+            mkdir -p target/tests/target
+          fi
 
   test:
     name: Test
@@ -97,4 +108,4 @@ jobs:
           components: rustfmt
 
       - name: Check formatting
-        run: cargo fmt --all -- --check 
+        run: cargo fmt --all -- --check
