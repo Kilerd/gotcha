@@ -55,6 +55,11 @@ pub struct EnhancedSchema {
 pub trait Schematic {
     /// The name of the type.
     fn name() -> &'static str;
+    /// An explicit public component name, set by `#[schematic(name = "...")]`.
+    /// Automatic names include generic arguments and are disambiguated during collection.
+    fn schema_name() -> Option<&'static str> {
+        None
+    }
     /// Whether the type is required.
     fn required() -> bool;
     /// Whether the type is nullable.

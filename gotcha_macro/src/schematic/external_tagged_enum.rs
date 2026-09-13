@@ -5,10 +5,8 @@ use crate::schematic::ParameterEnumVariantOpt;
 use crate::utils::{get_serde_name, parse_serde_rename, RenameAll};
 
 pub(crate) fn handler(
-    ident: syn::Ident, doc: TokenStream2, variants: Vec<ParameterEnumVariantOpt>, rename_all: Option<RenameAll>,
+    ident_string: String, doc: TokenStream2, variants: Vec<ParameterEnumVariantOpt>, rename_all: Option<RenameAll>,
 ) -> Result<TokenStream2, (Span, &'static str)> {
-    let ident_string = ident.to_string();
-
     let variants_codegen: Vec<TokenStream2> = variants
         .into_iter()
         .map(|variant| {
@@ -107,7 +105,7 @@ pub(crate) fn handler(
             #doc
         }
         fn generate_schema() -> ::gotcha_core::EnhancedSchema {
-            ::gotcha_core::registry::schema_or_ref(Self::name(), Self::required(), || {
+            ::gotcha_core::registry::schema_or_ref_for::<Self>(Self::schema_name(), module_path!(), Self::required(), || {
                 let mut schema = ::gotcha_core::EnhancedSchema {
                     schema: ::gotcha_core::oas::Schema {
                         _type: None,

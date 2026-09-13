@@ -155,14 +155,13 @@ inventory::collect!(Operable);
 /// scope, so each named schema is emitted once under `components/schemas` and referenced by `$ref`
 /// at its use sites (which is also what lets recursive types produce a finite spec).
 pub fn generate_openapi(operables: HashMap<(String, Method), &'static Operable>) -> OpenAPIV3 {
+    let mut operables: Vec<_> = operables.into_iter().collect();
+    operables.sort_by(|((path_a, method_a), _), ((path_b, method_b), _)| (path_a, method_a.as_str()).cmp(&(path_b, method_b.as_str())));
     let (operations, schemas) = gotcha_core::registry::collect(|| {
         operables
-            .into_iter()
-            .map(|((path, method), operable)| {
-                let operation = operable.generate(path.clone());
-                ((path, method), operation)
-            })
-            .collect::<HashMap<(String, Method), Operation>>()
+            .iter()
+            .map(|((path, _), operable)| operable.generate(path.clone()))
+            .collect::<Vec<_>>()
     });
 
     let components = (!schemas.is_empty()).then(|| Components {
@@ -195,7 +194,7 @@ pub fn generate_openapi(operables: HashMap<(String, Method), &'static Operable>)
         external_docs: None,
         extras: None,
     };
-    for ((path, method), operation) in operations {
+    for (((path, method), _), operation) in operables.into_iter().zip(operations) {
         let path = replace_path_variable(path);
         if let Some(added_tags) = &operation.tags {
             added_tags.iter().for_each(|tag| {

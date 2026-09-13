@@ -2,7 +2,7 @@ use darling::ast::Data;
 use darling::{FromDeriveInput, FromField, FromVariant};
 use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::quote;
-use syn::{parse2, DeriveInput, GenericParam};
+use syn::{parse2, DeriveInput};
 
 pub mod adjacent_tagged_enum;
 pub mod external_tagged_enum;
@@ -80,11 +80,11 @@ impl ParameterExtraField {
 }
 
 #[derive(Debug, FromDeriveInput)]
-#[darling(attributes(parameter), forward_attrs(allow, doc, cfg, serde))]
+#[darling(attributes(schematic), forward_attrs(allow, doc, cfg, serde))]
 pub(crate) struct ParameterOpts {
     ident: syn::Ident,
     generics: syn::Generics,
-    where_clause: Option<syn::WhereClause>,
+    name: Option<String>,
     data: Data<ParameterEnumVariantOpt, ParameterStructFieldOpt>,
     attrs: Vec<syn::Attribute>,
 }
@@ -351,7 +351,23 @@ pub(crate) struct ParameterEnumVariantOpt {
 
 pub(crate) fn handler(input: TokenStream2) -> Result<TokenStream2, (Span, &'static str)> {
     let x1 = parse2::<DeriveInput>(input).unwrap();
-    let param_opts: ParameterOpts = ParameterOpts::from_derive_input(&x1).unwrap();
+    let param_opts: ParameterOpts = match ParameterOpts::from_derive_input(&x1) {
+        Ok(opts) => opts,
+        Err(error) => return Ok(error.write_errors()),
+    };
+    if let Some(name) = &param_opts.name {
+        if name.is_empty() || !name.bytes().all(|c| c.is_ascii_alphanumeric() || matches!(c, b'_' | b'-' | b'.')) {
+            return Err((
+                param_opts.ident.span(),
+                "schema name must be nonempty and contain only ASCII letters, digits, '.', '-' or '_'",
+            ));
+        }
+    }
+    let schema_name = param_opts.name.clone().unwrap_or_else(|| param_opts.ident.to_string());
+    let name_override = match &param_opts.name {
+        Some(name) => quote! { Some(#name) },
+        None => quote! { None },
+    };
     let extra_field = ParameterExtraField::from_attr(&param_opts.attrs);
     let ident = param_opts.ident.clone();
     let doc = match param_opts.attrs.get_doc() {
@@ -363,55 +379,27 @@ pub(crate) fn handler(input: TokenStream2) -> Result<TokenStream2, (Span, &'stat
         }
     };
 
-    let generics_params = param_opts.generics.params.iter().map(|p| quote! { #p }).collect::<Vec<TokenStream2>>();
-    let generics_single = param_opts
-        .generics
-        .params
-        .iter()
-        .map(|p| match p {
-            GenericParam::Type(ty) => {
-                let ident = ty.ident.clone();
-                quote! { #ident }
-            }
-            GenericParam::Lifetime(lt) => quote! { #lt },
-            GenericParam::Const(c) => quote! { #c },
-        })
-        .collect::<Vec<TokenStream2>>();
-    let generics = if generics_params.is_empty() {
-        quote! {}
-    } else {
-        quote! {<#(#generics_params),*> }
-    };
-    let generics_single = if generics_single.is_empty() {
-        quote! {}
-    } else {
-        quote! {<#(#generics_single),*> }
-    };
-    let where_clause = if let Some(where_clause) = param_opts.where_clause {
-        quote! { where #where_clause }
-    } else {
-        quote! {}
-    };
+    let (generics, generics_single, where_clause) = param_opts.generics.split_for_impl();
 
     let impl_stream = match param_opts.data {
         Data::Enum(enum_variants) => {
             // Check if all enum variants have empty fields
             let is_simple_enum = enum_variants.iter().all(|variant| variant.fields.is_empty());
             if is_simple_enum {
-                simple_enum::handler(ident.clone(), doc, enum_variants, extra_field.rename_all)?
+                simple_enum::handler(schema_name.clone(), doc, enum_variants, extra_field.rename_all)?
             } else {
                 match extra_field.tag_kind {
                     None => {
                         // Default: externally tagged
-                        external_tagged_enum::handler(ident.clone(), doc, enum_variants, extra_field.rename_all)?
+                        external_tagged_enum::handler(schema_name.clone(), doc, enum_variants, extra_field.rename_all)?
                     }
                     Some(SerdeTagKind::Internal(ref tag_name)) => {
-                        tagged_enum::handler(ident.clone(), doc, enum_variants, extra_field.rename_all, tag_name.clone())?
+                        tagged_enum::handler(schema_name.clone(), doc, enum_variants, extra_field.rename_all, tag_name.clone())?
                     }
                     Some(SerdeTagKind::Adjacent { ref tag, ref content }) => {
-                        adjacent_tagged_enum::handler(ident.clone(), doc, enum_variants, extra_field.rename_all, tag.clone(), content.clone())?
+                        adjacent_tagged_enum::handler(schema_name.clone(), doc, enum_variants, extra_field.rename_all, tag.clone(), content.clone())?
                     }
-                    Some(SerdeTagKind::Untagged) => untagged_enum::handler(ident.clone(), doc, enum_variants, extra_field.rename_all)?,
+                    Some(SerdeTagKind::Untagged) => untagged_enum::handler(schema_name.clone(), doc, enum_variants, extra_field.rename_all)?,
                 }
             }
         }
@@ -420,23 +408,44 @@ pub(crate) fn handler(input: TokenStream2) -> Result<TokenStream2, (Span, &'stat
             let field_count = fields.fields.len();
             if is_tuple && field_count == 1 {
                 // Newtype struct (e.g. `struct UserId(Uuid);`) — transparent to the inner type.
-                newtype_struct::handler(fields.fields)
+                newtype_struct::handler(fields.fields, param_opts.name.as_deref())
             } else if is_tuple {
                 return Err((
                     ident.span(),
                     "#[derive(Schematic)] does not support multi-field tuple structs; use a named struct",
                 ));
             } else {
-                named_struct::handler(ident.clone(), doc, fields, extra_field.rename_all)?
+                named_struct::handler(schema_name.clone(), doc, fields, extra_field.rename_all)?
             }
         }
     };
 
     let ret = quote! {
         impl #generics Schematic for #ident #generics_single #where_clause {
+            fn schema_name() -> Option<&'static str> { #name_override }
             #impl_stream
         }
     };
 
     Ok(ret)
+}
+
+#[cfg(test)]
+mod name_tests {
+    use super::*;
+
+    #[test]
+    fn component_names_reject_invalid_openapi_keys() {
+        for name in ["", "Bad/Name", "Bad~Name", "Bad Name", "Bad<Name>"] {
+            let error = handler(quote! { #[schematic(name = #name)] struct Example { value: String } }).unwrap_err();
+            assert!(error.1.contains("schema name must be nonempty"));
+        }
+        assert!(handler(quote! { #[schematic(name = "public.Result-v1")] struct Example { value: String } }).is_ok());
+    }
+
+    #[test]
+    fn misspelled_container_options_report_compile_errors() {
+        let output = handler(quote! { #[schematic(nmae = "Example")] struct Example { value: String } }).unwrap();
+        assert!(output.to_string().contains("compile_error"));
+    }
 }

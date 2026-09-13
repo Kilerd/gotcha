@@ -152,6 +152,30 @@ async fn get_user(Path(id): Path<u32>) -> Json<User> {
 }
 ```
 
+Component names retain short names when unique. Generic instances use names such as
+`Envelope_String` and `Envelope_u32`. If different modules define `SendResult`, assembly uses
+PascalCase module prefixes, such as `ScreensSendResult` and `TerminalsSendResult`, and emits a
+`tracing::warn!` with the conflicting Rust types and their final names.
+
+Use an explicit name to keep a public component stable across module moves:
+
+```rust
+# #[cfg(feature = "openapi")]
+# mod schema_name_example {
+use gotcha::Schematic;
+
+#[derive(Schematic)]
+#[schematic(name = "ScreenSendResult")]
+struct SendResult {
+    screen_id: String,
+}
+# }
+```
+
+Names must be nonempty and use only ASCII letters, digits, `.`, `-`, or `_`. Choose a unique
+explicit name: duplicate overrides also warn and receive distinct module-prefixed names.
+See [the migration guide](MIGRATION.md#unreleased-schema-identity-and-component-names) for details.
+
 Visit these endpoints when running:
 - `/redoc` - ReDoc documentation interface
 - `/scalar` - Scalar documentation interface  

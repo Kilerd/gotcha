@@ -5,10 +5,8 @@ use crate::schematic::ParameterStructFieldOpt;
 use crate::utils::{get_serde_name, has_serde_flatten, has_serde_skip, is_serde_optional, parse_serde_rename, RenameAll};
 
 pub(crate) fn handler(
-    ident: syn::Ident, doc: TokenStream2, fields: darling::ast::Fields<ParameterStructFieldOpt>, rename_all: Option<RenameAll>,
+    ident_string: String, doc: TokenStream2, fields: darling::ast::Fields<ParameterStructFieldOpt>, rename_all: Option<RenameAll>,
 ) -> Result<TokenStream2, (Span, &'static str)> {
-    let ident_string = ident.to_string();
-
     let mut normal_fields_stream: Vec<TokenStream2> = Vec::new();
     let mut flatten_fields_stream: Vec<TokenStream2> = Vec::new();
     let mut flatten_schema_stream: Vec<TokenStream2> = Vec::new();
@@ -188,7 +186,7 @@ pub(crate) fn handler(
             // During spec assembly this registers the schema under `name()` and returns a `$ref`
             // to it (which is also what makes recursive types terminate); outside that scope it
             // just builds the schema inline.
-            ::gotcha_core::registry::schema_or_ref(Self::name(), Self::required(), || {
+            ::gotcha_core::registry::schema_or_ref_for::<Self>(Self::schema_name(), module_path!(), Self::required(), || {
                 let mut schema = ::gotcha_core::EnhancedSchema {
                     schema: ::gotcha_core::oas::Schema {
                         _type: Some(Self::type_().to_string()),

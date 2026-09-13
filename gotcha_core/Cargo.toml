@@ -37,3 +37,6 @@ bigdecimal = "0.4"
 chrono = "0.4"
 uuid = { version = "1.10" }
 rust_decimal = "1.36"
+
+tracing = "0.1"
+convert_case = "0.6"
