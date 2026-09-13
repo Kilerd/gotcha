@@ -7,12 +7,25 @@ use crate::schematic::ParameterStructFieldOpt;
 /// by delegating every `Schematic` method to the wrapped type. The newtype is
 /// therefore transparent in the generated schema — `UserId` looks exactly like
 /// `Uuid`, matching how serde serializes such wrappers.
-pub(crate) fn handler(fields: Vec<ParameterStructFieldOpt>) -> TokenStream2 {
+pub(crate) fn handler(fields: Vec<ParameterStructFieldOpt>, name: Option<&str>) -> TokenStream2 {
     let inner_ty = &fields[0].ty;
 
+    let name_impl = match name {
+        Some(name) => quote! { #name },
+        None => quote! { <#inner_ty as ::gotcha_core::Schematic>::name() },
+    };
+    let schema_impl = if name.is_some() {
+        quote! {
+            ::gotcha_core::registry::schema_or_ref_for::<Self>(Self::schema_name(), module_path!(), Self::required(), || {
+                <#inner_ty as ::gotcha_core::Schematic>::generate_schema()
+            })
+        }
+    } else {
+        quote! { <#inner_ty as ::gotcha_core::Schematic>::generate_schema() }
+    };
     quote! {
         fn name() -> &'static str {
-            <#inner_ty as ::gotcha_core::Schematic>::name()
+            #name_impl
         }
         fn required() -> bool {
             <#inner_ty as ::gotcha_core::Schematic>::required()
@@ -33,7 +46,7 @@ pub(crate) fn handler(fields: Vec<ParameterStructFieldOpt>) -> TokenStream2 {
             <#inner_ty as ::gotcha_core::Schematic>::fields()
         }
         fn generate_schema() -> ::gotcha_core::EnhancedSchema {
-            <#inner_ty as ::gotcha_core::Schematic>::generate_schema()
+            #schema_impl
         }
         fn flatten_schema() -> Option<::gotcha_core::serde_json::Value> {
             <#inner_ty as ::gotcha_core::Schematic>::flatten_schema()

@@ -1,8 +1,66 @@
 # Migration Guide
 
+- [Unreleased: schema identity and component names](#unreleased-schema-identity-and-component-names)
 - [Unreleased: ordered configuration sources](#unreleased-ordered-configuration-sources)
 - [0.3 → 0.4](#03--04) — **every application must edit its route paths and configuration file**
 - [0.2 → 0.3: API simplification](#02--03-api-simplification)
+
+---
+
+# Unreleased: schema identity and component names
+
+Schema collection now identifies derived types by their full Rust type name, including generic
+arguments, instead of treating the display name as the type's identity. Different types no longer
+silently share the first schema encountered. Operations are assembled in path/method order;
+component names are resolved after collection, independently of registration order.
+
+| Rust types in one document | Component names |
+| --- | --- |
+| A unique `User` | `User` |
+| `Envelope<String>`, `Envelope<u32>` | `Envelope_String`, `Envelope_u32` |
+| `screens::SendResult`, `terminals::SendResult` | `ScreensSendResult`, `TerminalsSendResult` |
+| `first::models::Item`, `second::models::Item` | `FirstModelsItem`, `SecondModelsItem` |
+
+All generated references, including recursive and nested references, follow the resolved names.
+Each name collision emits a `tracing::warn!` with `schema_name`, `types`, and `resolved_names`.
+Repeated use of the same type is normal reuse and does not warn. Add a tracing subscriber to
+observe these events, as for other framework logs.
+
+**Component names and generated client type names may change.** Unique short names remain as
+before, but adding a colliding type can rename a previously unique component. Reserve stable
+public names explicitly:
+
+```rust
+use gotcha::Schematic;
+
+#[derive(Schematic)]
+#[schematic(name = "ScreenSendResult")]
+struct SendResult { screen_id: String }
+```
+
+The override works for structs, all supported enum representations, and newtypes. A named newtype
+becomes its own component; an unnamed newtype remains transparent. An explicit override also
+changes `Schematic::name()`. Names must match `[A-Za-z0-9._-]+`.
+
+A unique explicit name takes priority over an automatically generated name. Duplicate explicit
+names warn and are disambiguated, rather than dropping either schema. Prefer unique overrides,
+including across generic instances that share a derive. If module prefixes still collide (for
+example when generic arguments have identical short names), an encoded full type identity is
+used as a deterministic fallback. Use explicit names for such public types rather than relying
+on these long fallback names. Automatic identity/naming is not a cross-compiler ABI; explicit
+unique names are the mechanism for pinning a public contract.
+
+**Low-level `registry::collect` results now require `SchemaReferences`.** The collector must
+rewrite references returned by the closure as well as references in component definitions after
+assigning names. Standard schema/operation results, vectors, maps, and parameter-provider results
+already implement this trait. Custom result containers should forward it to their schema-bearing
+fields; unrelated application state does not need serialization or new bounds. Temporary
+references inside the closure are not finalized until `collect` returns.
+
+Handwritten schema implementations can use `registry::schema_or_ref_for::<Self>` with an optional
+explicit name and `module_path!()` to participate in type-aware collection. The older
+`schema_or_ref(name, ...)` helper still treats its caller-supplied name as an explicit identity;
+callers of that helper remain responsible for making those identities unique.
 
 ---
 
