@@ -1,9 +1,23 @@
 # Migration Guide
 
+- [Unreleased: nested OpenAPI paths](#unreleased-nested-openapi-paths)
 - [Unreleased: schema identity and component names](#unreleased-schema-identity-and-component-names)
 - [Unreleased: ordered configuration sources](#unreleased-ordered-configuration-sources)
 - [0.3 → 0.4](#03--04) — **every application must edit its route paths and configuration file**
 - [0.2 → 0.3: API simplification](#02--03-api-simplification)
+
+---
+
+# Unreleased: nested OpenAPI paths
+
+`GotchaRouter::nest` now records OpenAPI paths using the same join rules as the underlying
+Axum router. For example, nesting `/hello` under `/api` documents `/api/hello`, rather than the
+incorrect `/api//hello`. Regenerate clients/spec snapshots that previously contained these
+incorrect paths; the application's actual HTTP routes and registration API are unchanged.
+
+A child root `/` documents `/api` when nested under `/api`, and `/api/` when nested under
+`/api/`. Trailing slashes on non-root child routes and intentional interior double slashes
+remain significant. The same rules apply at each level of nesting and preserve path parameters.
 
 ---
 

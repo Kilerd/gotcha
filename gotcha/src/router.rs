@@ -17,6 +17,20 @@ use crate::Operable;
 #[cfg(feature = "openapi")]
 use std::collections::HashMap;
 
+/// Canonicalize a nested documentation path using Axum's `path_for_nested_route` rules.
+/// Only the join boundary is normalized: a prefix's trailing slash is significant for a
+/// child root, and intentional empty path segments elsewhere must remain intact.
+#[cfg(feature = "openapi")]
+fn canonicalize_nested_path(prefix: &str, child_path: &str) -> String {
+    if prefix.ends_with('/') {
+        format!("{prefix}{}", child_path.trim_start_matches('/'))
+    } else if child_path == "/" {
+        prefix.to_owned()
+    } else {
+        format!("{prefix}{child_path}")
+    }
+}
+
 /// Generates the per-HTTP-method shorthand (`get`, `post`, …) on the router.
 macro_rules! implement_method {
     ($method:expr, $fn_name: tt ) => {
@@ -147,7 +161,8 @@ impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
     implement_method!(MethodFilter::OPTIONS, options);
     implement_method!(MethodFilter::TRACE, trace);
 
-    /// nest a router inside another router
+    /// Nest a router inside another router, using Axum's path-joining rules for documentation.
+    /// A child root `/` becomes `/api` under `/api`, but `/api/` under `/api/`.
     /// # Examples
     ///
     /// ```rust,no_run
@@ -161,11 +176,7 @@ impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
         let operations = router
             .operations
             .into_iter()
-            .map(|(key, value)| {
-                let (path_str, method) = key;
-                let new_path = format!("{}/{}", path, path_str);
-                ((new_path, method), value)
-            })
+            .map(|((child_path, method), operable)| ((canonicalize_nested_path(path, &child_path), method), operable))
             .collect::<HashMap<(String, Method), &'static Operable>>();
         Self {
             #[cfg(feature = "openapi")]
@@ -334,6 +345,44 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use super::*;
+
+    #[test]
+    fn canonicalize_nested_path_handles_join_boundaries() {
+        for (prefix, child, expected) in [
+            ("/api", "/hello", "/api/hello"),
+            ("/api/", "/hello", "/api/hello"),
+            ("/api", "/", "/api"),
+            ("/api/", "/", "/api/"),
+            ("/api", "/hello/", "/api/hello/"),
+            ("/api/", "/hello/", "/api/hello/"),
+        ] {
+            assert_eq!(canonicalize_nested_path(prefix, child), expected, "{prefix} + {child}");
+        }
+    }
+
+    #[test]
+    fn canonicalize_nested_path_preserves_significant_empty_segments() {
+        for (prefix, child, expected) in [
+            ("/api", "/v1//hello", "/api/v1//hello"),
+            ("/api//", "/hello", "/api//hello"),
+            ("/api", "//hello", "/api//hello"),
+            ("/api/", "//hello", "/api/hello"),
+        ] {
+            assert_eq!(canonicalize_nested_path(prefix, child), expected, "{prefix} + {child}");
+        }
+    }
+
+    #[test]
+    fn canonicalize_nested_path_composes_across_nesting_levels() {
+        let items = canonicalize_nested_path("/v1/", "/items/{id}");
+        assert_eq!(canonicalize_nested_path("/tenants/{tenant}", &items), "/tenants/{tenant}/v1/items/{id}");
+
+        let root = canonicalize_nested_path("/v1", "/");
+        assert_eq!(canonicalize_nested_path("/api/", &root), "/api/v1");
+
+        let root_with_slash = canonicalize_nested_path("/v1/", "/");
+        assert_eq!(canonicalize_nested_path("/api", &root_with_slash), "/api/v1/");
+    }
 
     #[test]
     fn openapi_transform_runs_during_assembly() {
