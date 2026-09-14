@@ -5,7 +5,7 @@ use crate::schematic::ParameterEnumVariantOpt;
 use crate::utils::{get_serde_name, parse_serde_rename, RenameAll};
 
 pub(crate) fn handler(
-    ident_string: String, doc: TokenStream2, variants: Vec<ParameterEnumVariantOpt>, rename_all: Option<RenameAll>,
+    core: &TokenStream2, ident_string: String, doc: TokenStream2, variants: Vec<ParameterEnumVariantOpt>, rename_all: Option<RenameAll>,
 ) -> Result<TokenStream2, (Span, &'static str)> {
     let variant_vec: Vec<TokenStream2> = variants
         .into_iter()
@@ -32,10 +32,10 @@ pub(crate) fn handler(
         fn doc() -> Option<String> {
             #doc
         }
-        fn generate_schema() -> ::gotcha_core::EnhancedSchema {
-            ::gotcha_core::registry::schema_or_ref_for::<Self>(Self::schema_name(), module_path!(), Self::required(), || {
-                let mut schema = ::gotcha_core::EnhancedSchema {
-                    schema: ::gotcha_core::oas::Schema {
+        fn generate_schema() -> #core::EnhancedSchema {
+            #core::registry::schema_or_ref_for::<Self>(Self::schema_name(), module_path!(), Self::required(), || {
+                let mut schema = #core::EnhancedSchema {
+                    schema: #core::oas::Schema {
                         _type: Some(Self::type_().to_string()),
                         format:None,
                         nullable:None,
@@ -45,15 +45,15 @@ pub(crate) fn handler(
                     required: Self::required(),
                 };
                 let enum_variants:Vec<&'static str> = vec![ #(#variant_vec ,)* ];
-                schema.schema.extras.insert("enum".to_string(), ::gotcha_core::serde_json::to_value(enum_variants).unwrap());
+                schema.schema.extras.insert("enum".to_string(), #core::serde_json::to_value(enum_variants).unwrap());
                 schema
             })
         }
 
-        fn flatten_schema() -> Option<::gotcha_core::serde_json::Value> {
+        fn flatten_schema() -> Option<#core::serde_json::Value> {
             // Built inline rather than through `generate_schema`, which hands back a `$ref` during
             // spec assembly — a flattened enum has to merge its actual shape into the parent.
-            let mut schema = ::gotcha_core::oas::Schema {
+            let mut schema = #core::oas::Schema {
                 _type: Some(Self::type_().to_string()),
                 format:None,
                 nullable:None,
@@ -61,7 +61,7 @@ pub(crate) fn handler(
                 extras:Default::default()
             };
             let enum_variants:Vec<&'static str> = vec![ #(#variant_vec ,)* ];
-            schema.extras.insert("enum".to_string(), ::gotcha_core::serde_json::to_value(enum_variants).unwrap());
+            schema.extras.insert("enum".to_string(), #core::serde_json::to_value(enum_variants).unwrap());
             Some(schema.to_value())
         }
     };

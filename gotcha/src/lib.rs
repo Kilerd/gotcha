@@ -49,6 +49,10 @@ pub use gotcha_macro::{config, state};
 pub mod message;
 #[cfg(feature = "openapi")]
 #[cfg_attr(docsrs, doc(cfg(feature = "openapi")))]
+/// Schema core, also usable directly by libraries without the web framework.
+pub use gotcha_core;
+#[cfg(feature = "openapi")]
+#[cfg_attr(docsrs, doc(cfg(feature = "openapi")))]
 pub use gotcha_core::Responsible;
 
 #[cfg(feature = "openapi")]
@@ -70,8 +74,22 @@ pub use crate::validation::{Valid, ValidRejection};
 /// axum's typed-header extractor and the header types it works with. `TypedHeader<T>` documents
 /// itself as an OpenAPI header parameter (the name comes from `headers::Header`).
 pub use axum_extra::{headers, TypedHeader};
+/// The validation crate used by [`Valid`]. Use `#[validate(crate = "gotcha::validator")]`
+/// with [`Validate`] to avoid a separate validator dependency.
+pub use validator;
 /// Derive and trait for request validation (re-exported from the `validator` crate).
-/// Use with the [`Valid`] extractor.
+/// Use with the [`Valid`] extractor. Without a direct validator dependency, set its crate path:
+///
+/// ```
+/// #[derive(gotcha::Validate)]
+/// #[validate(crate = "gotcha::validator")]
+/// struct Request {
+///     #[validate(length(min = 1))]
+///     name: String,
+/// }
+///
+/// assert!(gotcha::Validate::validate(&Request { name: String::new() }).is_err());
+/// ```
 pub use validator::Validate;
 
 mod assembly;

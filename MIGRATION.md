@@ -1,5 +1,6 @@
 # Migration Guide
 
+- [Unreleased: derive dependency paths](#unreleased-derive-dependency-paths)
 - [Unreleased: explicit OpenAPI endpoints](#unreleased-explicit-openapi-endpoints)
 - [Unreleased: message task handles](#unreleased-message-task-handles)
 - [Unreleased: static OpenAPI descriptors](#unreleased-static-openapi-descriptors)
@@ -17,6 +18,39 @@
 - [0.2 → 0.3: API simplification](#02--03-api-simplification)
 
 ---
+
+# Unreleased: derive dependency paths
+
+**`Schematic` stays in `gotcha_core`.** Libraries can continue to depend only on core and either
+implement the trait manually or use `#[derive(gotcha_core::Schematic)]`. Core's web integration
+remains optional. Applications depending on gotcha with `openapi` enabled can now use
+`#[derive(gotcha::Schematic)]` without importing the trait or adding a direct core dependency.
+Both entry points implement the same trait, so library types work in application schemas.
+
+Remove a direct `gotcha_core` dependency if it was added only to make the derive compile.
+If you also use support APIs such as the registry, they are available through
+`gotcha::gotcha_core`. The derive prefers a direct core dependency when present, otherwise
+gotcha's re-export, and recognizes Cargo dependency renames for both. A custom facade can set
+`#[schematic(crate = "path::to::gotcha_core")]` explicitly. This does not change schema names
+or generated document content. Renaming support here applies to the Schematic derive; other
+Gotcha macros retain their existing path behavior.
+
+**Validation can use gotcha's validator version directly.** To avoid a separate `validator`
+dependency, select the re-export using the upstream derive's existing crate override:
+
+```rust
+#[derive(gotcha::Validate)]
+#[validate(crate = "gotcha::validator")]
+struct Request {
+    #[validate(length(min = 1))]
+    name: String,
+}
+```
+
+The override is required for this form; re-exporting the derive does not change its upstream
+default. If gotcha is renamed to `web`, use `#[derive(web::Validate)]` and
+`#[validate(crate = "web::validator")]`. Existing direct validator dependencies still work
+when their trait version matches gotcha's.
 
 # Unreleased: explicit OpenAPI endpoints
 

@@ -13,8 +13,21 @@
 //! use `Schematic` can depend on `gotcha_core` directly without pulling in the whole
 //! web framework.
 //!
-//! The heavyweight `gotcha` crate re-exports everything here, so existing
-//! `use gotcha::Schematic;` code keeps working unchanged.
+//! The `gotcha` crate re-exports the core as `gotcha::gotcha_core` and exposes
+//! `Schematic` at its root. Both entry points use this same trait; libraries can
+//! implement it for their types without depending on the application framework.
+//!
+//! ```
+//! #[derive(gotcha_core::Schematic)]
+//! struct Record {
+//!     id: u32,
+//! }
+//!
+//! assert_eq!(<Record as gotcha_core::Schematic>::type_(), "object");
+//! ```
+
+// Keep generated absolute paths valid inside this crate as well as in downstream crates.
+extern crate self as gotcha_core;
 
 use std::collections::{HashMap, HashSet};
 
@@ -134,7 +147,7 @@ impl_primitive_type! { f32, "f32", "number"}
 impl_primitive_type! { f64, "f64", "number"}
 
 /// The unit type means "no value". As a *return* type that is an empty body, which
-/// [`Responsible`](crate::Responsible) documents as a response carrying no content. In the rare
+/// [`Responsible`] documents as a response carrying no content. In the rare
 /// case it appears as a schema (`Json<()>`, which serializes as `null`) it produces an empty
 /// schema — `"void"` is not a valid OpenAPI type and made the generated document invalid.
 impl Schematic for () {

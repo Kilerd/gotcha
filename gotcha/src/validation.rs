@@ -24,6 +24,7 @@
 //! use serde::Deserialize;
 //!
 //! #[derive(Deserialize, Schematic, Validate)]
+//! #[validate(crate = "gotcha::validator")]
 //! struct CreateUser {
 //!     #[validate(length(min = 1, max = 64))]
 //!     name: String,
@@ -36,6 +37,10 @@
 //!     format!("created {}", user.name)
 //! }
 //! ```
+//!
+//! The crate override uses gotcha's validator re-export, so no direct `validator`
+//! dependency is needed. If gotcha is renamed in Cargo.toml, use that name in the
+//! path (for example `#[validate(crate = "web::validator")]`).
 
 use std::borrow::Cow;
 

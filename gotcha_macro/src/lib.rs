@@ -89,6 +89,18 @@ pub fn api(args: TokenStream, input_stream: TokenStream) -> TokenStream {
 /// This derive macro automatically implements the `Schematic` trait,
 /// which generates OpenAPI JSON schemas for request and response types.
 ///
+/// ## Dependencies
+///
+/// `Schematic` is defined in `gotcha_core`. Libraries can depend on that crate alone
+/// and use `#[derive(gotcha_core::Schematic)]`; applications with the `openapi` feature
+/// can use `#[derive(gotcha::Schematic)]` without adding a separate core dependency.
+/// Neither form requires importing the trait into scope.
+///
+/// Generated paths prefer a direct `gotcha_core` dependency, then the core re-export
+/// in `gotcha`. Cargo dependency renames are recognized for both. For a custom facade,
+/// use `#[schematic(crate = "path::to::gotcha_core")]` to select its core re-export.
+/// This overrides every generated support path, including field metadata.
+///
 /// ## Field attributes
 ///
 /// Individual fields can be annotated with `#[schematic(...)]` to enrich the

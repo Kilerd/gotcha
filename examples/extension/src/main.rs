@@ -1,4 +1,4 @@
-//! Example demonstrating Extension<T> usage with OpenAPI generation
+//! Example demonstrating `Extension<T>` usage with OpenAPI generation
 
 use gotcha::{api, async_trait, ConfigWrapper, Extension, GotchaApp, GotchaContext, GotchaRouter, Json, Responder, Schematic, State};
 use serde::{Deserialize, Serialize};
