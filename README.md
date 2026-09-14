@@ -297,14 +297,57 @@ Names must be nonempty and use only ASCII letters, digits, `.`, `-`, or `_`. Cho
 explicit name: duplicate overrides also warn and receive distinct module-prefixed names.
 See [the migration guide](MIGRATION.md#unreleased-schema-identity-and-component-names) for details.
 
-Visit these endpoints when running:
+Documentation HTTP endpoints are disabled by default. Enable them explicitly with
+`Gotcha::with_openapi()`, or return `Some(OpenApiEndpoints::default())` from
+`GotchaApp::openapi_endpoints()`. The default paths are:
+
 - `/redoc` - ReDoc documentation interface
 - `/scalar` - Scalar documentation interface  
 - `/openapi.json` - Raw OpenAPI specification
 
+Use `openapi_endpoints(Some(config))` to customize paths, and `None` to disable all endpoints.
+Each UI can also be disabled independently:
+
+```rust
+# #[cfg(feature = "openapi")]
+# {
+use gotcha::{Gotcha, OpenApiEndpoints};
+let app = Gotcha::new().openapi_endpoints(Some(OpenApiEndpoints {
+    json_path: "/docs/schema.json".into(),
+    redoc_path: Some("/docs/redoc".into()),
+    scalar_path: None,
+}));
+# }
+```
+
+`layer` covers business routes already registered, following Axum's ordering. Use builder
+`app_layer` or the trait's `finish_router` hook for authentication that must cover **every endpoint**,
+including documentation and fallbacks. Application layers run after documentation is mounted,
+regardless of when `with_openapi()` was called. Keeping authentication on business routes leaves
+explicitly enabled documentation public.
+
+Export the complete document with `Gotcha::into_openapi()`, `GotchaRouter::into_openapi()`, or
+`GotchaApp::openapi_document()`. Export needs no listener or runtime and does not initialize
+application state, load configuration, register tasks, or install application layers:
+
+```rust
+# #[cfg(feature = "openapi")]
+# {
+use gotcha::Gotcha;
+let spec = Gotcha::new()
+    .openapi(|mut spec| { spec.info.title = "My API".into(); spec })
+    .into_openapi();
+let json = serde_json::to_string_pretty(&spec).unwrap();
+# }
+```
+
+The OpenAPI example supports `cargo run -p openapi -- --export-openapi` for a standalone JSON export.
+See [the migration guide](MIGRATION.md#unreleased-explicit-openapi-endpoints) for both APIs and
+middleware scope changes.
+
 Customize the document with `.openapi(|mut spec| { /* edits */ spec })` on either `Gotcha` or
 `GotchaRouter`. Repeated calls compose in registration order. Child subtrees run in `nest`/`merge`
-insertion order, then the parent's own callbacks run, once at assembly. All callbacks edit the
+insertion order, then the parent's own callbacks run, once per exported or served document. All callbacks edit the
 complete document: top-level `security` is global even when set by a child. Use operation-level
 security for individual routes. Later writes win; maps and lists are not implicitly merged.
 See [the migration guide](MIGRATION.md#unreleased-openapi-transform-composition) for details.

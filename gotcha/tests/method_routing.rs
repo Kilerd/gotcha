@@ -36,6 +36,11 @@ impl GotchaApp for App {
         Ok(())
     }
 
+    #[cfg(feature = "openapi")]
+    fn openapi_endpoints(&self) -> Option<gotcha::OpenApiEndpoints> {
+        Some(gotcha::OpenApiEndpoints::default())
+    }
+
     fn routes(&self, router: GotchaRouter<Context>) -> GotchaRouter<Context> {
         let methods = routing::get(read).merge(routing::post(write)).layer(Extension("composed"));
         router

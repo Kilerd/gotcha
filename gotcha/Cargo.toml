@@ -63,7 +63,6 @@ axum-prometheus = { version = "0.8", optional = true }
 axum-macros = "0.5"
 # No features here — the `cors` / `static_files` flags each turn on the one they need.
 tower-http = { version = "0.6", optional = true, default-features = false }
-cfg-if = { workspace = true }
 thiserror = "1.0"
 serde_json = "1"    
 bigdecimal = "0.4"

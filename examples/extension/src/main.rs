@@ -69,6 +69,10 @@ impl GotchaApp for App {
     type State = ();
     type Config = Config;
 
+    fn openapi_endpoints(&self) -> Option<gotcha::OpenApiEndpoints> {
+        Some(gotcha::OpenApiEndpoints::default())
+    }
+
     fn routes(&self, router: GotchaRouter<GotchaContext<Self::State, Self::Config>>) -> GotchaRouter<GotchaContext<Self::State, Self::Config>> {
         router
             .get("/health", health)

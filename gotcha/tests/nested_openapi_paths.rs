@@ -21,6 +21,10 @@ impl GotchaApp for NestedApp {
         Ok(())
     }
 
+    fn openapi_endpoints(&self) -> Option<gotcha::OpenApiEndpoints> {
+        Some(gotcha::OpenApiEndpoints::default())
+    }
+
     fn routes(&self, router: GotchaRouter<Context>) -> GotchaRouter<Context> {
         router.nest(
             "/tenants/{tenant}",

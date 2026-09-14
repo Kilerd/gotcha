@@ -8,6 +8,10 @@
 // skipped everywhere else. It puts a "requires feature X" badge on each gated item.
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
+// Exercise the public macros (which emit `::gotcha` paths) in crate-local assembly tests.
+#[cfg(test)]
+extern crate self as gotcha;
+
 pub use async_trait::async_trait;
 /// WebSocket upgrade and the socket itself. The frame type stays behind `ws::Message`, since
 /// [`Message`] is already the message-system trait.
@@ -60,7 +64,7 @@ pub use oas;
 pub use crate::message::{Message, Messager};
 #[cfg(feature = "openapi")]
 #[cfg_attr(docsrs, doc(cfg(feature = "openapi")))]
-pub use crate::openapi::Operable;
+pub use crate::openapi::{OpenApiEndpoints, Operable};
 pub use crate::params::{Cookie, CookieParam, Header, HeaderParam, ParamRejection};
 pub use crate::validation::{Valid, ValidRejection};
 /// axum's typed-header extractor and the header types it works with. `TypedHeader<T>` documents
@@ -70,6 +74,7 @@ pub use axum_extra::{headers, TypedHeader};
 /// Use with the [`Valid`] extractor.
 pub use validator::Validate;
 
+mod assembly;
 pub mod builder;
 pub mod config;
 pub mod error;
@@ -227,12 +232,48 @@ pub trait GotchaApp: Sized + Send + Sync {
         async { Ok(()) }
     }
 
-    /// Assemble the final axum router. Override only to wrap the whole application.
+    /// Select the application's documentation endpoints. Defaults to `None` (disabled).
+    /// Return `Some(OpenApiEndpoints::default())` to enable the standard JSON and UI paths.
+    #[cfg(feature = "openapi")]
+    fn openapi_endpoints(&self) -> Option<OpenApiEndpoints> {
+        None
+    }
+
+    /// Generate the complete OpenAPI document from `routes()`, without starting the app.
+    ///
+    /// Does not load configuration, initialize state, bind a listener, register tasks,
+    /// or call `finish_router`. Each call creates and consumes a fresh route definition,
+    /// applying its transforms once, as HTTP documentation assembly does. Route registration
+    /// and user transforms still execute, so their own side effects remain the caller's concern.
+    #[cfg(feature = "openapi")]
+    fn openapi_document(&self) -> oas::OpenAPIV3 {
+        self.routes(GotchaRouter::default()).into_openapi()
+    }
+
+    /// Apply application-wide middleware after business routes and documentation are mounted.
+    ///
+    /// For example, return `router.layer(auth)` to protect every endpoint. This hook runs once
+    /// in the default `build_router` implementation and is not called during document export.
+    /// Routes added here use native Axum routing and are not included in OpenAPI metadata.
+    fn finish_router(&self, router: axum::Router) -> axum::Router {
+        router
+    }
+
+    /// Assemble business routes, optional documentation, and then `finish_router`.
+    ///
+    /// Prefer `finish_router` for whole-application middleware. Overriding this method takes
+    /// responsibility for the complete assembly, including documentation and final middleware.
     fn build_router(&self, context: GotchaContext<Self::State, Self::Config>) -> impl std::future::Future<Output = GotchaResult<axum::Router>> + Send {
         async move {
             let router = GotchaRouter::<GotchaContext<Self::State, Self::Config>>::default();
             let router = self.routes(router);
-            Ok(router.into_axum_router(context))
+            assembly::assemble(
+                router,
+                context,
+                #[cfg(feature = "openapi")]
+                self.openapi_endpoints(),
+                |router| self.finish_router(router),
+            )
         }
     }
 

@@ -1,7 +1,9 @@
 //! # OpenAPI Module
 //!
 //! This module provides OpenAPI documentation generation capabilities for Gotcha web applications.
-//! It is enabled by default but can be disabled by opting out of the "openapi" feature.
+//! Enable the `openapi` feature to use it. HTTP documentation endpoints require
+//! explicit application configuration through [`crate::Gotcha::with_openapi`] or
+//! [`crate::GotchaApp::openapi_endpoints`].
 //!
 //! ## Features
 //!
@@ -27,20 +29,19 @@
 //! }
 //! ```
 //!
-//! The generated spec is served at `/openapi.json`, with the Redoc UI at `/redoc`
-//! and the Scalar UI at `/scalar` when the feature is enabled.
+//! The default endpoint configuration serves `/openapi.json`, `/redoc`, and `/scalar`.
+//! Use [`crate::GotchaRouter::into_openapi`] to export the document without HTTP.
 
 use std::collections::{BTreeMap, HashMap};
 
 use axum::http::Method;
-use axum::response::Html;
 use convert_case::{Case, Casing};
 use either::Either;
 use oas::{Components, Info, OpenAPIV3, Operation, Parameter, PathItem, Referenceable, RequestBody, Responses, SecurityRequirement, Tag};
 use regex::Regex;
 
-use crate::Responder;
-
+mod endpoints;
+pub use endpoints::OpenApiEndpoints;
 pub mod schematic;
 pub(crate) mod transforms;
 
@@ -51,14 +52,6 @@ pub(crate) mod transforms;
 /// uses it to normalise a path, and `ParameterProvider` uses the same shape to pull out parameter
 /// names. Before 0.8 axum used `:id`, and every path had to be translated here.
 pub(crate) static PATH_VARIABLE_PATTERN: &str = r"\{([^}]+)\}";
-
-pub(crate) async fn openapi_html() -> impl Responder {
-    Html(include_str!("../../statics/redoc.html"))
-}
-
-pub(crate) async fn scalar_html() -> impl Responder {
-    Html(include_str!("../../statics/scalar.html"))
-}
 
 /// What one handler argument contributes: either operation parameters or the request body.
 pub type ParamType = Either<Vec<Parameter>, RequestBody>;

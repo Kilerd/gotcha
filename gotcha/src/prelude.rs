@@ -56,7 +56,7 @@ pub type Result<T, E = Box<dyn std::error::Error + Send + Sync>> = std::result::
 
 // Feature-specific exports
 #[cfg(feature = "openapi")]
-pub use crate::{api, Responsible, Schematic};
+pub use crate::{api, OpenApiEndpoints, Responsible, Schematic};
 
 #[cfg(feature = "cors")]
 pub use crate::layers::CorsLayer;
