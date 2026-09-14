@@ -3,7 +3,6 @@
 use std::path::{Path, PathBuf};
 
 use mofa::{ConfigLoader, EnvironmentSource, FileSource, Source};
-use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -35,18 +34,20 @@ pub type ConfigResult<T> = Result<T, ConfigError>;
 /// This derefs to the application config, so `config.name` reads the application's field directly
 /// rather than going through a wrapper level. Handlers usually skip the wrapper entirely and
 /// extract `State<YourConfig>` — see the `#[config]` attribute.
+/// Merely storing or reading `T` adds no bounds. The derived serde, `Clone`, and `Default`
+/// implementations require only the corresponding trait on `T`.
 #[derive(Clone, Serialize, Deserialize, Debug, Default)]
-pub struct ConfigWrapper<T: DeserializeOwned + Serialize + Default> {
+pub struct ConfigWrapper<T> {
     /// Framework settings, from the reserved `[server]` section.
     #[serde(default)]
     pub server: ServerConfig,
 
     /// The application's own settings, living at the top level of the file.
-    #[serde(bound = "", flatten)]
+    #[serde(flatten)]
     pub app: T,
 }
 
-impl<T: DeserializeOwned + Serialize + Default> std::ops::Deref for ConfigWrapper<T> {
+impl<T> std::ops::Deref for ConfigWrapper<T> {
     type Target = T;
     fn deref(&self) -> &T {
         &self.app

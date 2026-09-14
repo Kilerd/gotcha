@@ -1,5 +1,6 @@
 # Migration Guide
 
+- [Unreleased: runtime type bounds](#unreleased-runtime-type-bounds)
 - [Unreleased: HTTP response contracts](#unreleased-http-response-contracts)
 - [Unreleased: application and route composition](#unreleased-application-and-route-composition)
 - [Unreleased: documented method routers](#unreleased-documented-method-routers)
@@ -9,6 +10,44 @@
 - [Unreleased: ordered configuration sources](#unreleased-ordered-configuration-sources)
 - [0.3 → 0.4](#03--04) — **every application must edit its route paths and configuration file**
 - [0.2 → 0.3: API simplification](#02--03-api-simplification)
+
+---
+
+# Unreleased: runtime type bounds
+
+Initialized values no longer have to implement loading or default-construction traits just to
+be stored in a context, extracted by handlers, or used by messages and scheduled tasks.
+
+- Use `Gotcha::from_state(value)` for state without `Default` and automatic empty configuration.
+- Use `Gotcha::from_context(GotchaContext { state, config })` when both values are already ready.
+  State and application configuration only need `Clone + Send + Sync + 'static` for runtime use.
+- `with_state::<S>()`, `with_config::<C>()`, and `with_types::<S, C>()` retain their default-based
+  convenience behavior. Only these constructors choose automatic initialization and require its
+  bounds; creating defaults and reading files still happen at startup, after any explicit overrides.
+- `.state(...)`, `.config(...)`, route composition, task registration, and serving no longer carry
+  unrelated `Default` or serde requirements. `.build_config(...)` requires `C: DeserializeOwned`.
+
+`ConfigWrapper<T>` and `GotchaContext<S, C>` impose no bounds at their type definitions.
+`ConfigWrapper`'s derived implementations request `Serialize`, `Deserialize`, `Clone`, or `Default`
+only for the corresponding operation. `#[state]`, `#[config]`, and `FromRef` extraction no longer
+impose loading bounds on the stored configuration or unrelated state type.
+
+For the trait API, `GotchaApp::Config` only requires the runtime bounds. `build_router(context)`
+can therefore accept an explicit configuration without serde or `Default`. `config()` and `run()`
+require `Self::Config: DeserializeOwned`, because their contract includes configuration loading.
+This method bound applies even when `config()` is overridden; use an explicit context if the
+configuration cannot be deserialized. Generic callers of these methods must now state that bound
+explicitly. `Serialize` and `Default` are no longer required by trait-based loading.
+
+The existing `GotchaConfig` marker retains its original bounds for compatibility with user generic
+code. Runtime containers and the extraction macros no longer require it.
+
+Explicit configuration still wins over registered sources. Selected sources remain strict, and
+automatic default loading retains its warning and fallback behavior. Listener address precedence
+is unchanged: builder `run()` uses `.host()`/`.port()`, while `listen()`/`listen_on()` use their
+argument; providing `ConfigWrapper::server` does not change that builder policy.
+
+See the [initialized-values example](README.md#initialized-state-and-configuration).
 
 ---
 

@@ -48,22 +48,52 @@ struct User {
 }
 ```
 
+### Initialized state and configuration
+
+Use `Gotcha::from_state(value)` for state such as an initialized connection pool. To supply both
+state and configuration, use `Gotcha::from_context(context)`. These values only need
+`Clone + Send + Sync + 'static`; neither needs `Default`, and configuration needs no serde traits:
+
+```rust,no_run
+use gotcha::prelude::*;
+
+#[state]
+#[derive(Clone)]
+struct AppState { started_at: std::time::Instant }
+
+#[config]
+#[derive(Clone)]
+struct AppConfig { deployment: String }
+
+let app = Gotcha::from_context(GotchaContext {
+    state: AppState { started_at: std::time::Instant::now() },
+    config: ConfigWrapper {
+        server: ServerConfig::default(),
+        app: AppConfig { deployment: "production".into() },
+    },
+})
+.get("/deployment", |State(config): State<AppConfig>| async move { config.deployment });
+```
+
+`with_state::<T>()` and `with_types::<S, C>()` remain available when you want automatic default
+construction. File loading requires `Deserialize`; serializing a configuration requires `Serialize`.
+
 ### Advanced Trait API (For complex applications)
 
 ```rust,no_run
 use gotcha::prelude::*;
 
 #[config]
-#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct Config {
     pub database_url: String,
     pub redis_url: String,
 }
 
 #[state]
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct AppState {
-    pub started_at: u64,
+    pub started_at: std::time::Instant,
 }
 
 pub struct App {}
@@ -82,7 +112,7 @@ impl GotchaApp for App {
     async fn state(&self, config: &ConfigWrapper<Self::Config>) -> GotchaResult<Self::State> {
         // Open database connections here; `config` is already loaded.
         let _ = &config.database_url;
-        Ok(AppState::default())
+        Ok(AppState { started_at: std::time::Instant::now() })
     }
 }
 

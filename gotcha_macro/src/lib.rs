@@ -149,7 +149,7 @@ pub fn derive_parameter(input: TokenStream) -> TokenStream {
 /// Marks a struct as a Gotcha application state so it can be extracted directly
 /// with axum's `State<T>` in handlers.
 ///
-/// It generates `impl<C: GotchaConfig> FromRef<GotchaContext<T, C>> for T`, which
+/// It generates `impl<C> FromRef<GotchaContext<T, C>> for T`, which
 /// pulls the state out of the `GotchaContext` that the framework injects as the
 /// axum state. Without this, handlers would have to extract the whole
 /// `State<GotchaContext<T, C>>` and reach into `.state`.
@@ -177,8 +177,8 @@ pub fn derive_parameter(input: TokenStream) -> TokenStream {
 /// settings out of the loaded configuration. Without this, handlers would have to extract
 /// `State<ConfigWrapper<Config>>` and reach through the wrapper.
 ///
-/// The struct must be `Clone` and non-generic, and must satisfy the config bounds
-/// (`Serialize + Deserialize + Default`).
+/// The struct must be `Clone` and non-generic. Extraction itself does not require
+/// `Serialize`, `Deserialize`, or `Default`.
 ///
 /// ```ignore
 /// use gotcha::prelude::*;
@@ -201,7 +201,7 @@ pub fn config(_attr: TokenStream, item: TokenStream) -> TokenStream {
 
     let generated = if input.generics.params.is_empty() {
         quote::quote! {
-            impl<__GotchaState: ::core::clone::Clone + ::core::marker::Send + ::core::marker::Sync + 'static>
+            impl<__GotchaState>
                 ::gotcha::axum::extract::FromRef<::gotcha::GotchaContext<__GotchaState, #ident>> for #ident
             {
                 fn from_ref(context: &::gotcha::GotchaContext<__GotchaState, #ident>) -> Self {
@@ -231,7 +231,7 @@ pub fn state(_attr: TokenStream, item: TokenStream) -> TokenStream {
 
     let generated = if input.generics.params.is_empty() {
         quote::quote! {
-            impl<__GotchaConfig: ::gotcha::GotchaConfig> ::gotcha::axum::extract::FromRef<::gotcha::GotchaContext<#ident, __GotchaConfig>> for #ident {
+            impl<__GotchaConfig> ::gotcha::axum::extract::FromRef<::gotcha::GotchaContext<#ident, __GotchaConfig>> for #ident {
                 fn from_ref(context: &::gotcha::GotchaContext<#ident, __GotchaConfig>) -> Self {
                     ::core::clone::Clone::clone(&context.state)
                 }
