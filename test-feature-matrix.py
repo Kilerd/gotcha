@@ -31,8 +31,8 @@ def load_features():
                 in_features = False
             elif in_features and "=" in stripped and not stripped.startswith("#"):
                 feature = stripped.split("=")[0].strip()
-                # `default` is implied, and `http1` is part of it rather than something to toggle.
-                if feature not in ("default", "http1"):
+                # Cargo enables the default group automatically; test the optional features.
+                if feature != "default":
                     features.append(feature)
     return features
 

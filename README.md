@@ -26,8 +26,6 @@ An enhanced web framework built on top of Axum, providing additional features an
 ```rust,no_run
 use gotcha::prelude::*;
 
-# #[cfg(not(feature = "http1"))] fn main() {}
-# #[cfg(feature = "http1")]
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Gotcha::new()
@@ -175,8 +173,6 @@ async fn get_user(Path(id): Path<u32>, State(_state): State<AppState>) -> impl R
     format!("user {id}")
 }
 
-# #[cfg(not(feature = "http1"))] fn main() {}
-# #[cfg(feature = "http1")]
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     App {}.run().await?;
@@ -197,6 +193,9 @@ serde = { version = "1", features = ["derive"] }
 
 ### Optional Features
 
+HTTP/1 serving is always enabled, including with `default-features = false`.
+The builder's `run`/`listen`/`listen_on` and `GotchaApp::run` are always available.
+
 Enable additional features as needed:
 
 ```toml
@@ -205,23 +204,11 @@ gotcha = { version = "0.4", features = ["openapi", "prometheus", "cors", "static
 ```
 
 Available features:
-- `http1` (enabled by default) - HTTP serving through `run`, `listen`, and `listen_on`
 - `openapi` - Automatic OpenAPI/Swagger documentation
 - `prometheus` - Metrics collection and exposition
 - `cors` - Cross-Origin Resource Sharing support
 - `static_files` - Static file serving capabilities
 - `task` - Background task scheduling with cron support
-
-With `default-features = false`, Gotcha still supports route construction and `GotchaApp::build_router`.
-Enable `openapi` to generate and export documents without the HTTP serving feature:
-
-```toml
-gotcha = { version = "0.4", default-features = false, features = ["openapi"] }
-```
-
-The builder's `run`/`listen`/`listen_on` and `GotchaApp::run` require `http1`. To start a server,
-enable it explicitly or keep the default features. Libraries that only implement `Schematic`
-can depend on `gotcha_core` directly.
 
 ## 📖 Documentation & Examples
 

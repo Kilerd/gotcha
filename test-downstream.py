@@ -26,11 +26,11 @@ def main():
             if unexpected:
                 raise RuntimeError(f"{name} pulled in web dependencies: {sorted(unexpected)}")
 
-    manifest = str(root / "tests" / "fixtures" / "no-http1" / "Cargo.toml")
+    manifest = str(root / "tests" / "fixtures" / "no-default-features" / "Cargo.toml")
     subprocess.run(["cargo", "fmt", "--manifest-path", manifest, "--", "--check"], check=True, env=env)
     for features in ([], ["--features", "openapi"]):
-        print(f"Testing without http1: {features}", flush=True)
-        subprocess.run(["cargo", "test", "--manifest-path", manifest, *features], check=True, env=env)
+        print(f"Checking startup without default features: {features}", flush=True)
+        subprocess.run(["cargo", "check", "--manifest-path", manifest, *features], check=True, env=env)
 
 
 if __name__ == "__main__":

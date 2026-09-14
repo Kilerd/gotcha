@@ -1,6 +1,6 @@
 # Migration Guide
 
-- [Unreleased: HTTP serving feature boundary](#unreleased-http-serving-feature-boundary)
+- [Unreleased: HTTP/1 is always enabled](#unreleased-http1-is-always-enabled)
 - [Unreleased: derive dependency paths](#unreleased-derive-dependency-paths)
 - [Unreleased: explicit OpenAPI endpoints](#unreleased-explicit-openapi-endpoints)
 - [Unreleased: message task handles](#unreleased-message-task-handles)
@@ -20,18 +20,15 @@
 
 ---
 
-# Unreleased: HTTP serving feature boundary
+# Unreleased: HTTP/1 is always enabled
 
-`http1` remains enabled by default. Applications using default features keep the same startup
-behavior. The builder's `run`, `listen`, and `listen_on`, and the trait's `GotchaApp::run`, now
-require this feature explicitly, even if another dependency enables Axum's HTTP support.
+The `http1` feature has been removed. It existed to support Cloudflare Worker integration,
+which is no longer supported. HTTP/1 and Tokio support are now required Axum dependency
+features, so server startup remains available even with `default-features = false`.
 
-With `default-features = false`, gotcha now compiles without HTTP serving. Route construction
-and `GotchaApp::build_router` remain available. Adding `openapi` enables document generation
-and export through `into_openapi()` / `openapi_document()` without enabling server startup.
-
-If an application previously relied on workspace feature unification to make startup compile,
-enable `http1` on gotcha itself. Schematic-only libraries can continue to use `gotcha_core`.
+Remove `"http1"` from any explicit gotcha feature lists. Default application behavior is
+unchanged; `openapi`, `prometheus`, `cors`, `static_files`, and `task` remain optional.
+Libraries that only implement `Schematic` can continue to depend on `gotcha_core` directly.
 
 # Unreleased: derive dependency paths
 

@@ -178,7 +178,6 @@ pub trait GotchaConfig: Clone + Send + Sync + 'static + Serialize + for<'de> Des
 impl<T> GotchaConfig for T where T: Clone + Send + Sync + 'static + Serialize + for<'de> Deserialize<'de> + Default {}
 
 /// The trait API: implement it to describe an application, then call `run()`.
-/// HTTP startup requires the default `http1` feature; route assembly is always available.
 ///
 /// The builder ([`Gotcha`]) is the simpler alternative; both assemble the router through the same
 /// path, so they behave identically.
@@ -301,9 +300,6 @@ pub trait GotchaApp: Sized + Send + Sync {
     /// for port 0. Binding failure does not initialize state or register background tasks.
     /// For configuration without `Deserialize`, assemble an explicit context using
     /// [`Self::build_router`] or [`Gotcha::from_context`].
-    /// Requires the `http1` feature, which is enabled by default.
-    #[cfg(feature = "http1")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "http1")))]
     fn run(self) -> impl std::future::Future<Output = GotchaResult<()>> + Send
     where
         Self::Config: for<'de> Deserialize<'de>,

@@ -21,9 +21,7 @@ doctest = true
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [features]
-default = ["http1"]
-# Enables the framework's HTTP serving entry points; route construction is always available.
-http1 = ["axum/http1", "axum/tokio"]
+default = []
 prometheus = ["dep:axum-prometheus"]
 openapi = ["dep:oas", "dep:gotcha_core", "gotcha_core/axum"]
 # These enable only their own half of `tower-http`. That matters: `tower-http/cors` has no
@@ -50,7 +48,8 @@ cron = {version = "0.12.0", optional = true}
 chrono = "0.4.23"
 oas = { version = "0.1", optional = true }
 mofa = "0.2"
-axum = { version = "0.8", default-features = false, features = ["form", "json", "query", "multipart", "ws", "matched-path", "original-uri"] }
+# HTTP/1 serving is a required capability, including with default features disabled.
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "form", "json", "query", "multipart", "ws", "matched-path", "original-uri"] }
 # For `TypedHeader<T>`: axum 0.7 moved it out of axum proper. Only the `typed-header` feature is
 # enabled, which brings in the `headers` crate and nothing else.
 axum-extra = { version = "0.10", default-features = false, features = ["typed-header"] }

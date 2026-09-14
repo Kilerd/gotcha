@@ -1,18 +1,12 @@
 //! Shared application startup. API adapters provide the application-specific hooks.
 
-#[cfg(feature = "http1")]
 use std::future::{Future, IntoFuture};
-#[cfg(feature = "http1")]
 use std::net::{IpAddr, SocketAddr};
 
-#[cfg(feature = "http1")]
 use axum::Router;
-#[cfg(feature = "http1")]
 use tokio::net::TcpListener;
-#[cfg(feature = "http1")]
 use tokio_util::sync::CancellationToken;
 
-#[cfg(feature = "http1")]
 use crate::{ConfigErrorPolicy, ConfigWrapper, GotchaApp, GotchaContext, GotchaError, GotchaResult, ServerConfig};
 
 #[derive(Default)]
@@ -21,7 +15,6 @@ pub(crate) struct ListenOptions {
     pub port: Option<u16>,
 }
 
-#[cfg(feature = "http1")]
 impl ListenOptions {
     fn resolve(&self, config: &ServerConfig, explicit: Option<SocketAddr>) -> GotchaResult<SocketAddr> {
         if let Some(address) = explicit {
@@ -33,7 +26,6 @@ impl ListenOptions {
     }
 }
 
-#[cfg(feature = "http1")]
 pub(crate) trait Application: Send {
     type State: Clone + Send + Sync + 'static;
     type Config: Clone + Send + Sync + 'static;
@@ -55,7 +47,6 @@ pub(crate) trait Application: Send {
     fn tasks(&mut self, scheduler: &mut crate::TaskScheduler<Self::State, Self::Config>) -> impl Future<Output = GotchaResult<()>> + Send;
 }
 
-#[cfg(feature = "http1")]
 pub(crate) struct PreparedServer {
     listener: TcpListener,
     pub(crate) router: Router,
@@ -66,7 +57,6 @@ pub(crate) struct PreparedServer {
     task_shutdown_timeout: std::time::Duration,
 }
 
-#[cfg(feature = "http1")]
 pub(crate) async fn prepare<A: Application>(app: &mut A, explicit: Option<SocketAddr>) -> GotchaResult<PreparedServer> {
     app.logger()?;
     let policy = app.config_error_policy();
@@ -103,13 +93,11 @@ pub(crate) async fn prepare<A: Application>(app: &mut A, explicit: Option<Socket
     })
 }
 
-#[cfg(feature = "http1")]
 pub(crate) async fn run<A: Application>(mut app: A, explicit: Option<SocketAddr>) -> GotchaResult<()> {
     let prepared = prepare(&mut app, explicit).await?;
     prepared.serve(app.shutdown_signal()).await
 }
 
-#[cfg(feature = "http1")]
 impl PreparedServer {
     async fn serve(self, signal: impl Future<Output = ()> + Send) -> GotchaResult<()> {
         tracing::info!("Server listening on http://{}", self.listener.local_addr().map_err(GotchaError::Io)?);
@@ -166,10 +154,9 @@ pub(crate) async fn shutdown_signal() {
     }
 }
 
-#[cfg(all(test, feature = "http1"))]
+#[cfg(test)]
 mod tests;
 
-#[cfg(feature = "http1")]
 impl<A> Application for &A
 where
     A: GotchaApp,

@@ -1,5 +1,5 @@
 [package]
-name = "no-http1"
+name = "no-default-features"
 version = "0.0.0"
 edition = "2021"
 publish = false
@@ -11,6 +11,3 @@ openapi = ["gotcha/openapi"]
 
 [dependencies]
 gotcha = { path = "../../../gotcha", default-features = false }
-
-[dev-dependencies]
-tokio = { version = "1", features = ["macros", "rt"] }

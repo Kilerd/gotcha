@@ -1,4 +1,4 @@
-#![cfg(all(unix, feature = "http1"))]
+#![cfg(unix)]
 
 use gotcha::{ConfigWrapper, GotchaApp, GotchaContext, GotchaResult, GotchaRouter, ServerConfig};
 use std::io::{Read, Write};
