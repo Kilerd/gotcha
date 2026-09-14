@@ -117,10 +117,13 @@ where
     router: GotchaRouter<GotchaContext<S, C>>,
     listen_options: ListenOptions,
     config_error_policy: ConfigErrorPolicy<C>,
+    shutdown_signal: Option<std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>>,
     state: StateSource<S>,
     config: Configuration<C>,
     #[cfg(feature = "task")]
     tasks: Vec<TaskRegistrar<S, C>>,
+    #[cfg(feature = "task")]
+    task_shutdown_timeout: std::time::Duration,
 }
 
 impl Default for Gotcha<EmptyState, EmptyConfig> {
@@ -267,10 +270,13 @@ where
             router: GotchaRouter::default(),
             listen_options: ListenOptions::default(),
             config_error_policy: ConfigErrorPolicy::Strict,
+            shutdown_signal: None,
             state,
             config,
             #[cfg(feature = "task")]
             tasks: Vec::new(),
+            #[cfg(feature = "task")]
+            task_shutdown_timeout: crate::task::DEFAULT_SHUTDOWN_TIMEOUT,
         }
     }
 
@@ -715,7 +721,8 @@ where
     ///
     /// The closure receives a [`TaskScheduler`](crate::TaskScheduler) when the
     /// server starts, on which you can register `cron` / `interval` jobs. This
-    /// brings the builder to parity with `GotchaApp::tasks`.
+    /// brings the builder to parity with `GotchaApp::tasks`. Jobs start only after all
+    /// registrations succeed and are owned by the application until shutdown.
     /// Register module tasks here on the top-level application; `nest` and `merge` accept
     /// only route modules and cannot accept another application's task registrations.
     ///
@@ -736,6 +743,24 @@ where
         F: FnOnce(&mut crate::TaskScheduler<S, C>) + Send + 'static,
     {
         self.tasks.push(Box::new(register));
+        self
+    }
+
+    /// Replace the default Ctrl-C / Unix SIGTERM signal. When this future resolves, HTTP
+    /// stops accepting connections and scheduled tasks stop starting new executions.
+    pub fn shutdown_signal<F>(mut self, signal: F) -> Self
+    where
+        F: std::future::Future<Output = ()> + Send + 'static,
+    {
+        self.shutdown_signal = Some(Box::pin(signal));
+        self
+    }
+
+    /// Set the grace period for in-flight scheduled executions (default: 30 seconds).
+    /// Remaining tasks are aborted and joined at the deadline. HTTP draining has no time limit here.
+    #[cfg(feature = "task")]
+    pub fn task_shutdown_timeout(mut self, timeout: std::time::Duration) -> Self {
+        self.task_shutdown_timeout = timeout;
         self
     }
 
@@ -806,6 +831,18 @@ where
         std::mem::take(&mut self.config_error_policy)
     }
 
+    async fn shutdown_signal(&mut self) {
+        match self.shutdown_signal.take() {
+            Some(signal) => signal.await,
+            None => startup::shutdown_signal().await,
+        }
+    }
+
+    #[cfg(feature = "task")]
+    fn task_shutdown_timeout(&self) -> std::time::Duration {
+        self.task_shutdown_timeout
+    }
+
     async fn config(&mut self) -> GotchaResult<ConfigWrapper<C>> {
         self.config.resolve()
     }
@@ -865,8 +902,8 @@ mod tests {
                 panic!("state was already initialized");
             }
         }
-        let app = Gotcha::with_state::<Initialized>().state(Initialized).config(ConfigWrapper::default());
-        startup::prepare(app, Some("127.0.0.1:0".parse().unwrap())).await.unwrap();
+        let mut app = Gotcha::with_state::<Initialized>().state(Initialized).config(ConfigWrapper::default());
+        startup::prepare(&mut app, Some("127.0.0.1:0".parse().unwrap())).await.unwrap();
     }
 
     #[tokio::test]
@@ -892,7 +929,7 @@ mod tests {
         }
 
         let calls = Arc::new(AtomicUsize::new(41));
-        let app = Gotcha::from_context(GotchaContext {
+        let mut app = Gotcha::from_context(GotchaContext {
             state: RuntimeState(calls.clone()),
             config: ConfigWrapper {
                 app: RuntimeConfig { value: "parent".into() },
@@ -902,7 +939,7 @@ mod tests {
         .with_file_config("unused-required-file.toml")
         .nest("/api", GotchaRouter::default().get("/context", read))
         .merge(GotchaRouter::default().get("/context", read));
-        let prepared = startup::prepare(app, Some("127.0.0.1:0".parse().unwrap())).await.unwrap();
+        let prepared = startup::prepare(&mut app, Some("127.0.0.1:0".parse().unwrap())).await.unwrap();
         let router = prepared.router;
 
         for (path, expected) in [("/api/context", "parent:41"), ("/context", "parent:42")] {

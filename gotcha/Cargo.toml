@@ -30,7 +30,7 @@ openapi = ["dep:oas", "dep:gotcha_core", "gotcha_core/axum"]
 # dozen more, so a CORS-only application should not pay for the static file machinery.
 cors = ["dep:tower-http", "tower-http/cors"]
 static_files = ["dep:tower-http", "tower-http/fs"]
-task = ["dep:cron", "tokio/time"]
+task = ["dep:cron", "dep:futures-util", "tokio/time"]
 
 
 [dependencies]
@@ -38,9 +38,10 @@ async-trait = "0.1.60"
 gotcha_macro = { version = "0.4.1", path = "../gotcha_macro" }
 gotcha_core = { version = "0.4.1", path = "../gotcha_core", optional = true }
 serde = {version = "1", features = ["derive"]}
-# `rt` is needed by the message system, which is always available (it gated nothing but a
-# 160-line module and this one tokio feature).
-tokio = {version = "1", features = ["rt"]}
+# `rt` also supports the always-available message system; macros and signals drive server shutdown.
+tokio = {version = "1", features = ["rt", "macros", "signal"]}
+tokio-util = { version = "0.7", features = ["rt"] }
+futures-util = { version = "0.3", optional = true, default-features = false, features = ["std", "async-await"] }
 tracing = "0.1"
 tracing-subscriber = {version="0.3", features=["env-filter"]}
 log = "0.4"
@@ -78,8 +79,8 @@ assert-json-diff = "2"
 # Non-optional so trybuild-generated test crates (which derive Schematic and thus
 # emit `::gotcha_core::` paths) have gotcha_core in their extern prelude.
 gotcha_core = { version = "0.4.1", path = "../gotcha_core" }
-# So `#[tokio::main]` doc examples compile (the lib's own tokio dep is minimal).
-tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+# Multiple-worker runtimes, paused-clock task tests, and socket-based lifecycle checks.
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "test-util", "io-util"] }
 futures-core = "0.3.33"
 futures-util = "0.3.33"
 tower = "0.5.3"

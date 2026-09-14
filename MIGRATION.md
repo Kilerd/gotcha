@@ -1,5 +1,6 @@
 # Migration Guide
 
+- [Unreleased: owned scheduled tasks](#unreleased-owned-scheduled-tasks)
 - [Unreleased: shared startup](#unreleased-shared-startup)
 - [Unreleased: runtime type bounds](#unreleased-runtime-type-bounds)
 - [Unreleased: HTTP response contracts](#unreleased-http-response-contracts)
@@ -11,6 +12,68 @@
 - [Unreleased: ordered configuration sources](#unreleased-ordered-configuration-sources)
 - [0.3 → 0.4](#03--04) — **every application must edit its route paths and configuration file**
 - [0.2 → 0.3: API simplification](#02--03-api-simplification)
+
+---
+
+# Unreleased: owned scheduled tasks
+
+**Task registration no longer starts background work.** The application owns its scheduled tasks
+and shuts them down together with HTTP serving.
+
+## Registration and ownership
+
+`TaskScheduler::cron` and `interval` now take `&mut self` and only register work. Existing application
+hooks already receive a mutable scheduler. Update helper functions that accepted `&TaskScheduler`
+to accept `&mut TaskScheduler`.
+
+All registrations must succeed before serving starts any task. A registration error, panic, or
+cancelled startup discards the pending tasks. Do not wait inside the registration hook for a
+scheduled task to execute: it cannot start until the hook returns.
+
+Standalone callers must explicitly start the scheduler and retain the returned owner:
+
+```rust,ignore
+let mut scheduler = TaskScheduler::new(context);
+scheduler.interval("cleanup", Duration::from_secs(60), cleanup);
+let running = scheduler.start();
+// Keep `running` alive for as long as the tasks should run.
+running.shutdown(Duration::from_secs(10)).await;
+```
+
+`RunningTasks::shutdown(timeout)` stops subsequent executions, waits for current executions, and
+aborts and joins unfinished tasks at the deadline. Dropping the owner or cancelling its shutdown
+future requests immediate abortion; dropping cannot perform an asynchronous join. The same ownership
+includes the current execution, which is no longer a separate detached task.
+
+## Application shutdown
+
+Builder `run` / `listen` / `listen_on` and `GotchaApp::run` now wait for Ctrl-C or Unix SIGTERM by
+default, then use one cancellation signal to stop HTTP acceptance and new scheduled executions.
+In-flight HTTP requests drain while scheduled tasks finish. Override the signal with a future:
+
+```rust,no_run
+use gotcha::Gotcha;
+let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
+let app = Gotcha::new().shutdown_signal(async move { let _ = stopped.await; });
+// Resolve the future by sending through `stop`; `app.run().await` waits for shutdown to finish.
+```
+
+For `GotchaApp`, override `fn shutdown_signal(&self) -> impl Future<Output = ()> + Send` instead.
+That future may borrow the application. A custom signal replaces the default OS signal handling.
+
+Scheduled executions get a 30-second grace period by default. Configure it with the builder's
+`.task_shutdown_timeout(duration)` or the trait's `fn task_shutdown_timeout(&self) -> Duration`.
+The deadline starts when shutdown is requested, independently of HTTP draining. It does not limit
+HTTP request duration. A serve error also stops and drains the scheduled tasks; cancelling the
+serving future requests abortion of all scheduled work and signals HTTP shutdown.
+
+Cancellation requires async tasks to yield. Synchronous blocking work and tasks explicitly detached
+by application code (including `Messager::spawn`) remain outside this ownership. Public preparation,
+application cleanup hooks, and HTTP drain limits remain follow-up work in #82.
+
+Single-execution panics are logged and the schedule continues, including a panic while constructing
+the execution future. Interval tasks retain their existing immediate first tick and non-overlapping
+executions. Invalid cron expressions and zero intervals are logged and skipped during registration.
 
 ---
 
@@ -78,8 +141,8 @@ error releases the listener. The initialized context's server settings contain t
 address, including a dynamically assigned port, so state initialization and handlers agree.
 
 State initialization now runs while the port is reserved, before requests are accepted. Applications
-that depended on initializing state before a bind attempt must account for the new order. Task
-cancellation and waiting on shutdown are unchanged and tracked separately in #93.
+that depended on initializing state before a bind attempt must account for the new order. See
+[owned scheduled tasks](#unreleased-owned-scheduled-tasks) for task startup and shutdown behavior.
 
 ---
 

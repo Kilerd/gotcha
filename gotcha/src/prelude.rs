@@ -62,7 +62,7 @@ pub use crate::{api, Responsible, Schematic};
 pub use crate::layers::CorsLayer;
 
 #[cfg(feature = "task")]
-pub use crate::TaskScheduler;
+pub use crate::{RunningTasks, TaskScheduler};
 
 // Utility macros for common patterns
 #[macro_export]

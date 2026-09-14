@@ -134,7 +134,7 @@ impl GotchaApp for TraitApp {
 
 async fn assert_http(prepared: PreparedServer, label: &str) {
     let address = prepared.listener.local_addr().unwrap();
-    let server = tokio::spawn(prepared.serve());
+    let server = tokio::spawn(prepared.serve(std::future::pending()));
     let response = tokio::task::spawn_blocking(move || {
         use std::io::{Read, Write};
         let mut stream = std::net::TcpStream::connect(address).unwrap();
@@ -158,10 +158,10 @@ async fn both_apis_serve_the_loaded_config_and_actual_bound_address() {
     let path = dir.path().join("config.toml");
     std::fs::write(&path, "label = 'loaded'\n[server]\nhost = '127.0.0.1'\nport = 0").unwrap();
     let app = TraitApp::new(&path);
-    let builder = Gotcha::with_config::<Settings>().with_file_config(&path).get("/config", read);
-    let prepared = prepare(builder, None).await.unwrap();
+    let mut builder = Gotcha::with_config::<Settings>().with_file_config(&path).get("/config", read);
+    let prepared = prepare(&mut builder, None).await.unwrap();
     assert_http(prepared, "loaded").await;
-    let prepared = prepare(&app, None).await.unwrap();
+    let prepared = prepare(&mut &app, None).await.unwrap();
     assert_eq!(*app.bound.lock().unwrap(), Some(prepared.listener.local_addr().unwrap()));
     assert_http(prepared, "loaded").await;
     let mut expected = vec!["logger", "config", "state", "router"];
@@ -190,8 +190,8 @@ async fn run_uses_configured_address_and_does_not_initialize_after_bind_failure(
     }
     assert_eq!(*events.lock().unwrap(), ["logger", "config"]);
     // An explicit builder override can use the same configuration on an available port.
-    let builder = Gotcha::with_config::<Settings>().with_file_config(&path).port(0).get("/config", read);
-    assert_http(prepare(builder, None).await.unwrap(), "occupied").await;
+    let mut builder = Gotcha::with_config::<Settings>().with_file_config(&path).port(0).get("/config", read);
+    assert_http(prepare(&mut builder, None).await.unwrap(), "occupied").await;
 }
 
 #[tokio::test]
@@ -201,18 +201,18 @@ async fn configuration_fallback_is_explicit_and_shared_by_both_apis() {
     std::fs::write(&path, "label = [").unwrap();
     let mut app = TraitApp::new(&path);
     let builder = || Gotcha::with_config::<Settings>().with_file_config(&path).get("/config", read);
-    assert!(matches!(prepare(builder(), None).await, Err(GotchaError::Config(_))));
-    assert!(matches!(prepare(&app, None).await, Err(GotchaError::Config(_))));
+    assert!(matches!(prepare(&mut builder(), None).await, Err(GotchaError::Config(_))));
+    assert!(matches!(prepare(&mut &app, None).await, Err(GotchaError::Config(_))));
     assert_eq!(*app.events.lock().unwrap(), ["logger", "config"]);
     app.fallback = true;
     assert_http(
-        prepare(builder().config_error_policy(ConfigErrorPolicy::Fallback(fallback_settings)), None)
+        prepare(&mut builder().config_error_policy(ConfigErrorPolicy::Fallback(fallback_settings)), None)
             .await
             .unwrap(),
         "fallback",
     )
     .await;
-    assert_http(prepare(&app, None).await.unwrap(), "fallback").await;
+    assert_http(prepare(&mut &app, None).await.unwrap(), "fallback").await;
 }
 
 #[tokio::test]
@@ -228,7 +228,7 @@ async fn initialization_errors_release_the_listener_and_stop_later_stages() {
         let mut app = TraitApp::new(&path);
         app.fail_at = Some(stage);
         app.fallback = true; // A config fallback must not swallow errors from other stages.
-        assert!(matches!(prepare(&app, None).await, Err(GotchaError::Message(message)) if message == stage));
+        assert!(matches!(prepare(&mut &app, None).await, Err(GotchaError::Message(message)) if message == stage));
         let bound = app.bound.lock().unwrap().unwrap();
         let _rebound = TcpListener::bind(bound).await.expect("failed startup must release its listener");
         assert_eq!(app.events.lock().unwrap().last(), Some(&stage));
