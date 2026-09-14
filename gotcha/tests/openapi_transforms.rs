@@ -24,6 +24,10 @@ impl GotchaApp for App {
         Ok(())
     }
 
+    fn openapi_endpoints(&self) -> Option<gotcha::OpenApiEndpoints> {
+        Some(gotcha::OpenApiEndpoints::default())
+    }
+
     fn routes(&self, router: GotchaRouter<Context>) -> GotchaRouter<Context> {
         let child_calls = self.0.clone();
         let merged_calls = self.0.clone();

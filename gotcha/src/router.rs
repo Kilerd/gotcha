@@ -53,7 +53,7 @@ macro_rules! implement_method {
 pub struct GotchaRouter<State = ()> {
     #[cfg(feature = "openapi")]
     /// The operations for the router, kept as their `Operable` descriptors: the `Operation` is
-    /// only built during `into_axum_router`, so every route's schemas are generated inside a
+    /// only built when documentation is requested, so every route's schemas are generated inside a
     /// single collection scope and can share `components/schemas`.
     pub(crate) operations: std::collections::HashMap<(String, Method), &'static Operable>,
     /// Child transforms in composition order, followed by this router's own transforms.
@@ -202,7 +202,12 @@ impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
         }
     }
 
-    /// add a layer to the router
+    /// Apply a layer to business routes already registered on this router.
+    ///
+    /// As in Axum, routes added afterwards are not covered. Documentation endpoints
+    /// belong to the application and are not covered by this layer. Use
+    /// [`Gotcha::app_layer`](crate::Gotcha::app_layer) or
+    /// [`GotchaApp::finish_router`](crate::GotchaApp::finish_router) for application-wide middleware.
     /// # Examples
     ///
     /// ```rust,no_run
@@ -274,7 +279,7 @@ impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
         }
     }
 
-    /// Customize the generated OpenAPI spec before it is served at `/openapi.json`.
+    /// Customize the generated OpenAPI document when it is exported or served.
     ///
     /// The transform receives the fully-generated [`oas::OpenAPIV3`] (with every route's
     /// operation already filled in) and returns the spec to serve, so you can set the
@@ -282,7 +287,9 @@ impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
     ///
     /// Repeated calls append transforms in registration order. At assembly, child subtrees
     /// run in `nest`/`merge` insertion order, then this router's own transforms run, even if
-    /// registered before its children. Each callback runs exactly once, never per request.
+    /// registered before its children. Each callback runs once per generated document, never
+    /// per request. Registering a transform does not enable documentation endpoints; if no
+    /// document is served or exported, callbacks are not executed.
     /// `merge` treats its argument as a child, so grouping routers can change precedence.
     ///
     /// Every callback receives the complete document, including prefixed paths and collected
@@ -309,26 +316,25 @@ impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
         self
     }
 
-    /// Finalize this router into a plain `axum::Router`, injecting `state`.
+    /// Consume the router and return its complete OpenAPI document, without HTTP.
     ///
-    /// When the `openapi` feature is enabled, this also mounts the generated
-    /// spec at `/openapi.json` and the Redoc / Scalar UIs at `/redoc` and
-    /// `/scalar`. This is the single assembly path shared by both the
-    /// [`GotchaApp`](crate::GotchaApp) trait and the [`Gotcha`](crate::Gotcha)
-    /// builder.
+    /// Generates schemas and applies every transform once, using the same pipeline
+    /// as documentation endpoints. Consuming the router allows transforms to retain
+    /// their `FnOnce` captures. No application state or runtime is required.
+    #[cfg(feature = "openapi")]
+    pub fn into_openapi(self) -> oas::OpenAPIV3 {
+        self.into_openapi_parts().1
+    }
+
+    #[cfg(feature = "openapi")]
+    pub(crate) fn into_openapi_parts(self) -> (Router<State>, oas::OpenAPIV3) {
+        let spec = self.openapi_transforms.apply(crate::openapi::generate_openapi(self.operations));
+        (self.router, spec)
+    }
+
+    /// Inject state without generating or mounting documentation.
     pub(crate) fn into_axum_router(self, state: State) -> Router {
-        cfg_if::cfg_if! {
-            if #[cfg(feature = "openapi")] {
-                let openapi_spec = self.openapi_transforms.apply(crate::openapi::generate_openapi(self.operations));
-                self.router
-                    .with_state(state)
-                    .route("/openapi.json", axum::routing::get(move || async move { axum::Json(openapi_spec.clone()) }))
-                    .route("/redoc", axum::routing::get(crate::openapi::openapi_html))
-                    .route("/scalar", axum::routing::get(crate::openapi::scalar_html))
-            } else {
-                self.router.with_state(state)
-            }
-        }
+        self.router.with_state(state)
     }
 }
 
@@ -389,7 +395,7 @@ mod tests {
             })
             .route_raw("/health", axum::routing::get(|| async { "ok" }))
             .fallback(|| async { "not found" });
-        let _ = router.into_axum_router(());
+        let _ = router.into_openapi();
 
         assert!(*ran.lock().unwrap(), "transform set before route_raw()/fallback() must still apply");
     }

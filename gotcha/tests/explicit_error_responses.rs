@@ -84,6 +84,10 @@ impl GotchaApp for App {
         Ok(())
     }
 
+    fn openapi_endpoints(&self) -> Option<gotcha::OpenApiEndpoints> {
+        Some(gotcha::OpenApiEndpoints::default())
+    }
+
     fn routes(&self, router: GotchaRouter<GotchaContext<(), EmptyConfig>>) -> GotchaRouter<GotchaContext<(), EmptyConfig>> {
         router.get("/create/{id}", create).get("/lookup/{id}", lookup).get("/dynamic", dynamic)
     }

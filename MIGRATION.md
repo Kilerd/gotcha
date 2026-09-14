@@ -1,5 +1,6 @@
 # Migration Guide
 
+- [Unreleased: explicit OpenAPI endpoints](#unreleased-explicit-openapi-endpoints)
 - [Unreleased: message task handles](#unreleased-message-task-handles)
 - [Unreleased: static OpenAPI descriptors](#unreleased-static-openapi-descriptors)
 - [Unreleased: owned scheduled tasks](#unreleased-owned-scheduled-tasks)
@@ -14,6 +15,82 @@
 - [Unreleased: ordered configuration sources](#unreleased-ordered-configuration-sources)
 - [0.3 → 0.4](#03--04) — **every application must edit its route paths and configuration file**
 - [0.2 → 0.3: API simplification](#02--03-api-simplification)
+
+---
+
+# Unreleased: explicit OpenAPI endpoints
+
+**The `openapi` feature no longer exposes HTTP documentation by itself.** It enables schema and
+operation metadata. Applications choose whether and where to serve the resulting document.
+
+For the builder, add `.with_openapi()` to retain the previous `/openapi.json`, `/redoc`, and
+`/scalar` endpoints. This formerly empty method now enables the default endpoint configuration.
+Use `.openapi_endpoints(Some(OpenApiEndpoints { ... }))` for custom paths, or
+`.openapi_endpoints(None)` to disable all endpoints. The last configuration call wins;
+`with_openapi()` resets custom paths to their defaults. `redoc_path` and `scalar_path` can each be
+`None` to serve just the document or a single UI.
+
+For the trait API, explicitly configure the application:
+
+```rust,no_run
+use gotcha::{ConfigWrapper, EmptyConfig, GotchaApp, GotchaContext, GotchaResult, GotchaRouter, OpenApiEndpoints};
+
+struct App;
+impl GotchaApp for App {
+    type State = ();
+    type Config = EmptyConfig;
+
+    fn openapi_endpoints(&self) -> Option<OpenApiEndpoints> {
+        Some(OpenApiEndpoints::default())
+    }
+
+    fn routes(&self, router: GotchaRouter<GotchaContext<(), EmptyConfig>>) -> GotchaRouter<GotchaContext<(), EmptyConfig>> {
+        router.get("/health", || async { "ok" })
+    }
+
+    async fn state(&self, _: &ConfigWrapper<EmptyConfig>) -> GotchaResult<()> { Ok(()) }
+}
+```
+
+Endpoint configuration belongs to the top-level application. Nesting or merging business routers
+does not enable, relocate, or override documentation endpoints. Both UI pages use the configured
+`json_path`. Paths must be distinct literal absolute URI paths, with no query, fragment, or dot
+segments; percent-encode other characters. Invalid endpoint configuration fails assembly, while
+collisions with existing business routes retain Axum's normal conflict behavior (panic).
+
+## Middleware scope
+
+`Gotcha::layer` and `GotchaRouter::layer` keep their existing Axum semantics: they cover business
+routes already registered, not routes added afterwards or application documentation. If you want
+private business routes and public documentation, keep authentication on those business routes.
+
+Use `.app_layer(auth_layer)` on the builder for authentication, CORS, or other middleware that must
+cover every application endpoint and fallback. It applies after routes and documentation are
+assembled, even when registered before them. Repeated calls wrap in Axum order: the last registered
+application layer sees incoming requests first. `with_cors()` retains its existing `layer` scope;
+use `app_layer(CorsLayer::permissive())` when CORS should also cover documentation.
+
+The corresponding trait hook is `fn finish_router(&self, router: axum::Router) -> axum::Router`.
+Return `router.layer(auth_layer)` from it to cover the complete application. This hook runs after
+documentation is mounted, without requiring an override of `build_router`. An existing custom
+`build_router` still owns its whole assembly and must invoke any desired finalization itself.
+Routes added through this native Axum hook do not contribute OpenAPI metadata.
+
+## Export without HTTP
+
+Use `Gotcha::into_openapi()` or `GotchaRouter::into_openapi()` to consume a route definition and
+return its `oas::OpenAPIV3`. `GotchaApp::openapi_document()` creates a fresh definition through
+`routes()` and consumes that. All three use the same generation and transform pipeline as the
+HTTP document; no side channel or HTTP request is needed.
+
+Export does not load configuration, initialize application state, bind a listener, register tasks,
+or apply application middleware. User route registration and document transforms still run, so
+any side effects written in those callbacks remain. Endpoint paths do not affect the document.
+Transforms keep their `FnOnce` captures, nested ordering, and one execution per document.
+When documentation is disabled and no export is requested, transforms are not executed at all.
+
+The OpenAPI example demonstrates exporting with `cargo run -p openapi -- --export-openapi`.
+It prints JSON and exits without starting the application.
 
 ---
 

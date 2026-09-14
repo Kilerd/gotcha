@@ -95,6 +95,10 @@ struct App {}
 impl GotchaApp for App {
     type State = ();
     type Config = Config;
+    fn openapi_endpoints(&self) -> Option<gotcha::OpenApiEndpoints> {
+        Some(gotcha::OpenApiEndpoints::default())
+    }
+
     fn routes(&self, router: GotchaRouter<GotchaContext<(), Config>>) -> GotchaRouter<GotchaContext<(), Config>> {
         router
             .get("/", hello_world)
@@ -113,8 +117,13 @@ impl GotchaApp for App {
     }
 }
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    App {}.run().await?;
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let app = App {};
+    if std::env::args().nth(1).as_deref() == Some("--export-openapi") {
+        // No configuration loading, state initialization, listener, or background tasks.
+        println!("{}", serde_json::to_string_pretty(&app.openapi_document())?);
+        return Ok(());
+    }
+    tokio::runtime::Runtime::new()?.block_on(app.run())?;
     Ok(())
 }

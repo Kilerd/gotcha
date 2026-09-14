@@ -42,6 +42,8 @@ use crate::GotchaContext;
 #[cfg(feature = "task")]
 type TaskRegistrar<S, C> = Box<dyn FnOnce(&mut crate::TaskScheduler<S, C>) + Send>;
 
+type AppLayer = Box<dyn FnOnce(axum::Router) -> axum::Router + Send>;
+
 enum StateSource<S> {
     Provided(S),
     Default(fn() -> S),
@@ -115,6 +117,9 @@ where
     C: Clone + Send + Sync + 'static,
 {
     router: GotchaRouter<GotchaContext<S, C>>,
+    app_layers: Vec<AppLayer>,
+    #[cfg(feature = "openapi")]
+    openapi_endpoints: Option<crate::OpenApiEndpoints>,
     listen_options: ListenOptions,
     config_error_policy: ConfigErrorPolicy<C>,
     shutdown_signal: Option<std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>>,
@@ -268,6 +273,9 @@ where
     fn from_sources(state: StateSource<S>, config: Configuration<C>) -> Self {
         Self {
             router: GotchaRouter::default(),
+            app_layers: Vec::new(),
+            #[cfg(feature = "openapi")]
+            openapi_endpoints: None,
             listen_options: ListenOptions::default(),
             config_error_policy: ConfigErrorPolicy::Strict,
             shutdown_signal: None,
@@ -668,7 +676,8 @@ where
         self
     }
 
-    /// Add a layer to the application
+    /// Apply a layer to business routes already registered, following Axum's ordering.
+    /// Documentation endpoints are not covered. Use [`Self::app_layer`] for every endpoint.
     pub fn layer<L>(mut self, layer: L) -> Self
     where
         L: Layer<axum::routing::Route> + Clone + Send + Sync + 'static,
@@ -678,6 +687,24 @@ where
         <L::Service as Service<Request>>::Future: Send + 'static,
     {
         self.router = self.router.layer(layer);
+        self
+    }
+
+    /// Apply middleware to the final application, including documentation and fallback routes.
+    ///
+    /// Layers are deferred until all routes are assembled, so this covers routes registered
+    /// before or after this call. Repeated calls follow Axum's layering order: the last layer
+    /// receives the request first. The layer is installed once, not reconstructed per request.
+    /// Use [`Self::layer`] to cover only the business routes registered so far.
+    pub fn app_layer<L>(mut self, layer: L) -> Self
+    where
+        L: Layer<axum::routing::Route> + Clone + Send + Sync + 'static,
+        L::Service: Service<Request> + Clone + Send + Sync + 'static,
+        <L::Service as Service<Request>>::Response: Responder + 'static,
+        <L::Service as Service<Request>>::Error: Into<std::convert::Infallible> + 'static,
+        <L::Service as Service<Request>>::Future: Send + 'static,
+    {
+        self.app_layers.push(Box::new(move |router| router.layer(layer)));
         self
     }
 
@@ -691,10 +718,12 @@ where
         self
     }
 
-    /// Customize the generated OpenAPI spec before it is served at `/openapi.json`.
+    /// Customize the generated OpenAPI document when it is exported or served.
     ///
     /// Repeated calls append transforms. Child subtrees run in `nest`/`merge` insertion order,
-    /// then this application's own transforms run in registration order, once at assembly.
+    /// then this application's own transforms run in registration order, once per document.
+    /// This does not enable HTTP documentation. Without serving or exporting a document,
+    /// callbacks are not executed.
     /// All transforms receive the complete document; top-level security is global even when
     /// set by a child. See [`GotchaRouter::openapi`](crate::GotchaRouter::openapi) for scope and
     /// conflict rules, shared with the trait API.
@@ -771,11 +800,33 @@ where
         self.layer(CorsLayer::permissive())
     }
 
-    /// Add OpenAPI support (requires "openapi" feature)  
+    /// Enable the default OpenAPI JSON, Redoc, and Scalar endpoints.
+    ///
+    /// The `openapi` feature alone does not expose HTTP documentation. This replaces any
+    /// previous endpoint configuration with [`crate::OpenApiEndpoints::default`]. Business
+    /// `layer` middleware does not cover these endpoints; `app_layer` middleware does.
     #[cfg(feature = "openapi")]
     pub fn with_openapi(self) -> Self {
-        // OpenAPI routes are automatically added when the feature is enabled
+        self.openapi_endpoints(Some(crate::OpenApiEndpoints::default()))
+    }
+
+    /// Configure documentation paths, or pass `None` to disable every documentation endpoint.
+    /// The last configuration call wins. This is application configuration, not route metadata.
+    #[cfg(feature = "openapi")]
+    pub fn openapi_endpoints(mut self, endpoints: Option<crate::OpenApiEndpoints>) -> Self {
+        self.openapi_endpoints = endpoints;
         self
+    }
+
+    /// Consume the application builder and export its complete OpenAPI document without HTTP.
+    ///
+    /// Uses the same generation and transform pipeline as documentation endpoints. Does not
+    /// load configuration, construct default state, register tasks, install application layers,
+    /// or start a server. Registered routes and `FnOnce` transforms are consumed; endpoint
+    /// settings do not affect the document. User transforms execute normally.
+    #[cfg(feature = "openapi")]
+    pub fn into_openapi(self) -> oas::OpenAPIV3 {
+        self.router.into_openapi()
     }
 
     /// Start the server and listen on the configured address
@@ -852,7 +903,13 @@ where
     }
 
     async fn router(&mut self, context: GotchaContext<S, C>) -> GotchaResult<axum::Router> {
-        Ok(std::mem::take(&mut self.router).into_axum_router(context))
+        crate::assembly::assemble(
+            std::mem::take(&mut self.router),
+            context,
+            #[cfg(feature = "openapi")]
+            self.openapi_endpoints.take(),
+            |router| std::mem::take(&mut self.app_layers).into_iter().fold(router, |router, layer| layer(router)),
+        )
     }
 
     #[cfg(feature = "task")]
@@ -999,10 +1056,7 @@ mod tests {
                 *sink.lock().unwrap() = Some(spec.info.title.clone());
                 spec
             });
-        let _ = app.router.into_axum_router(GotchaContext {
-            state: EmptyState::default(),
-            config: ConfigWrapper::default(),
-        });
+        let _ = app.into_openapi();
         assert_eq!(captured.lock().unwrap().as_deref(), Some("nested merged parent"));
     }
 
