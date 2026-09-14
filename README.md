@@ -306,16 +306,19 @@ Names must be nonempty and use only ASCII letters, digits, `.`, `-`, or `_`. Cho
 explicit name: duplicate overrides also warn and receive distinct module-prefixed names.
 See [the migration guide](MIGRATION.md#unreleased-schema-identity-and-component-names) for details.
 
+Generated documents use OpenAPI 3.2.0 and JSON Schema 2020-12 semantics. See the
+[OpenAPI migration notes](MIGRATION.md#unreleased-openapi-32) for custom schemas and tooling compatibility.
+
 Documentation HTTP endpoints are disabled by default. Enable them explicitly with
 `Gotcha::with_openapi()`, or return `Some(OpenApiEndpoints::default())` from
 `GotchaApp::openapi_endpoints()`. The default paths are:
 
-- `/redoc` - ReDoc documentation interface
 - `/scalar` - Scalar documentation interface  
 - `/openapi.json` - Raw OpenAPI specification
 
 Use `openapi_endpoints(Some(config))` to customize paths, and `None` to disable all endpoints.
-Each UI can also be disabled independently:
+Set `scalar_path` to `None` to serve only JSON. The legacy `redoc_path` is disabled by default
+because the bundled Redoc does not support OpenAPI 3.2.
 
 ```rust
 # #[cfg(feature = "openapi")]
@@ -323,8 +326,8 @@ Each UI can also be disabled independently:
 use gotcha::{Gotcha, OpenApiEndpoints};
 let app = Gotcha::new().openapi_endpoints(Some(OpenApiEndpoints {
     json_path: "/docs/schema.json".into(),
-    redoc_path: Some("/docs/redoc".into()),
-    scalar_path: None,
+    redoc_path: None,
+    scalar_path: Some("/docs/scalar".into()),
 }));
 # }
 ```

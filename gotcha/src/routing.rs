@@ -61,7 +61,7 @@ impl<State: Clone + Send + Sync + 'static> MethodRouter<State> {
     ///
     /// Documents each explicitly selected OpenAPI method when the handler has `#[api]`.
     /// Axum's implicit HEAD handling for GET is retained, but does not add a HEAD operation.
-    /// CONNECT has no OpenAPI 3.0 operation field and is left undocumented.
+    /// CONNECT is not represented by the current oas PathItem model and is left undocumented.
     pub fn on<H, T>(mut self, filter: MethodFilter, handler: H) -> Self
     where
         H: Handler<T, State>,

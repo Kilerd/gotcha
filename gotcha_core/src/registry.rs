@@ -8,7 +8,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::hash::Hash;
 
 use convert_case::{Case, Casing};
-use oas::Schema;
+use oas::{Schema, SchemaValue};
 use serde_json::Value;
 
 use crate::EnhancedSchema;
@@ -61,6 +61,14 @@ impl SchemaReferences for Schema {
         let mut value = self.to_value();
         resolve_json(&mut value, names, true);
         *self = serde_json::from_value(value).expect("reference replacement preserves schema structure");
+    }
+}
+
+impl SchemaReferences for SchemaValue {
+    fn resolve_schema_references(&mut self, names: &BTreeMap<String, String>) {
+        if let Some(schema) = self.as_object_mut() {
+            schema.resolve_schema_references(names);
+        }
     }
 }
 
@@ -141,7 +149,7 @@ fn resolve_json(value: &mut Value, names: &BTreeMap<String, String>, schema: boo
                         }
                     }
                 } else {
-                    resolve_json(child, names, schema || key == "schema");
+                    resolve_json(child, names, schema || matches!(key.as_str(), "schema" | "itemSchema" | "contentSchema"));
                 }
             }
         }
@@ -314,16 +322,8 @@ fn register(identity: &str, preferred: String, module: &str, explicit: bool, req
         let built = build();
         ACTIVE.with(|active| active.borrow_mut().as_mut().unwrap().entries.get_mut(identity).unwrap().schema = Some(built.schema));
     }
-    let mut extras = BTreeMap::new();
-    extras.insert("$ref".into(), Value::String(temporary_reference(identity)));
     EnhancedSchema {
-        schema: Schema {
-            _type: None,
-            format: None,
-            nullable: None,
-            description: None,
-            extras,
-        },
+        schema: Schema::reference(temporary_reference(identity)),
         required,
     }
 }
@@ -332,21 +332,67 @@ fn register(identity: &str, preferred: String, module: &str, explicit: bool, req
 mod tests {
     use super::*;
 
+    #[test]
+    fn stream_and_encoded_content_references_preserve_siblings_and_payloads() {
+        use serde_json::json;
+        let temporary = "gotcha:rust-type:Item";
+        let final_ref = "#/components/schemas/Item";
+        let payload = json!({"$ref": temporary});
+        let mut body: oas::RequestBody = serde_json::from_value(json!({
+            "content": {"application/jsonl": {
+                "schema": true,
+                "itemSchema": {
+                    "$ref": temporary,
+                    "description": "Item with encoded data",
+                    "properties": {
+                        "example": {"$ref": temporary},
+                        "data": {
+                            "type": "string", "contentMediaType": "application/json",
+                            "contentSchema": {"$ref": temporary, "default": payload}
+                        }
+                    },
+                    "examples": [payload], "default": payload, "const": payload, "enum": [payload]
+                },
+                "example": payload
+            }}
+        }))
+        .unwrap();
+        body.resolve_schema_references(&BTreeMap::from([(temporary.into(), final_ref.into())]));
+        let value = serde_json::to_value(body).unwrap();
+        let media = &value["content"]["application/jsonl"];
+        let item = &media["itemSchema"];
+        assert_eq!(media["schema"], true);
+        assert_eq!(item["$ref"], final_ref);
+        assert_eq!(item["description"], "Item with encoded data");
+        assert_eq!(item["properties"]["example"]["$ref"], final_ref);
+        assert_eq!(item["properties"]["data"]["contentSchema"]["$ref"], final_ref);
+        assert_eq!(item["properties"]["data"]["contentSchema"]["default"], payload);
+        assert_eq!(item["examples"], json!([payload]));
+        assert_eq!(item["enum"], json!([payload]));
+        assert_eq!(item["const"], payload);
+        assert_eq!(item["default"], payload);
+        assert_eq!(media["example"], payload);
+        let mut boolean = SchemaValue::Boolean(false);
+        boolean.resolve_schema_references(&BTreeMap::new());
+        assert_eq!(serde_json::to_value(boolean).unwrap(), false);
+    }
+
     fn object_schema() -> EnhancedSchema {
         EnhancedSchema {
             schema: Schema {
-                _type: Some("object".to_string()),
+                _type: Some("object".into()),
                 format: None,
                 nullable: None,
                 description: None,
                 extras: BTreeMap::new(),
+                ..Schema::default()
             },
             required: true,
         }
     }
 
     fn is_ref(schema: &EnhancedSchema) -> bool {
-        schema.schema.extras.contains_key("$ref")
+        schema.schema._ref.is_some()
     }
 
     #[test]
@@ -364,7 +410,7 @@ mod tests {
     fn outside_a_scope_schemas_stay_inline() {
         let schema = schema_or_ref("Standalone", true, object_schema);
         assert!(!is_ref(&schema), "no active scope means the historical inline behavior");
-        assert_eq!(schema.schema._type.as_deref(), Some("object"));
+        assert_eq!(schema.schema.to_value()["type"], "object");
     }
 
     #[test]

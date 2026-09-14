@@ -68,10 +68,10 @@ mod path_struct {
             assert_eq!(param.name, name);
             assert!(matches!(param._in, ParameterIn::Path));
             assert_eq!(param.required, Some(true));
-            let Some(Referenceable::Data(schema)) = &param.schema else {
+            let Some(schema) = param.schema.as_ref().and_then(|schema| schema.as_object()) else {
                 panic!("parameter '{name}' should carry an inline schema");
             };
-            assert_eq!(schema._type.as_deref(), Some("string"), "parameter '{name}' should have the field's type");
+            assert_eq!(schema.to_value()["type"], "string", "parameter '{name}' should have the field's type");
             assert!(!schema.extras.contains_key("$ref"), "parameter '{name}' must not be a $ref to the whole struct");
         }
     }

@@ -800,7 +800,7 @@ where
         self.layer(CorsLayer::permissive())
     }
 
-    /// Enable the default OpenAPI JSON, Redoc, and Scalar endpoints.
+    /// Enable the default OpenAPI JSON and Scalar endpoints.
     ///
     /// The `openapi` feature alone does not expose HTTP documentation. This replaces any
     /// previous endpoint configuration with [`crate::OpenApiEndpoints::default`]. Business

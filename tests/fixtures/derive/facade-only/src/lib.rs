@@ -12,6 +12,6 @@ pub struct Response {
 #[test]
 fn custom_facade_resolves_the_trait_and_field_metadata() {
     let fields = <Response as schema::Schematic>::fields();
-    assert_eq!(fields[0].1.schema.extras["example"], 42);
+    assert_eq!(fields[0].1.schema.extras["examples"][0], 42);
     assert_eq!(fields[0].1.schema.extras["default"], 0);
 }

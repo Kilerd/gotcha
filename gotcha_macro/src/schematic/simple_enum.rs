@@ -36,11 +36,12 @@ pub(crate) fn handler(
             #core::registry::schema_or_ref_for::<Self>(Self::schema_name(), module_path!(), Self::required(), || {
                 let mut schema = #core::EnhancedSchema {
                     schema: #core::oas::Schema {
-                        _type: Some(Self::type_().to_string()),
+                        _type: Some(Self::type_().into()),
                         format:None,
                         nullable:None,
                         description: Self::doc(),
-                        extras:Default::default()
+                        extras: Default::default(),
+                        ..#core::oas::Schema::default()
                     },
                     required: Self::required(),
                 };
@@ -54,11 +55,12 @@ pub(crate) fn handler(
             // Built inline rather than through `generate_schema`, which hands back a `$ref` during
             // spec assembly — a flattened enum has to merge its actual shape into the parent.
             let mut schema = #core::oas::Schema {
-                _type: Some(Self::type_().to_string()),
+                _type: Some(Self::type_().into()),
                 format:None,
                 nullable:None,
                 description: Self::doc(),
-                extras:Default::default()
+                extras: Default::default(),
+                ..#core::oas::Schema::default()
             };
             let enum_variants:Vec<&'static str> = vec![ #(#variant_vec ,)* ];
             schema.extras.insert("enum".to_string(), #core::serde_json::to_value(enum_variants).unwrap());

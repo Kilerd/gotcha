@@ -227,9 +227,8 @@ mod tests {
                 for _ in 0..2 {
                     assert_eq!(request(&router, "/openapi.json").await, (StatusCode::OK, expected.clone()));
                 }
-                for path in ["/redoc", "/scalar"] {
-                    assert_eq!(request(&router, path).await.0, StatusCode::OK);
-                }
+                assert_eq!(request(&router, "/scalar").await.0, StatusCode::OK);
+                assert_eq!(request(&router, "/redoc").await.0, StatusCode::NOT_FOUND);
             }
             assert_eq!(app.calls.load(Ordering::SeqCst), 5);
             let spec: serde_json::Value = serde_json::from_slice(&expected).unwrap();
@@ -248,7 +247,7 @@ mod tests {
                 let mut builder = application_builder(&app).with_openapi();
                 for router in [builder.router(context()).await.unwrap(), app.build_router(context()).await.unwrap()] {
                     assert_eq!(request(&router, "/api/hello").await.0, StatusCode::UNAUTHORIZED);
-                    for path in ["/openapi.json", "/redoc", "/scalar"] {
+                    for path in ["/openapi.json", "/scalar"] {
                         let expected = if matches!(protection, Protection::Application) {
                             StatusCode::UNAUTHORIZED
                         } else {

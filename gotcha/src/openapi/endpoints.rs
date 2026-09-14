@@ -21,15 +21,16 @@ use crate::{GotchaError, GotchaResult};
 /// use gotcha::{Gotcha, OpenApiEndpoints};
 /// let app = Gotcha::new().openapi_endpoints(Some(OpenApiEndpoints {
 ///     json_path: "/docs/schema.json".into(),
-///     redoc_path: Some("/docs/redoc".into()),
-///     scalar_path: None,
+///     redoc_path: None,
+///     scalar_path: Some("/docs/scalar".into()),
 /// }));
 /// ```
 #[derive(Clone, Debug)]
 pub struct OpenApiEndpoints {
     /// Path serving the generated JSON document. Defaults to `/openapi.json`.
     pub json_path: String,
-    /// Redoc UI path, or `None` to disable it. Defaults to `/redoc`.
+    /// Legacy Redoc UI path. Disabled by default: the bundled Redoc rejects OpenAPI 3.2.
+    /// Use Scalar for generated documents.
     pub redoc_path: Option<String>,
     /// Scalar UI path, or `None` to disable it. Defaults to `/scalar`.
     pub scalar_path: Option<String>,
@@ -39,7 +40,7 @@ impl Default for OpenApiEndpoints {
     fn default() -> Self {
         Self {
             json_path: "/openapi.json".into(),
-            redoc_path: Some("/redoc".into()),
+            redoc_path: None,
             scalar_path: Some("/scalar".into()),
         }
     }
@@ -136,6 +137,7 @@ mod tests {
                 ..Default::default()
             },
             OpenApiEndpoints {
+                redoc_path: Some("/redoc".into()),
                 scalar_path: Some("/redoc".into()),
                 ..Default::default()
             },

@@ -183,7 +183,7 @@ fn cookie_value<'a>(header: &'a str, name: &str) -> Option<&'a str> {
 
 #[cfg(feature = "openapi")]
 mod openapi {
-    use gotcha_core::oas::{Parameter, ParameterIn, Referenceable, RequestBody};
+    use gotcha_core::oas::{Parameter, ParameterIn, RequestBody};
     use gotcha_core::Schematic;
 
     use super::{Cookie, CookieParam, Header, HeaderParam};
@@ -203,7 +203,7 @@ mod openapi {
             style: None,
             explode: None,
             allow_reserved: None,
-            schema: Some(Referenceable::Data(schema.schema)),
+            schema: Some(schema.schema.into()),
             example: None,
             examples: None,
             content: None,

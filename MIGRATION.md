@@ -1,5 +1,6 @@
 # Migration Guide
 
+- [Unreleased: OpenAPI 3.2](#unreleased-openapi-32)
 - [Unreleased: HTTP/1 is always enabled](#unreleased-http1-is-always-enabled)
 - [Unreleased: derive dependency paths](#unreleased-derive-dependency-paths)
 - [Unreleased: explicit OpenAPI endpoints](#unreleased-explicit-openapi-endpoints)
@@ -19,6 +20,61 @@
 - [0.2 → 0.3: API simplification](#02--03-api-simplification)
 
 ---
+
+# Unreleased: OpenAPI 3.2
+
+Generated documents now use **OpenAPI 3.2.0** and `oas 0.3`. This changes both the exported
+schema format and the public `oas` types used by custom schema/response implementations.
+Consumers need tooling that understands OpenAPI 3.2 and JSON Schema 2020-12; changing the
+`openapi` string back to 3.0 does not convert the schemas.
+
+## Generated schemas
+
+- `Option<T>` becomes `anyOf: [T, {"type": "null"}]`, including references and enums.
+  The shared `gotcha_core::nullable_schema` helper preserves non-null constraints and never
+  changes the referenced component. `Schematic::nullable()` remains available and the default
+  generator uses the same helper. Existing field-presence rules are unchanged.
+- Exclusive validation bounds become numeric `exclusiveMinimum` / `exclusiveMaximum` values,
+  replacing the 3.0 boolean flags. Inclusive bounds remain `minimum` / `maximum`.
+- `#[schematic(example = ...)]` keeps its source syntax and JSON value type, but emits a
+  one-element schema `examples` array. Media-type examples keep their OpenAPI representation.
+- `Json<()>` has a `{"type":"null"}` schema. A bare `()` response still has no body.
+- Raw binary responses use `application/octet-stream` with an unconstrained `{}` schema,
+  without asserting that the bytes are a JSON string or using the old `binary` format.
+
+## Documentation viewers
+
+The default documentation endpoints are now `/openapi.json` and `/scalar`. The bundled Redoc
+rejects 3.2 documents, so `redoc_path` defaults to `None`; the explicit configuration field is
+retained. Use Scalar for generated documents.
+
+Browser verification confirmed that Scalar loads 3.2 documents and renders ordinary responses,
+nullable references, enums, and examples. It currently displays an `itemSchema`-only SSE response
+as "No Body"; stream-item rendering is not supported by the tested UI. Consumers can inspect
+`itemSchema` in the exported JSON. Scalar continues to load from its existing CDN URL.
+
+## Custom schemas and responses
+
+`Schematic` and `EnhancedSchema` remain in `gotcha_core`; standalone libraries do not need
+Axum or the gotcha facade. Existing derive dependency aliases and crate overrides still work.
+
+- `Schema._type` is now `Option<SchemaType>`: use `Some("string".into())` for a single type,
+  or `SchemaType::Multiple` for a type union. Prefer `..Schema::default()` in struct literals.
+- Schema-bearing fields such as `MediaType.schema`, `Parameter.schema`, and component entries
+  now use `SchemaValue`, which represents an object or a boolean. Convert a `Schema` with
+  `.into()`; inspect an object with `.as_object()` / `.as_object_mut()`.
+- Set schema references with `Schema::reference(...)` or `Schema._ref`, rather than duplicating
+  `$ref` in `extras`. Siblings such as `description` and constraints are preserved.
+- `MediaType` has a new `item_schema` field; initialize it to `None` in existing literals.
+  Reference collection and response unions support it, as well as `Schema.content_schema`.
+  `contentMediaType` describes encoded data inside a string; it is separate from the HTTP media type.
+- Custom implementations that construct schemas directly must migrate legacy `nullable`,
+  exclusive bounds, examples, and binary assumptions themselves. The oas version constructor
+  does not translate schemas. Use `nullable_schema` when an object schema must also admit null.
+
+This release migrates Gotcha's generated subset, not every OpenAPI 3.2 object or keyword.
+See the [oas migration guide](https://github.com/Kilerd/oas/blob/main/MIGRATION.md) for remaining
+model differences. Typed SSE annotations and WebSocket/AsyncAPI contracts remain separate work.
 
 # Unreleased: HTTP/1 is always enabled
 
@@ -68,8 +124,8 @@ when their trait version matches gotcha's.
 **The `openapi` feature no longer exposes HTTP documentation by itself.** It enables schema and
 operation metadata. Applications choose whether and where to serve the resulting document.
 
-For the builder, add `.with_openapi()` to retain the previous `/openapi.json`, `/redoc`, and
-`/scalar` endpoints. This formerly empty method now enables the default endpoint configuration.
+For the builder, add `.with_openapi()` to enable `/openapi.json` and `/scalar`.
+This formerly empty method now enables the default endpoint configuration.
 Use `.openapi_endpoints(Some(OpenApiEndpoints { ... }))` for custom paths, or
 `.openapi_endpoints(None)` to disable all endpoints. The last configuration call wins;
 `with_openapi()` resets custom paths to their defaults. `redoc_path` and `scalar_path` can each be
@@ -569,7 +625,7 @@ response schemas or security requirements. Overlapping handlers follow Axum's co
 Combined filters such as `routing::on(MethodFilter::GET.or(MethodFilter::POST), handler)` now
 document every selected OpenAPI method. Implicit HEAD handling for GET is unchanged and does
 not add a HEAD operation; explicitly register HEAD to document it. CONNECT remains executable
-but is not represented in OpenAPI 3.0.
+but is not represented by the current oas PathItem model.
 
 ---
 

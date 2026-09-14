@@ -40,15 +40,15 @@ fn main() {
     let name = &props["name"];
     assert_eq!(name["title"], "Name");
     assert_eq!(name["description"], "The product name", "explicit description overrides doc comment");
-    assert_eq!(name["example"], "Widget");
+    assert_eq!(name["examples"][0], "Widget");
 
     // `format` lands on the schema's dedicated field.
     assert_eq!(props["contact"]["format"], "email");
 
     // example/default keep their numeric JSON type.
     let quantity = &props["quantity"];
-    assert!(quantity["example"].is_number(), "typed example stays a number, not the string \"42\"");
-    assert_eq!(quantity["example"], 42);
+    assert!(quantity["examples"][0].is_number(), "typed example stays a number, not the string \"42\"");
+    assert_eq!(quantity["examples"][0], 42);
     assert_eq!(quantity["default"], 10);
 
     // Enum-variant fields get the same treatment (asserted via the serialized schema so the

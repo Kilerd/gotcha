@@ -64,6 +64,20 @@ pub struct EnhancedSchema {
     pub required: bool,
 }
 
+/// Admit JSON null as an alternative to a schema, preserving all of its constraints.
+///
+/// `anyOf` also works for references, enums, and composed schemas, whose constraints
+/// would still reject null if only their `type` keyword were widened. The referenced
+/// component is never modified. Field presence remains [`EnhancedSchema::required`].
+pub fn nullable_schema(mut schema: Schema) -> Schema {
+    schema.nullable = None;
+    Schema {
+        description: schema.description.take(),
+        extras: std::collections::BTreeMap::from([("anyOf".into(), serde_json::json!([schema, {"type": "null"}]))]),
+        ..Schema::default()
+    }
+}
+
 /// Schematic is a trait that defines the schema of a type.
 pub trait Schematic {
     /// The name of the type.
@@ -75,7 +89,7 @@ pub trait Schematic {
     }
     /// Whether the type is required.
     fn required() -> bool;
-    /// Whether the type is nullable.
+    /// Whether the type admits null. The default generator emits a JSON Schema union.
     fn nullable() -> Option<bool> {
         None
     }
@@ -96,14 +110,14 @@ pub trait Schematic {
     }
     /// Generate the schema of the type.
     fn generate_schema() -> EnhancedSchema {
+        let schema = Schema {
+            _type: Some(Self::type_().into()),
+            format: Self::format(),
+            description: Self::doc(),
+            ..Schema::default()
+        };
         EnhancedSchema {
-            schema: Schema {
-                _type: Some(Self::type_().to_string()),
-                format: Self::format(),
-                nullable: Self::nullable(),
-                description: Self::doc(),
-                extras: Default::default(),
-            },
+            schema: if Self::nullable() == Some(true) { nullable_schema(schema) } else { schema },
             required: Self::required(),
         }
     }
@@ -148,8 +162,8 @@ impl_primitive_type! { f64, "f64", "number"}
 
 /// The unit type means "no value". As a *return* type that is an empty body, which
 /// [`Responsible`] documents as a response carrying no content. In the rare
-/// case it appears as a schema (`Json<()>`, which serializes as `null`) it produces an empty
-/// schema — `"void"` is not a valid OpenAPI type and made the generated document invalid.
+/// case it appears as a schema (`Json<()>`, which serializes as `null`) it produces
+/// `{"type":"null"}`.
 impl Schematic for () {
     fn name() -> &'static str {
         "void"
@@ -160,17 +174,18 @@ impl Schematic for () {
     }
 
     fn type_() -> &'static str {
-        "void"
+        "null"
     }
 
     fn generate_schema() -> EnhancedSchema {
         EnhancedSchema {
             schema: Schema {
-                _type: None,
+                _type: Some("null".into()),
                 format: None,
                 nullable: None,
                 description: None,
                 extras: Default::default(),
+                ..Schema::default()
             },
             required: false,
         }
@@ -268,6 +283,7 @@ impl Schematic for serde_json::Value {
                 nullable: None,
                 description: Self::doc(),
                 extras: Default::default(),
+                ..Schema::default()
             },
             required: Self::required(),
         }
@@ -294,11 +310,8 @@ impl<T: Schematic> Schematic for Option<T> {
         T::doc()
     }
     fn generate_schema() -> EnhancedSchema {
-        let enhanced_schema = T::generate_schema();
-        let mut schema = enhanced_schema.schema;
-        schema.nullable = Some(true);
         EnhancedSchema {
-            schema,
+            schema: nullable_schema(T::generate_schema().schema),
             required: Self::required(),
         }
     }
@@ -343,11 +356,12 @@ impl<T: Schematic> Schematic for Vec<T> {
     fn generate_schema() -> EnhancedSchema {
         let mut schema = EnhancedSchema {
             schema: Schema {
-                _type: Some(Self::type_().to_string()),
+                _type: Some(Self::type_().into()),
                 format: None,
                 nullable: None,
                 description: Self::doc(),
                 extras: Default::default(),
+                ..Schema::default()
             },
             required: Self::required(),
         };
@@ -404,11 +418,12 @@ impl<T: Schematic> Schematic for HashSet<T> {
     fn generate_schema() -> EnhancedSchema {
         let mut schema = EnhancedSchema {
             schema: Schema {
-                _type: Some(Self::type_().to_string()),
+                _type: Some(Self::type_().into()),
                 format: None,
                 nullable: None,
                 description: Self::doc(),
                 extras: Default::default(),
+                ..Schema::default()
             },
             required: Self::required(),
         };
@@ -433,11 +448,12 @@ impl<K: ToString, V: Schematic> Schematic for HashMap<K, V> {
     fn generate_schema() -> EnhancedSchema {
         let mut schema = EnhancedSchema {
             schema: Schema {
-                _type: Some(Self::type_().to_string()),
+                _type: Some(Self::type_().into()),
                 format: None,
                 nullable: None,
                 description: Self::doc(),
                 extras: Default::default(),
+                ..Schema::default()
             },
             required: Self::required(),
         };
@@ -472,9 +488,32 @@ mod tests {
     use super::*;
 
     #[test]
+    fn nullable_schemas_preserve_constraints_and_reference_siblings() {
+        use serde_json::json;
+        for original in [
+            json!({"type": "string", "minLength": 1}),
+            json!({"type": "string", "enum": ["ready", "done"]}),
+            json!({"$ref": "#/components/schemas/Name", "maxLength": 10}),
+            json!({"allOf": [{"type": "integer"}, {"minimum": 1}]}),
+        ] {
+            let mut schema: Schema = serde_json::from_value(original.clone()).unwrap();
+            schema.description = Some("Optional value".into());
+            schema.nullable = Some(true);
+            assert_eq!(
+                nullable_schema(schema).to_value(),
+                json!({
+                    "description": "Optional value",
+                    "anyOf": [original, {"type": "null"}]
+                })
+            );
+        }
+        assert_eq!(<()>::generate_schema().schema.to_value(), json!({"type": "null"}));
+    }
+
+    #[test]
     fn datetime_utc_has_date_time_format() {
         let schema = <DateTime<Utc> as Schematic>::generate_schema();
-        assert_eq!(schema.schema._type.as_deref(), Some("string"));
+        assert_eq!(schema.schema.to_value()["type"], "string");
         assert_eq!(schema.schema.format.as_deref(), Some("date-time"));
     }
 

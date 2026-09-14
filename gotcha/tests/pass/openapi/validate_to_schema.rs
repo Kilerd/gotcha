@@ -38,11 +38,11 @@ fn main() {
     assert_eq!(props["age"]["minimum"], 0.0);
     assert_eq!(props["age"]["maximum"], 150.0);
 
-    // Exclusive bounds → minimum/maximum + exclusiveMinimum/Maximum (the OpenAPI 3.0 form).
-    assert_eq!(props["ratio"]["minimum"], 0.0);
-    assert_eq!(props["ratio"]["exclusiveMinimum"], true);
-    assert_eq!(props["ratio"]["maximum"], 10.0);
-    assert_eq!(props["ratio"]["exclusiveMaximum"], true);
+    // Exclusive bounds are numeric JSON Schema constraints.
+    assert!(props["ratio"].get("minimum").is_none());
+    assert_eq!(props["ratio"]["exclusiveMinimum"], 0.0);
+    assert!(props["ratio"].get("maximum").is_none());
+    assert_eq!(props["ratio"]["exclusiveMaximum"], 10.0);
 
     // `length` on a collection → minItems / maxItems.
     assert_eq!(props["tags"]["minItems"], 1);

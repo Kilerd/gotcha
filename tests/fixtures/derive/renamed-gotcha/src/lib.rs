@@ -19,7 +19,7 @@ pub struct Request {
 #[test]
 fn library_types_satisfy_the_application_trait() {
     let fields = <ApplicationRecord as schema::Schematic>::fields();
-    assert_eq!(fields[0].1.schema._type.as_deref(), Some("string"));
-    assert_eq!(fields[1].1.schema._type.as_deref(), Some("object"));
+    assert_eq!(fields[0].1.schema.to_value()["type"], "string");
+    assert_eq!(fields[1].1.schema.to_value()["type"], "object");
     assert!(schema::Validate::validate(&Request { name: String::new() }).is_err());
 }

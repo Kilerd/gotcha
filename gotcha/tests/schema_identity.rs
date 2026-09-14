@@ -128,14 +128,14 @@ fn names_are_resolved_after_collection_in_either_order_and_scopes_stay_independe
             }
         });
         let first = if reverse { "TerminalsSendResult" } else { "ScreensSendResult" };
-        assert_eq!(refs[0].schema.extras["$ref"], format!("#/components/schemas/{first}"));
+        assert_eq!(refs[0].schema.to_value()["$ref"], format!("#/components/schemas/{first}"));
         assert_eq!(
             schemas.keys().map(String::as_str).collect::<Vec<_>>(),
             ["ScreensSendResult", "TerminalsSendResult"]
         );
     }
     let (schema, components) = collect(screens::SendResult::generate_schema);
-    assert_eq!(schema.schema.extras["$ref"], "#/components/schemas/SendResult");
+    assert_eq!(schema.schema.to_value()["$ref"], "#/components/schemas/SendResult");
     assert_eq!(components.len(), 1);
     assert!(components.contains_key("SendResult"));
 }
@@ -244,8 +244,8 @@ fn explicit_names_are_reserved_and_duplicate_overrides_warn_without_losing_schem
     let logs = capture(|| {
         let (refs, schemas) = collect(|| vec![overrides::left::First::generate_schema(), overrides::right::Second::generate_schema()]);
         assert_eq!(schemas.len(), 2);
-        assert_eq!(refs[0].schema.extras["$ref"], "#/components/schemas/LeftDuplicate");
-        assert_eq!(refs[1].schema.extras["$ref"], "#/components/schemas/RightDuplicate");
+        assert_eq!(refs[0].schema.to_value()["$ref"], "#/components/schemas/LeftDuplicate");
+        assert_eq!(refs[1].schema.to_value()["$ref"], "#/components/schemas/RightDuplicate");
     });
     assert!(logs.contains("Duplicate") && logs.contains("LeftDuplicate") && logs.contains("RightDuplicate"));
 }
@@ -302,7 +302,7 @@ fn all_derive_shapes_support_names_and_unnamed_newtypes_remain_transparent() {
         assert!(schemas.contains_key(name), "{name}");
     }
     assert_eq!(schemas.len(), 6);
-    assert_eq!(schemas["PublicId"]._type.as_deref(), Some("integer"));
+    assert_eq!(schemas["PublicId"].to_value()["type"], "integer");
     assert!(serde_json::to_string(&schemas["PublicInternal"])
         .unwrap()
         .contains("#/components/schemas/PublicInternal"));
@@ -436,4 +436,58 @@ fn colliding_generic_argument_names_keep_distinct_shapes_and_stable_names() {
         .collect();
     assert_eq!(references.len(), 2);
     assert_ne!(references[0], references[1]);
+}
+
+#[derive(Schematic, Serialize)]
+enum State {
+    Ready,
+    Done,
+}
+
+#[derive(Schematic, Serialize)]
+struct NullableRecord {
+    name: String,
+    state: Option<State>,
+    next: Option<Vec<NullableRecord>>,
+}
+
+#[api]
+async fn nullable_record() -> Json<Option<NullableRecord>> {
+    unimplemented!()
+}
+
+#[test]
+fn nullable_recursive_responses_use_null_unions_without_weakening_components() {
+    let spec = serde_json::to_value(generate_openapi(HashMap::from([(
+        ("/nullable".into(), Method::GET),
+        operable(nullable_record),
+    )])))
+    .unwrap();
+    assert_eq!(spec["openapi"], "3.2.0");
+    let record = &spec["components"]["schemas"]["NullableRecord"];
+    let nullable_record = json!({"anyOf": [
+        {"$ref": "#/components/schemas/NullableRecord"}, {"type": "null"}
+    ]});
+    assert_eq!(
+        spec["paths"]["/nullable"]["get"]["responses"]["200"]["content"]["application/json"]["schema"],
+        nullable_record
+    );
+    assert_eq!(
+        record["properties"]["next"],
+        json!({"anyOf": [
+            {"type": "array", "items": {"$ref": "#/components/schemas/NullableRecord"}},
+            {"type": "null"}
+        ]})
+    );
+    assert_eq!(record["required"], json!(["name"]));
+    assert_eq!(record["type"], "object");
+    assert_eq!(
+        record["properties"]["state"],
+        json!({"anyOf": [
+            {"$ref": "#/components/schemas/State"}, {"type": "null"}
+        ]})
+    );
+    assert_eq!(spec["components"]["schemas"]["State"]["enum"], json!(["Ready", "Done"]));
+    assert!(!spec.to_string().contains("gotcha:rust-type:"));
+    assert!(!spec.to_string().contains("\"nullable\":"));
 }

@@ -88,7 +88,7 @@ pub(crate) fn handler(
 
             if flatten_schemas.is_empty() {
                 // No enum flatten fields, just use simple object schema
-                schema.schema._type = Some(Self::type_().to_string());
+                schema.schema._type = Some(Self::type_().into());
                 schema.schema.extras.insert("properties".to_string(), #core::serde_json::to_value(properties).unwrap());
                 schema.schema.extras.insert("required".to_string(), #core::serde_json::to_value(required_fields).unwrap());
             } else {
@@ -189,11 +189,12 @@ pub(crate) fn handler(
             #core::registry::schema_or_ref_for::<Self>(Self::schema_name(), module_path!(), Self::required(), || {
                 let mut schema = #core::EnhancedSchema {
                     schema: #core::oas::Schema {
-                        _type: Some(Self::type_().to_string()),
+                        _type: Some(Self::type_().into()),
                         format:None,
                         nullable:Self::nullable(),
                         description: Self::doc(),
-                        extras:Default::default()
+                        extras: Default::default(),
+                        ..#core::oas::Schema::default()
                     },
                     required: Self::required(),
                 };
