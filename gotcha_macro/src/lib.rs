@@ -52,9 +52,18 @@ pub(crate) mod utils;
 /// - `responses(response(status = 404, body = "ApiError", description = "Not found"))` -
 ///   Explicit response declarations, replacing inferred entries for those statuses. `body`
 ///   is an optional Rust type string; `content_type` defaults to `application/json` for bodies.
+/// - `errors(response(status = 404, body = "ErrorBody", description = "Not found"))` -
+///   Fully describe the `Err` branch of `Result<T, E>` (including type aliases). Requires at
+///   least one declaration and only infers `T: Responsible`; `E` does not need `Responsible`.
+///   Uses the same fields as `responses`. Error alternatives merge with the inferred success
+///   contract; `responses(...)` overrides matching statuses afterward.
 /// - `drop_default` - Remove the inferred `default` response. At least one response must remain.
 ///
 /// Response declarations describe HTTP behavior; they do not change what the handler sends.
+/// `errors(...)` preserves any `default` from the success branch unless `drop_default` is explicit.
+/// The error type still needs `IntoResponse` when the handler is registered on a router, and
+/// declared body types must implement `Schematic`. Without `errors(...)`, the whole return type
+/// must implement `Responsible`, even when `responses(...)` is present.
 ///
 /// ## Example
 ///

@@ -13,6 +13,19 @@ pub trait Responsible {
     fn response() -> Responses;
 }
 
+/// Macro support for documenting only the `Ok` branch of a `Result`.
+/// Using trait resolution also supports type aliases without inspecting their spelling.
+#[doc(hidden)]
+pub trait ResultResponse {
+    fn success_responses() -> Responses;
+}
+
+impl<T: Responsible, E> ResultResponse for Result<T, E> {
+    fn success_responses() -> Responses {
+        T::response()
+    }
+}
+
 fn body_response(schema: Schema, media_type: &str, description: impl Into<String>) -> Response {
     Response {
         description: description.into(),
@@ -238,6 +251,28 @@ impl<T: Responsible, E: Responsible> Responsible for Result<T, E> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn success_inference_preserves_the_contract_without_consulting_the_error() {
+        struct Success;
+        impl Responsible for Success {
+            fn response() -> Responses {
+                let mut responses = response::<String>(201, "text/plain", "created");
+                merge_responses(&mut responses, default_response::<String>("text/plain", "runtime status"));
+                responses
+            }
+        }
+        struct Error;
+        impl Responsible for Error {
+            fn response() -> Responses {
+                panic!("explicit errors must bypass the error contract");
+            }
+        }
+        assert_eq!(
+            serde_json::to_value(<Result<Success, Error> as ResultResponse>::success_responses()).unwrap(),
+            serde_json::to_value(Success::response()).unwrap()
+        );
+    }
 
     #[test]
     fn colliding_statuses_union_media_types_and_schemas() {

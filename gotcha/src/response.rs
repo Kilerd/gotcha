@@ -8,6 +8,10 @@ use axum::{
 #[cfg(feature = "openapi")]
 pub use gotcha_core::responsible::{default_response, empty_response, merge_responses, response, Responsible};
 
+#[cfg(feature = "openapi")]
+#[doc(hidden)]
+pub use gotcha_core::responsible::ResultResponse;
+
 /// Override a response's status both at runtime and in OpenAPI.
 ///
 /// ```rust

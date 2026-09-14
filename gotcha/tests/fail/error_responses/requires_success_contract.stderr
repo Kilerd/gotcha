@@ -1,0 +1,23 @@
+error[E0277]: the trait bound `NoSchema: Schematic` is not satisfied
+ --> tests/fail/error_responses/requires_success_contract.rs:7:23
+  |
+7 | async fn handler() -> Result<Json<NoSchema>, gotcha::axum::http::StatusCode> {
+  |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ unsatisfied trait bound
+  |
+help: the trait `Schematic` is not implemented for `NoSchema`
+ --> tests/fail/error_responses/requires_success_contract.rs:4:1
+  |
+4 | struct NoSchema;
+  | ^^^^^^^^^^^^^^^
+  = help: the following other types implement trait `Schematic`:
+            &T
+            &str
+            ()
+            HashMap<K, V>
+            HashSet<T>
+            JsonValue
+            Vec<T>
+            bigdecimal::BigDecimal
+          and $N others
+  = note: required for `gotcha::Json<NoSchema>` to implement `Responsible`
+  = note: required for `Result<gotcha::Json<NoSchema>, StatusCode>` to implement `gotcha::response::ResultResponse`
