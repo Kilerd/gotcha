@@ -37,7 +37,6 @@ use axum::response::Html;
 use convert_case::{Case, Casing};
 use either::Either;
 use oas::{Components, Info, OpenAPIV3, Operation, Parameter, PathItem, Referenceable, RequestBody, Responses, SecurityRequirement, Tag};
-use once_cell::sync::Lazy;
 use regex::Regex;
 
 use crate::Responder;
@@ -65,7 +64,8 @@ pub(crate) async fn scalar_html() -> impl Responder {
 pub type ParamType = Either<Vec<Parameter>, RequestBody>;
 
 /// Builds an argument's [`ParamType`] given the route path (needed to name path parameters).
-pub type ParamConstructor = Box<dyn Fn(String) -> ParamType + Sync + Send + 'static>;
+/// A constructor is a function or a non-capturing closure; its result is built for each operation.
+pub type ParamConstructor = fn(String) -> ParamType;
 
 /// Normalise a route path into the form OpenAPI uses for path templating.
 ///
@@ -83,8 +83,26 @@ pub fn path_variable_names(path: &str) -> Vec<String> {
     regex.captures_iter(path).map(|caps| caps[1].to_string()).collect()
 }
 
-#[derive()]
 /// Everything the `#[api]` macro records about one handler, collected via `inventory`.
+/// Constructor pointers are static; parameters, responses, and schemas are built per document.
+///
+/// Manual descriptors can use functions or non-capturing closures directly:
+///
+/// ```
+/// use gotcha::{Operable, ParameterProvider, Path, Responsible};
+///
+/// static OPERATION: Operable = Operable {
+///     type_name: "my_app::read_item",
+///     id: "read_item",
+///     group: None,
+///     summary: None,
+///     description: None,
+///     deprecated: false,
+///     security: None,
+///     parameters: &[<Path<u32> as ParameterProvider>::generate],
+///     responses: <String as Responsible>::response,
+/// };
+/// ```
 pub struct Operable {
     /// Fully qualified name of the handler function, used to match a route to its `Operable`.
     pub type_name: &'static str,
@@ -100,10 +118,10 @@ pub struct Operable {
     pub deprecated: bool,
     /// Name of a security scheme this operation requires.
     pub security: Option<&'static str>,
-    /// One constructor per handler argument.
-    pub parameters: &'static Lazy<Vec<ParamConstructor>>,
-    /// Builds the operation's responses from the handler's return type.
-    pub responses: &'static Lazy<Box<dyn Fn() -> Responses + Sync + Send + 'static>>,
+    /// One constructor per documented handler argument, stored in a static slice.
+    pub parameters: &'static [ParamConstructor],
+    /// Builds fresh responses inside the current document's schema collection scope.
+    pub responses: fn() -> Responses,
 }
 
 impl Operable {
@@ -115,9 +133,9 @@ impl Operable {
         for item in self.parameters.iter() {
             match item(path.clone()) {
                 Either::Left(params_vec) => {
-                    params.extend(params_vec.into_iter().map(|param| Referenceable::Data(param.clone())));
+                    params.extend(params_vec.into_iter().map(Referenceable::Data));
                 }
-                Either::Right(req_body) => request_body = Some(Referenceable::Data(req_body.clone())),
+                Either::Right(req_body) => request_body = Some(Referenceable::Data(req_body)),
             }
         }
         let responses = (self.responses)();
