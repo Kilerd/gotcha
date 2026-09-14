@@ -78,6 +78,8 @@ pub mod error;
 pub mod openapi;
 pub mod params;
 pub mod prelude;
+pub mod response;
+pub use response::WithStatus;
 /// The router that tracks OpenAPI operations alongside axum routes.
 pub mod router;
 pub mod routing;

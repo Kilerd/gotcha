@@ -79,6 +79,11 @@ jobs:
         run: |
           cargo test -p gotcha_macro --no-default-features
 
+      - name: Run tests (gotcha_core)
+        run: |
+          cargo test -p gotcha_core --all-features
+          cargo test -p gotcha_core --no-default-features
+
   clippy:
     name: Clippy
     runs-on: ubuntu-latest

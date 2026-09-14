@@ -16,6 +16,12 @@ struct ApiError {
     message: String,
 }
 
+impl Responsible for ApiError {
+    fn response() -> gotcha::oas::Responses {
+        gotcha::response::default_response::<Self>("application/json", Self::doc().unwrap())
+    }
+}
+
 fn main() {
     let responses = <Result<Json<User>, ApiError> as Responsible>::response();
 

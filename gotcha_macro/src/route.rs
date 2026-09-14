@@ -18,6 +18,66 @@ pub struct RouteMeta {
     deprecated: Flag,
     /// Name of a security scheme required for this operation (empty scopes).
     security: Option<String>,
+    responses: Option<ResponseDeclarations>,
+    drop_default: Flag,
+}
+
+#[derive(Debug, Default)]
+struct ResponseDeclarations(Vec<ResponseMeta>);
+
+#[derive(Debug, FromMeta)]
+struct ResponseMeta {
+    status: u16,
+    body: Option<String>,
+    content_type: Option<String>,
+    description: Option<String>,
+}
+
+impl FromMeta for ResponseDeclarations {
+    fn from_list(items: &[syn::NestedMeta]) -> darling::Result<Self> {
+        let mut responses = Vec::new();
+        let mut statuses = std::collections::BTreeSet::new();
+        for item in items {
+            let syn::NestedMeta::Meta(syn::Meta::List(meta)) = item else {
+                return Err(darling::Error::custom("expected response(status = ..., body = \"Type\")").with_span(item));
+            };
+            if !meta.path.is_ident("response") {
+                return Err(darling::Error::custom("expected response(...)").with_span(meta));
+            }
+            let response = ResponseMeta::from_list(&meta.nested.iter().cloned().collect::<Vec<_>>())?;
+            if !(100..=599).contains(&response.status) {
+                return Err(darling::Error::custom("response status must be in 100..=599").with_span(meta));
+            }
+            if !statuses.insert(response.status) {
+                return Err(darling::Error::custom("duplicate response status").with_span(meta));
+            }
+            if let Some(body) = &response.body {
+                syn::parse_str::<syn::Type>(body).map_err(|e| darling::Error::custom(e).with_span(meta))?;
+                if response.status < 200 || matches!(response.status, 204 | 205 | 304) {
+                    return Err(darling::Error::custom("this status cannot declare a response body").with_span(meta));
+                }
+            } else if response.content_type.is_some() {
+                return Err(darling::Error::custom("content_type requires a body type").with_span(meta));
+            }
+            responses.push(response);
+        }
+        Ok(Self(responses))
+    }
+}
+
+impl ResponseMeta {
+    fn tokens(&self) -> proc_macro2::TokenStream {
+        let status = self.status;
+        let description = self.description.clone().unwrap_or_else(|| format!("HTTP {status}"));
+        match &self.body {
+            Some(body) => {
+                let body: syn::Type = syn::parse_str(body).expect("validated body type");
+                let media_type = self.content_type.as_deref().unwrap_or("application/json");
+                quote!(::gotcha::response::response::<#body>(#status, #media_type, #description))
+            }
+            None => quote!(::gotcha::response::empty_response(#status, #description)),
+        }
+    }
 }
 
 pub(crate) fn request_handler(args: TokenStream, input_stream: TokenStream) -> TokenStream {
@@ -30,6 +90,8 @@ pub(crate) fn request_handler(args: TokenStream, input_stream: TokenStream) -> T
         }
     };
     let meta = args;
+    let extra_responses: Vec<_> = meta.responses.unwrap_or_default().0.iter().map(ResponseMeta::tokens).collect();
+    let drop_default = meta.drop_default.is_present();
     let group = if let Some(group_name) = meta.group {
         quote! { Some(#group_name) }
     } else {
@@ -93,18 +155,18 @@ pub(crate) fn request_handler(args: TokenStream, input_stream: TokenStream) -> T
         .collect();
     let ret_pos = &input.sig.output;
     let ret_schematic = match ret_pos {
-        // A handler with no return type returns `()`, which documents as `204 No Content`.
+        // A handler with no return type returns `()`, which documents as 200 with no body.
         // This used to be `( () as ::gotcha::Responsible)` — a cast to a *trait*, which does not
         // compile (E0782), so such a handler could not be annotated at all.
         ReturnType::Default => {
             quote! {
-                Box::new(|| { <() as ::gotcha::Responsible>::response() })
+                <() as ::gotcha::Responsible>::response()
             }
         }
 
         ReturnType::Type(_, ty) => {
             quote! {
-                Box::new(|| {<#ty as ::gotcha::Responsible>::response()})
+                <#ty as ::gotcha::Responsible>::response()
             }
         }
     };
@@ -126,7 +188,14 @@ pub(crate) fn request_handler(args: TokenStream, input_stream: TokenStream) -> T
                 ]
                 });
         static #ret_uuid_ident : ::gotcha::Lazy<Box<dyn Fn() -> ::gotcha::oas::Responses + Send + Sync + 'static>> = ::gotcha::Lazy::new(||{
-            #ret_schematic
+            Box::new(|| {
+                let mut responses = #ret_schematic;
+                // Explicit declarations replace inference for their status only.
+                #(responses.data.extend((#extra_responses).data);)*
+                if #drop_default { responses.default = None; }
+                assert!(!responses.data.is_empty() || responses.default.is_some(), "OpenAPI operation must declare at least one response");
+                responses
+            })
         });
         ::gotcha::inventory::submit! {
             ::gotcha::Operable {
@@ -143,4 +212,38 @@ pub(crate) fn request_handler(args: TokenStream, input_stream: TokenStream) -> T
         }
     };
     TokenStream::from(ret)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse(meta: syn::Meta) -> darling::Result<RouteMeta> {
+        let syn::Meta::List(meta) = meta else { unreachable!() };
+        RouteMeta::from_list(&meta.nested.into_iter().collect::<Vec<_>>())
+    }
+
+    #[test]
+    fn response_declarations_validate_statuses_and_body_types() {
+        let meta = parse(syn::parse_quote!(api(
+            responses(
+                response(status = 201, body = "Vec<crate::User>", description = "Created"),
+                response(status = 204)
+            ),
+            drop_default
+        )))
+        .unwrap();
+        assert_eq!(meta.responses.unwrap().0.len(), 2);
+        assert!(meta.drop_default.is_present());
+        for invalid in [
+            syn::parse_quote!(api(responses(response(status = 99)))),
+            syn::parse_quote!(api(responses(response(status = 600)))),
+            syn::parse_quote!(api(responses(response(status = 204, body = "String")))),
+            syn::parse_quote!(api(responses(response(status = 200, body = "Vec<")))),
+            syn::parse_quote!(api(responses(response(status = 200, content_type = "text/plain")))),
+            syn::parse_quote!(api(responses(response(status = 404), response(status = 404)))),
+        ] {
+            assert!(parse(invalid).is_err());
+        }
+    }
 }

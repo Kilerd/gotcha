@@ -81,12 +81,6 @@ pub trait Schematic {
     fn fields() -> Vec<(&'static str, EnhancedSchema)> {
         vec![]
     }
-    /// Whether a value of this type is sent as an empty body. Only the unit type is, and
-    /// [`Responsible`](crate::Responsible) documents it as a response with no content rather than
-    /// as a JSON body.
-    fn empty_body() -> bool {
-        false
-    }
     /// Generate the schema of the type.
     fn generate_schema() -> EnhancedSchema {
         EnhancedSchema {
@@ -154,10 +148,6 @@ impl Schematic for () {
 
     fn type_() -> &'static str {
         "void"
-    }
-
-    fn empty_body() -> bool {
-        true
     }
 
     fn generate_schema() -> EnhancedSchema {
