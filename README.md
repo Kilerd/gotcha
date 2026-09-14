@@ -193,6 +193,9 @@ serde = { version = "1", features = ["derive"] }
 
 ### Optional Features
 
+HTTP/1 serving is always enabled, including with `default-features = false`.
+The builder's `run`/`listen`/`listen_on` and `GotchaApp::run` are always available.
+
 Enable additional features as needed:
 
 ```toml

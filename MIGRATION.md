@@ -1,5 +1,6 @@
 # Migration Guide
 
+- [Unreleased: HTTP/1 is always enabled](#unreleased-http1-is-always-enabled)
 - [Unreleased: derive dependency paths](#unreleased-derive-dependency-paths)
 - [Unreleased: explicit OpenAPI endpoints](#unreleased-explicit-openapi-endpoints)
 - [Unreleased: message task handles](#unreleased-message-task-handles)
@@ -18,6 +19,16 @@
 - [0.2 → 0.3: API simplification](#02--03-api-simplification)
 
 ---
+
+# Unreleased: HTTP/1 is always enabled
+
+The `http1` feature has been removed. It existed to support Cloudflare Worker integration,
+which is no longer supported. HTTP/1 and Tokio support are now required Axum dependency
+features, so server startup remains available even with `default-features = false`.
+
+Remove `"http1"` from any explicit gotcha feature lists. Default application behavior is
+unchanged; `openapi`, `prometheus`, `cors`, `static_files`, and `task` remain optional.
+Libraries that only implement `Schematic` can continue to depend on `gotcha_core` directly.
 
 # Unreleased: derive dependency paths
 

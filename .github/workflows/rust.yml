@@ -73,8 +73,11 @@ jobs:
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
 
-      - name: Test downstream macro dependencies
-        run: python3 test-macro-dependencies.py
+      - name: Test standalone consumers
+        run: python3 test-downstream.py
+
+      - name: Test without default features
+        run: cargo test -p gotcha --no-default-features
 
       - name: Run tests (gotcha_macro)
         run: |
