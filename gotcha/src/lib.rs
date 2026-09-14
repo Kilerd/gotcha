@@ -110,7 +110,7 @@ pub use crate::openapi::schematic::EnhancedSchema;
 pub use serde_json;
 #[cfg(feature = "task")]
 #[cfg_attr(docsrs, doc(cfg(feature = "task")))]
-pub use task::TaskScheduler;
+pub use task::{RunningTasks, TaskScheduler};
 #[cfg(feature = "static_files")]
 #[cfg_attr(docsrs, doc(cfg(feature = "static_files")))]
 pub use tower_http::services::{ServeDir, ServeFile};
@@ -184,6 +184,21 @@ pub trait GotchaApp: Sized + Send + Sync {
         ConfigErrorPolicy::Strict
     }
 
+    /// Resolve to stop accepting HTTP connections and scheduling new task executions.
+    /// The default waits for Ctrl-C or, on Unix, SIGTERM. Existing HTTP requests drain;
+    /// scheduled executions wait for at most `task_shutdown_timeout()` (with the `task` feature).
+    fn shutdown_signal(&self) -> impl std::future::Future<Output = ()> + Send {
+        crate::startup::shutdown_signal()
+    }
+
+    /// How long to wait for in-flight scheduled executions after shutdown is requested.
+    /// Defaults to 30 seconds. At the deadline, remaining scheduled tasks are aborted and joined.
+    /// This does not limit HTTP request draining.
+    #[cfg(feature = "task")]
+    fn task_shutdown_timeout(&self) -> std::time::Duration {
+        crate::task::DEFAULT_SHUTDOWN_TIMEOUT
+    }
+
     /// Install the tracing subscriber. The default reads `RUST_LOG`.
     fn logger(&self) -> GotchaResult<()> {
         tracing_subscriber::registry()
@@ -206,7 +221,8 @@ pub trait GotchaApp: Sized + Send + Sync {
     fn state(&self, config: &ConfigWrapper<Self::Config>) -> impl std::future::Future<Output = GotchaResult<Self::State>> + Send;
 
     #[cfg(feature = "task")]
-    /// Register background tasks. The default registers none.
+    /// Register background tasks without starting them. Returning an error discards all registrations.
+    /// Tasks start with serving after successful initialization. The default registers none.
     fn tasks(&self, _task_scheduler: &mut TaskScheduler<Self::State, Self::Config>) -> impl std::future::Future<Output = GotchaResult<()>> + Send {
         async { Ok(()) }
     }

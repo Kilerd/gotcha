@@ -106,6 +106,26 @@ Fallback applies only to startup configuration loading; eager `build_config()` a
 `GotchaApp::config()` calls still return errors. See the [migration guide](MIGRATION.md#unreleased-shared-startup)
 for behavior changes and the trait example.
 
+### Shutdown
+
+Both application APIs stop gracefully on Ctrl-C or Unix SIGTERM. HTTP stops accepting connections,
+existing requests drain, and scheduled tasks stop starting new executions. To provide your own
+shutdown signal:
+
+```rust,no_run
+use gotcha::Gotcha;
+
+let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
+let app = Gotcha::new()
+    .shutdown_signal(async move { let _ = stopped.await; });
+// Send through `stop` to request shutdown; await `app.run()` to wait for it to finish.
+```
+
+The trait API offers the same `shutdown_signal(&self)` hook. With the `task` feature, in-flight
+scheduled executions get 30 seconds to finish before being aborted and joined. Override that period
+with builder `.task_shutdown_timeout(duration)` or trait `task_shutdown_timeout(&self)`. This timeout
+applies to scheduled tasks; HTTP requests drain independently. See the [migration guide](MIGRATION.md#unreleased-owned-scheduled-tasks).
+
 ### Advanced Trait API (For complex applications)
 
 ```rust,no_run
@@ -397,7 +417,10 @@ Configuration supports:
 
 ### Task Scheduling
 
-Requires the `task` feature.
+Requires the `task` feature. Registration collects work; execution starts after all application
+initialization succeeds. The application retains ownership until shutdown completes. Standalone
+users call `scheduler.start()`, retain the returned `RunningTasks`, and call
+`running.shutdown(timeout).await` to stop and join their tasks. Dropping the owner aborts its tasks.
 
 ```rust,ignore
 use gotcha::prelude::*;
