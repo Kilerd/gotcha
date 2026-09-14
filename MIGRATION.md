@@ -1,5 +1,6 @@
 # Migration Guide
 
+- [Unreleased: shared startup](#unreleased-shared-startup)
 - [Unreleased: runtime type bounds](#unreleased-runtime-type-bounds)
 - [Unreleased: HTTP response contracts](#unreleased-http-response-contracts)
 - [Unreleased: application and route composition](#unreleased-application-and-route-composition)
@@ -13,6 +14,75 @@
 
 ---
 
+# Unreleased: shared startup
+
+**Builder and trait applications now share configuration policy, address resolution, binding,
+initialization, and serving.** This changes the builder's default error policy and listener source.
+
+## Listener address
+
+Previously, builder `run()` selected its address before loading configuration and ignored
+`config.server`. It now applies this priority:
+
+| Priority | Source |
+| --- | --- |
+| 1 | Explicit `listen(...)` / `listen_on(...)` socket address |
+| 2 | Builder `.host(...)` and `.port(...)`, independently |
+| 3 | Loaded or explicitly supplied `ConfigWrapper::server` |
+| 4 | Framework defaults from a missing server section |
+
+An explicit `.port(3000)` overrides a configured 8080, even though 3000 is the framework default.
+Setting only the port preserves the configured host. `run()` supports IPv4 and IPv6 literals;
+use an unbracketed IP in `server.host` and a bracketed IPv6 socket address for `listen()`.
+Hostname resolution is not provided.
+
+Applications relying on the old builder behavior should explicitly call `.host("127.0.0.1")`
+and `.port(3000)`, or pass an explicit listen address. `Gotcha::from_context` now honors its supplied
+server settings as well.
+
+## Configuration errors
+
+Automatic loading and explicitly registered sources now both fail startup on loading errors unless
+a fallback is explicitly selected. Optional files still ignore only missing files. Explicitly supplied
+configuration still takes precedence over sources. To opt into fallback in the builder:
+
+```rust
+use gotcha::{ConfigErrorPolicy, Gotcha};
+let app = Gotcha::new().config_error_policy(ConfigErrorPolicy::fallback_to_default());
+```
+
+For the trait API, add this method to your `GotchaApp` implementation when its config supports Default:
+
+```rust,ignore
+fn config_error_policy(&self) -> gotcha::ConfigErrorPolicy<Self::Config> {
+    gotcha::ConfigErrorPolicy::fallback_to_default()
+}
+```
+
+`ConfigErrorPolicy::Fallback(factory)` accepts a function returning `ConfigWrapper<C>` for custom
+fallback values. Fallback logs the original error, replaces the whole configuration, and then applies
+the normal address overrides. It applies to the configuration-loading step of startup, including a
+custom trait `config()` error; it does not swallow address, state, router, task, or serve errors.
+Eager `.build_config(...)` and direct `GotchaApp::config()` calls keep returning their errors.
+
+`with_config::<C>()` and the config parameter of `with_types::<S, C>()` no longer require `Default`.
+Only selecting `fallback_to_default()` needs `C: Default`; state default construction retains its
+existing bound. Initialized contexts still require no serde or Default implementations.
+
+## Initialization order
+
+After the existing logging hook, startup loads configuration, selects and binds the address,
+initializes state, assembles the router, registers tasks, and serves. This order is identical for
+both APIs. A bind failure occurs before state construction or task registration; a later startup
+error releases the listener. The initialized context's server settings contain the actual bound
+address, including a dynamically assigned port, so state initialization and handlers agree.
+
+State initialization now runs while the port is reserved, before requests are accepted. Applications
+that depended on initializing state before a bind attempt must account for the new order. Task
+cancellation and waiting on shutdown are unchanged and tracked separately in #93.
+
+---
+
 # Unreleased: runtime type bounds
 
 Initialized values no longer have to implement loading or default-construction traits just to
@@ -21,9 +91,9 @@ be stored in a context, extracted by handlers, or used by messages and scheduled
 - Use `Gotcha::from_state(value)` for state without `Default` and automatic empty configuration.
 - Use `Gotcha::from_context(GotchaContext { state, config })` when both values are already ready.
   State and application configuration only need `Clone + Send + Sync + 'static` for runtime use.
-- `with_state::<S>()`, `with_config::<C>()`, and `with_types::<S, C>()` retain their default-based
-  convenience behavior. Only these constructors choose automatic initialization and require its
-  bounds; creating defaults and reading files still happen at startup, after any explicit overrides.
+- `with_state::<S>()`, `with_config::<C>()`, and `with_types::<S, C>()` retain automatic initialization.
+  Default state construction requires `S: Default`; configuration loading requires `Deserialize`.
+  Creating state defaults and reading files still happen at startup, after any explicit overrides.
 - `.state(...)`, `.config(...)`, route composition, task registration, and serving no longer carry
   unrelated `Default` or serde requirements. `.build_config(...)` requires `C: DeserializeOwned`.
 
@@ -42,10 +112,8 @@ explicitly. `Serialize` and `Default` are no longer required by trait-based load
 The existing `GotchaConfig` marker retains its original bounds for compatibility with user generic
 code. Runtime containers and the extraction macros no longer require it.
 
-Explicit configuration still wins over registered sources. Selected sources remain strict, and
-automatic default loading retains its warning and fallback behavior. Listener address precedence
-is unchanged: builder `run()` uses `.host()`/`.port()`, while `listen()`/`listen_on()` use their
-argument; providing `ConfigWrapper::server` does not change that builder policy.
+Explicit configuration still wins over registered sources. See [shared startup](#unreleased-shared-startup)
+for the unified strict loading policy, explicit fallback, and listener address precedence.
 
 See the [initialized-values example](README.md#initialized-state-and-configuration).
 
@@ -383,9 +451,8 @@ through `run()` / `listen()` instead of replacing the configuration with `Defaul
 by `with_default_files` are still optional, but errors in existing files propagate.
 
 An already supplied `.config(...)` value still takes precedence over accumulated sources.
-With no explicit configuration or sources, automatic default loading retains its existing
-warning-and-fallback behavior. A broader unification of startup policies is tracked separately
-in [#92](https://github.com/Kilerd/gotcha/issues/92).
+Automatic loading now follows the same strict default policy; see [shared startup](#unreleased-shared-startup)
+for explicitly opting into fallback.
 
 ---
 

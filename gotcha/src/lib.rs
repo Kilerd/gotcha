@@ -23,7 +23,7 @@ pub use axum::middleware;
 pub use axum::response::sse::{self, Event, KeepAlive, Sse};
 pub use axum::response::IntoResponse as Responder;
 pub use axum_macros::debug_handler;
-pub use config::{ConfigWrapper, ServerConfig};
+pub use config::{ConfigErrorPolicy, ConfigWrapper, ServerConfig};
 pub use either::Either;
 pub use routing::{delete, get, head, on, options, patch, post, put, trace, MethodRouter};
 
@@ -79,6 +79,7 @@ pub mod openapi;
 pub mod params;
 pub mod prelude;
 pub mod response;
+mod startup;
 pub use response::WithStatus;
 /// The router that tracks OpenAPI operations alongside axum routes.
 pub mod router;
@@ -176,6 +177,13 @@ pub trait GotchaApp: Sized + Send + Sync {
         }
     }
 
+    /// Startup is strict by default. Override to opt into a fallback after a configuration error.
+    /// This applies to `run()`, including errors returned by a custom `config()` implementation.
+    /// Direct calls to `config()` still return their loading errors.
+    fn config_error_policy(&self) -> ConfigErrorPolicy<Self::Config> {
+        ConfigErrorPolicy::Strict
+    }
+
     /// Install the tracing subscriber. The default reads `RUST_LOG`.
     fn logger(&self) -> GotchaResult<()> {
         tracing_subscriber::registry()
@@ -212,41 +220,16 @@ pub trait GotchaApp: Sized + Send + Sync {
         }
     }
 
-    /// Load configuration, build state and routes, then serve until shutdown.
+    /// Load configuration, bind its address, build state and routes, register tasks, then serve.
+    /// State initialization and handlers receive the effective address, including the port chosen
+    /// for port 0. Binding failure does not initialize state or register background tasks.
     /// For configuration without `Deserialize`, assemble an explicit context using
     /// [`Self::build_router`] or [`Gotcha::from_context`].
     fn run(self) -> impl std::future::Future<Output = GotchaResult<()>> + Send
     where
         Self::Config: for<'de> Deserialize<'de>,
     {
-        async move {
-            use std::net::{Ipv4Addr, SocketAddrV4};
-            use std::str::FromStr;
-            self.logger()?;
-            tracing::info!("logger has been initialized");
-            let config: ConfigWrapper<Self::Config> = self.config().await?;
-            let state = self.state(&config).await?;
-
-            let context = GotchaContext { config: config.clone(), state };
-
-            let router = self.build_router(context.clone()).await?;
-
-            cfg_if::cfg_if! {
-                if #[cfg(feature = "task")] {
-                    let mut task_scheduler = TaskScheduler::new(context.clone());
-                    self.tasks(&mut task_scheduler).await?;
-                }
-            }
-
-            let ip = Ipv4Addr::from_str(&config.server.host).map_err(|_| GotchaError::InvalidAddress(config.server.host.clone()))?;
-            let addr = SocketAddrV4::new(ip, config.server.port);
-            let listener = tokio::net::TcpListener::bind(addr).await.map_err(|source| GotchaError::Bind {
-                addr: addr.to_string(),
-                source,
-            })?;
-            axum::serve(listener, router).await.map_err(GotchaError::Io)?;
-            Ok(())
-        }
+        async move { startup::run(&self, None).await }
     }
 }
 

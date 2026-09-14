@@ -78,6 +78,34 @@ let app = Gotcha::from_context(GotchaContext {
 `with_state::<T>()` and `with_types::<S, C>()` remain available when you want automatic default
 construction. File loading requires `Deserialize`; serializing a configuration requires `Serialize`.
 
+### Startup behavior
+
+Both APIs load configuration before selecting a listener address. The priority is:
+
+1. The explicit `listen(...)` / `listen_on(...)` argument.
+2. Builder `.host(...)` / `.port(...)` overrides, applied independently.
+3. `ConfigWrapper::server`, including settings loaded from files or environment variables.
+4. Framework defaults: `127.0.0.1:3000` when the server section is absent.
+
+Both APIs bind before state initialization, route assembly, and task registration. State, handlers,
+and tasks see the effective address in `config.server`, including the actual port selected for `0`.
+Binding failure therefore does not start background tasks.
+
+Configuration errors stop startup by default. To explicitly allow a default fallback:
+
+```rust,no_run
+use gotcha::{ConfigErrorPolicy, Gotcha};
+
+let app = Gotcha::new()
+    .config_error_policy(ConfigErrorPolicy::fallback_to_default());
+```
+
+For the trait API, override `config_error_policy()` to return the same policy. A custom fallback
+can use `ConfigErrorPolicy::Fallback(factory)`, where the factory returns a `ConfigWrapper<C>`.
+Fallback applies only to startup configuration loading; eager `build_config()` and direct
+`GotchaApp::config()` calls still return errors. See the [migration guide](MIGRATION.md#unreleased-shared-startup)
+for behavior changes and the trait example.
+
 ### Advanced Trait API (For complex applications)
 
 ```rust,no_run
