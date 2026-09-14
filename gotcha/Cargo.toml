@@ -75,9 +75,6 @@ validator = { version = "0.20", features = ["derive"] }
 tempfile = "3"
 trybuild = "1.0"
 assert-json-diff = "2"
-# Non-optional so trybuild-generated test crates (which derive Schematic and thus
-# emit `::gotcha_core::` paths) have gotcha_core in their extern prelude.
-gotcha_core = { version = "0.4.1", path = "../gotcha_core" }
 # Multiple-worker runtimes, paused-clock task tests, and socket-based lifecycle checks.
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "test-util", "io-util"] }
 futures-core = "0.3.33"

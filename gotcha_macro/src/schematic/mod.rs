@@ -1,6 +1,7 @@
 use darling::ast::Data;
 use darling::{FromDeriveInput, FromField, FromVariant};
 use proc_macro2::{Span, TokenStream as TokenStream2};
+use proc_macro_crate::{crate_name, FoundCrate};
 use quote::quote;
 use syn::{parse2, DeriveInput};
 
@@ -85,6 +86,8 @@ pub(crate) struct ParameterOpts {
     ident: syn::Ident,
     generics: syn::Generics,
     name: Option<String>,
+    #[darling(rename = "crate")]
+    crate_path: Option<syn::Path>,
     data: Data<ParameterEnumVariantOpt, ParameterStructFieldOpt>,
     attrs: Vec<syn::Attribute>,
 }
@@ -99,19 +102,19 @@ impl darling::FromMeta for SchemaValue {
         let tokens = match value {
             syn::Lit::Str(v) => {
                 let v = v.value();
-                quote! { ::gotcha_core::serde_json::Value::from(#v) }
+                quote! { #v }
             }
             syn::Lit::Int(v) => {
                 let v = v.base10_parse::<i64>().map_err(darling::Error::from)?;
-                quote! { ::gotcha_core::serde_json::Value::from(#v) }
+                quote! { #v }
             }
             syn::Lit::Float(v) => {
                 let v = v.base10_parse::<f64>().map_err(darling::Error::from)?;
-                quote! { ::gotcha_core::serde_json::Value::from(#v) }
+                quote! { #v }
             }
             syn::Lit::Bool(v) => {
                 let v = v.value;
-                quote! { ::gotcha_core::serde_json::Value::from(#v) }
+                quote! { #v }
             }
             _ => return Err(darling::Error::unexpected_lit_type(value)),
         };
@@ -271,11 +274,11 @@ impl ParameterStructFieldOpt {
     /// statements for this field. Each statement mutates a local `field_schema` binding
     /// (its `.schema.format` / `.schema.extras`). An explicit `#[schematic(description = "...")]`
     /// overrides the doc comment.
-    pub(crate) fn schema_customizations(&self) -> (TokenStream2, Vec<TokenStream2>) {
+    pub(crate) fn schema_customizations(&self, core: &TokenStream2) -> (TokenStream2, Vec<TokenStream2>) {
         // Builds a statement that inserts a JSON-Schema keyword into `field_schema.schema.extras`.
-        fn extra(key: &str, value: TokenStream2) -> TokenStream2 {
+        fn extra(core: &TokenStream2, key: &str, value: TokenStream2) -> TokenStream2 {
             quote! {
-                field_schema.schema.extras.insert(#key.to_string(), ::gotcha_core::serde_json::to_value(#value).unwrap());
+                field_schema.schema.extras.insert(#key.to_string(), #core::serde_json::to_value(#value).unwrap());
             }
         }
 
@@ -294,15 +297,15 @@ impl ParameterStructFieldOpt {
         // still wins on any overlap (e.g. `format`).
         let validated = ValidateConstraints::from_attrs(&self.attrs);
         if let Some(min) = validated.minimum {
-            customizations.push(extra("minimum", quote! { #min }));
+            customizations.push(extra(core, "minimum", quote! { #min }));
             if validated.exclusive_minimum {
-                customizations.push(extra("exclusiveMinimum", quote! { true }));
+                customizations.push(extra(core, "exclusiveMinimum", quote! { true }));
             }
         }
         if let Some(max) = validated.maximum {
-            customizations.push(extra("maximum", quote! { #max }));
+            customizations.push(extra(core, "maximum", quote! { #max }));
             if validated.exclusive_maximum {
-                customizations.push(extra("exclusiveMaximum", quote! { true }));
+                customizations.push(extra(core, "exclusiveMaximum", quote! { true }));
             }
         }
         let (len_min, len_max) = if is_collection(&self.ty) {
@@ -311,10 +314,10 @@ impl ParameterStructFieldOpt {
             ("minLength", "maxLength")
         };
         if let Some(min) = validated.min_length {
-            customizations.push(extra(len_min, quote! { #min }));
+            customizations.push(extra(core, len_min, quote! { #min }));
         }
         if let Some(max) = validated.max_length {
-            customizations.push(extra(len_max, quote! { #max }));
+            customizations.push(extra(core, len_max, quote! { #max }));
         }
         if let Some(format) = validated.format {
             customizations.push(quote! { field_schema.schema.format = Some(#format.to_string()); });
@@ -324,16 +327,16 @@ impl ParameterStructFieldOpt {
             customizations.push(quote! { field_schema.schema.format = Some(#format.to_string()); });
         }
         if let Some(v) = &self.title {
-            customizations.push(extra("title", quote! { #v }));
+            customizations.push(extra(core, "title", quote! { #v }));
         }
-        // `example` / `default` keep their JSON type (`SchemaValue` already builds a `Value`).
+        // `example` / `default` keep their JSON type when converted from the parsed literal.
         if let Some(v) = &self.example {
             let value = &v.0;
-            customizations.push(quote! { field_schema.schema.extras.insert("example".to_string(), #value); });
+            customizations.push(quote! { field_schema.schema.extras.insert("example".to_string(), #core::serde_json::Value::from(#value)); });
         }
         if let Some(v) = &self.default {
             let value = &v.0;
-            customizations.push(quote! { field_schema.schema.extras.insert("default".to_string(), #value); });
+            customizations.push(quote! { field_schema.schema.extras.insert("default".to_string(), #core::serde_json::Value::from(#value)); });
         }
 
         (description, customizations)
@@ -347,6 +350,27 @@ pub(crate) struct ParameterEnumVariantOpt {
     #[allow(dead_code)]
     attrs: Vec<syn::Attribute>,
     fields: darling::ast::Fields<ParameterStructFieldOpt>,
+}
+
+// Resolve once per derive, then pass the same path through every schema generator.
+// Libraries can stay on core alone; applications can use gotcha's re-export. Cargo
+// dependency aliases are resolved by package name, including workspace dependencies.
+fn core_crate_path() -> Result<TokenStream2, &'static str> {
+    for package in ["gotcha_core", "gotcha"] {
+        if let Ok(found) = crate_name(package) {
+            let name = match found {
+                FoundCrate::Itself => package.to_owned(),
+                FoundCrate::Name(name) => name,
+            };
+            let ident = syn::Ident::new(&name, Span::call_site());
+            return Ok(if package == "gotcha_core" {
+                quote! { ::#ident }
+            } else {
+                quote! { ::#ident::gotcha_core }
+            });
+        }
+    }
+    Err("Schematic requires a gotcha_core or gotcha dependency; use #[schematic(crate = \"path::to::gotcha_core\")] for a custom re-export")
 }
 
 pub(crate) fn handler(input: TokenStream2) -> Result<TokenStream2, (Span, &'static str)> {
@@ -363,6 +387,10 @@ pub(crate) fn handler(input: TokenStream2) -> Result<TokenStream2, (Span, &'stat
             ));
         }
     }
+    let core = match &param_opts.crate_path {
+        Some(path) => quote! { #path },
+        None => core_crate_path().map_err(|message| (param_opts.ident.span(), message))?,
+    };
     let schema_name = param_opts.name.clone().unwrap_or_else(|| param_opts.ident.to_string());
     let name_override = match &param_opts.name {
         Some(name) => quote! { Some(#name) },
@@ -386,20 +414,26 @@ pub(crate) fn handler(input: TokenStream2) -> Result<TokenStream2, (Span, &'stat
             // Check if all enum variants have empty fields
             let is_simple_enum = enum_variants.iter().all(|variant| variant.fields.is_empty());
             if is_simple_enum {
-                simple_enum::handler(schema_name.clone(), doc, enum_variants, extra_field.rename_all)?
+                simple_enum::handler(&core, schema_name.clone(), doc, enum_variants, extra_field.rename_all)?
             } else {
                 match extra_field.tag_kind {
                     None => {
                         // Default: externally tagged
-                        external_tagged_enum::handler(schema_name.clone(), doc, enum_variants, extra_field.rename_all)?
+                        external_tagged_enum::handler(&core, schema_name.clone(), doc, enum_variants, extra_field.rename_all)?
                     }
                     Some(SerdeTagKind::Internal(ref tag_name)) => {
-                        tagged_enum::handler(schema_name.clone(), doc, enum_variants, extra_field.rename_all, tag_name.clone())?
+                        tagged_enum::handler(&core, schema_name.clone(), doc, enum_variants, extra_field.rename_all, tag_name.clone())?
                     }
-                    Some(SerdeTagKind::Adjacent { ref tag, ref content }) => {
-                        adjacent_tagged_enum::handler(schema_name.clone(), doc, enum_variants, extra_field.rename_all, tag.clone(), content.clone())?
-                    }
-                    Some(SerdeTagKind::Untagged) => untagged_enum::handler(schema_name.clone(), doc, enum_variants, extra_field.rename_all)?,
+                    Some(SerdeTagKind::Adjacent { ref tag, ref content }) => adjacent_tagged_enum::handler(
+                        &core,
+                        schema_name.clone(),
+                        doc,
+                        enum_variants,
+                        extra_field.rename_all,
+                        tag.clone(),
+                        content.clone(),
+                    )?,
+                    Some(SerdeTagKind::Untagged) => untagged_enum::handler(&core, schema_name.clone(), doc, enum_variants, extra_field.rename_all)?,
                 }
             }
         }
@@ -408,20 +442,20 @@ pub(crate) fn handler(input: TokenStream2) -> Result<TokenStream2, (Span, &'stat
             let field_count = fields.fields.len();
             if is_tuple && field_count == 1 {
                 // Newtype struct (e.g. `struct UserId(Uuid);`) — transparent to the inner type.
-                newtype_struct::handler(fields.fields, param_opts.name.as_deref())
+                newtype_struct::handler(&core, fields.fields, param_opts.name.as_deref())
             } else if is_tuple {
                 return Err((
                     ident.span(),
                     "#[derive(Schematic)] does not support multi-field tuple structs; use a named struct",
                 ));
             } else {
-                named_struct::handler(schema_name.clone(), doc, fields, extra_field.rename_all)?
+                named_struct::handler(&core, schema_name.clone(), doc, fields, extra_field.rename_all)?
             }
         }
     };
 
     let ret = quote! {
-        impl #generics Schematic for #ident #generics_single #where_clause {
+        impl #generics #core::Schematic for #ident #generics_single #where_clause {
             fn schema_name() -> Option<&'static str> { #name_override }
             #impl_stream
         }
@@ -440,7 +474,7 @@ mod name_tests {
             let error = handler(quote! { #[schematic(name = #name)] struct Example { value: String } }).unwrap_err();
             assert!(error.1.contains("schema name must be nonempty"));
         }
-        assert!(handler(quote! { #[schematic(name = "public.Result-v1")] struct Example { value: String } }).is_ok());
+        assert!(handler(quote! { #[schematic(crate = "::gotcha_core", name = "public.Result-v1")] struct Example { value: String } }).is_ok());
     }
 
     #[test]

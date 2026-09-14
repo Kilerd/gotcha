@@ -1,0 +1,10 @@
+[package]
+name = "renamed-schema-library"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[dependencies]
+schema = { package = "gotcha_core", path = "../../../../gotcha_core" }

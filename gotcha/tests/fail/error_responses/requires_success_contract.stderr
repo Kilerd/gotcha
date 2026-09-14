@@ -20,4 +20,4 @@ help: the trait `Schematic` is not implemented for `NoSchema`
             bigdecimal::BigDecimal
           and $N others
   = note: required for `gotcha::Json<NoSchema>` to implement `Responsible`
-  = note: required for `Result<gotcha::Json<NoSchema>, StatusCode>` to implement `gotcha::response::ResultResponse`
+  = note: required for `Result<gotcha::Json<NoSchema>, StatusCode>` to implement `gotcha::gotcha_core::responsible::ResultResponse`

@@ -254,6 +254,12 @@ for moving existing child settings and task registrations to the top level.
 
 ### OpenAPI Documentation
 
+`Schematic` lives in `gotcha_core`, so a library can implement or derive it without depending on
+the web framework. Applications can use `#[derive(gotcha::Schematic)]` with just the `gotcha`
+dependency and its `openapi` feature; a separate `gotcha_core` dependency and trait import are
+unnecessary. The derive recognizes Cargo dependency renames. A custom facade can supply
+`#[schematic(crate = "path::to::gotcha_core")]` to select its core re-export.
+
 With the `openapi` feature enabled, use the `#[api]` macro for automatic documentation:
 
 ```rust,ignore
