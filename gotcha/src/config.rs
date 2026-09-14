@@ -17,6 +17,39 @@ pub enum ConfigError {
 /// Configuration result type
 pub type ConfigResult<T> = Result<T, ConfigError>;
 
+/// How application startup handles a failed configuration load.
+/// Strict loading is the default for both the builder and [`crate::GotchaApp`].
+#[derive(Default)]
+pub enum ConfigErrorPolicy<C> {
+    /// Return the loading error without initializing state, binding, or starting tasks.
+    #[default]
+    Strict,
+    /// Log the loading error and use an explicitly chosen fallback configuration.
+    Fallback(fn() -> ConfigWrapper<C>),
+}
+
+impl<C> ConfigErrorPolicy<C> {
+    /// Opt into fallback to default server and application settings after a loading error.
+    /// Only selecting this policy requires `C: Default`.
+    pub fn fallback_to_default() -> Self
+    where
+        C: Default,
+    {
+        Self::Fallback(ConfigWrapper::default)
+    }
+
+    pub(crate) fn apply(self, result: crate::GotchaResult<ConfigWrapper<C>>) -> crate::GotchaResult<ConfigWrapper<C>> {
+        match (result, self) {
+            (Ok(config), _) => Ok(config),
+            (Err(error), Self::Strict) => Err(error),
+            (Err(error), Self::Fallback(fallback)) => {
+                tracing::warn!("Failed to load configuration: {error}, using explicitly configured fallback");
+                Ok(fallback())
+            }
+        }
+    }
+}
+
 /// The loaded configuration: the application's own settings plus the framework's.
 ///
 /// The application's settings are **flattened to the top level** of the file, so they read as the
@@ -243,6 +276,21 @@ impl GotchaConfigLoader {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn error_policy_only_constructs_a_fallback_after_a_loading_error() {
+        let config = ConfigWrapper {
+            server: ServerConfig::default(),
+            app: String::from("loaded"),
+        };
+        let policy = ConfigErrorPolicy::Fallback(|| panic!("successful loading must not construct fallback values"));
+        assert_eq!(policy.apply(Ok(config)).unwrap().app, "loaded");
+        let failure = || Err(ConfigError::Error("invalid config".into()).into());
+        assert!(ConfigErrorPolicy::<String>::Strict.apply(failure()).is_err());
+        let fallback = ConfigErrorPolicy::<String>::fallback_to_default().apply(failure()).unwrap();
+        assert_eq!(fallback.app, "");
+        assert_eq!(fallback.server.port, 3000);
+    }
 
     #[derive(Serialize, Deserialize, Default, Debug, Clone)]
     struct TestConfig {
