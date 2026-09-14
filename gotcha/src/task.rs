@@ -16,7 +16,7 @@
 //! use gotcha::TaskScheduler;
 //! use std::time::Duration;
 //!
-//! # #[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
+//! # #[derive(Clone)]
 //! # struct Config {}
 //! fn setup(scheduler: &TaskScheduler<(), Config>) {
 //!     // Schedule a cron task (the expression is a `String`)
@@ -44,21 +44,20 @@ use std::str::FromStr;
 
 use chrono::Utc;
 use cron::Schedule;
-use serde::{Deserialize, Serialize};
 use tracing::info;
 
 use crate::GotchaContext;
 
 /// Registers background tasks that run alongside the server, each with access to the application
 /// context.
-pub struct TaskScheduler<T1: Clone + Send + Sync + 'static, T2: Clone + Send + Sync + 'static + Serialize + for<'de> Deserialize<'de> + Default> {
+pub struct TaskScheduler<T1: Clone + Send + Sync + 'static, T2: Clone + Send + Sync + 'static> {
     context: GotchaContext<T1, T2>,
 }
 
 impl<T1, T2> TaskScheduler<T1, T2>
 where
     T1: Clone + Send + Sync + 'static,
-    T2: Clone + Send + Sync + 'static + Serialize + for<'de> Deserialize<'de> + Default,
+    T2: Clone + Send + Sync + 'static,
 {
     /// Create a scheduler bound to the application context tasks will receive.
     pub fn new(context: GotchaContext<T1, T2>) -> Self {
@@ -113,7 +112,7 @@ where
 pub async fn cron_proc_macro_wrapper<T1, T2, F, FF>(context: GotchaContext<T1, T2>, schedule: Schedule, name: String, task: F)
 where
     T1: Clone + Send + Sync + 'static,
-    T2: Clone + Send + Sync + 'static + Serialize + for<'de> Deserialize<'de> + Default,
+    T2: Clone + Send + Sync + 'static,
     F: Fn(GotchaContext<T1, T2>) -> FF + Send + 'static,
     FF: Future<Output = ()> + Send + 'static,
 {
@@ -131,7 +130,7 @@ where
 pub async fn interval_proc_macro_wrapper<T1, T2, F, FF>(context: GotchaContext<T1, T2>, interval: std::time::Duration, name: String, task: F)
 where
     T1: Clone + Send + Sync + 'static,
-    T2: Clone + Send + Sync + 'static + Serialize + for<'de> Deserialize<'de> + Default,
+    T2: Clone + Send + Sync + 'static,
     F: Fn(GotchaContext<T1, T2>) -> FF + Send + 'static,
     FF: Future<Output = ()> + Send + 'static,
 {

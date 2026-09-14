@@ -34,7 +34,7 @@
 use async_trait::async_trait;
 use axum::extract::FromRef;
 
-use crate::{GotchaConfig, GotchaContext};
+use crate::GotchaContext;
 
 /// A unit of asynchronous work, dispatched by a [`Messager`].
 ///
@@ -44,7 +44,7 @@ use crate::{GotchaConfig, GotchaContext};
 pub trait Message<S, C>: Send + 'static
 where
     S: Clone + Send + Sync + 'static,
-    C: GotchaConfig,
+    C: Clone + Send + Sync + 'static,
 {
     /// The value produced by handling this message.
     type Output: Send + 'static;
@@ -60,7 +60,7 @@ where
 pub struct Messager<S, C>
 where
     S: Clone + Send + Sync + 'static,
-    C: GotchaConfig,
+    C: Clone + Send + Sync + 'static,
 {
     context: GotchaContext<S, C>,
 }
@@ -68,7 +68,7 @@ where
 impl<S, C> Clone for Messager<S, C>
 where
     S: Clone + Send + Sync + 'static,
-    C: GotchaConfig,
+    C: Clone + Send + Sync + 'static,
 {
     fn clone(&self) -> Self {
         Self { context: self.context.clone() }
@@ -78,7 +78,7 @@ where
 impl<S, C> Messager<S, C>
 where
     S: Clone + Send + Sync + 'static,
-    C: GotchaConfig,
+    C: Clone + Send + Sync + 'static,
 {
     /// Create a `Messager` bound to an application context.
     pub fn new(context: GotchaContext<S, C>) -> Self {
@@ -110,7 +110,7 @@ where
 impl<S, C> FromRef<GotchaContext<S, C>> for Messager<S, C>
 where
     S: Clone + Send + Sync + 'static,
-    C: GotchaConfig,
+    C: Clone + Send + Sync + 'static,
 {
     fn from_ref(context: &GotchaContext<S, C>) -> Self {
         Messager::new(context.clone())

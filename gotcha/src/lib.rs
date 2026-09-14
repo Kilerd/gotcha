@@ -119,7 +119,9 @@ pub use tower_http::services::{ServeDir, ServeFile};
 ///
 /// Handlers rarely name this directly — `#[state]` and `#[config]` make `State<AppState>` and
 /// `State<AppConfig>` extractable instead.
-pub struct GotchaContext<State: Clone + Send + Sync + 'static, Config: Clone + Send + Sync + 'static + Serialize + for<'de> Deserialize<'de> + Default> {
+/// This container imposes no loading or initialization bounds; runtime APIs require
+/// `Clone + Send + Sync + 'static` when sharing its values between handlers or tasks.
+pub struct GotchaContext<State, Config> {
     /// The loaded configuration.
     pub config: ConfigWrapper<Config>,
     /// The application state.
@@ -128,8 +130,7 @@ pub struct GotchaContext<State: Clone + Send + Sync + 'static, Config: Clone + S
 
 impl<State, Config> FromRef<GotchaContext<State, Config>> for ConfigWrapper<Config>
 where
-    State: Clone + Send + Sync + 'static,
-    Config: Clone + Send + Sync + 'static + Serialize + for<'de> Deserialize<'de> + Default,
+    Config: Clone,
 {
     fn from_ref(context: &GotchaContext<State, Config>) -> Self {
         context.config.clone()
@@ -138,21 +139,17 @@ where
 
 /// Lets a handler take `State<ServerConfig>` to read the bind address. `ServerConfig` is one of
 /// this crate's own types, so unlike the application's config this needs no attribute macro.
-impl<State, Config> FromRef<GotchaContext<State, Config>> for crate::config::ServerConfig
-where
-    State: Clone + Send + Sync + 'static,
-    Config: Clone + Send + Sync + 'static + Serialize + for<'de> Deserialize<'de> + Default,
-{
+impl<State, Config> FromRef<GotchaContext<State, Config>> for crate::config::ServerConfig {
     fn from_ref(context: &GotchaContext<State, Config>) -> Self {
         context.config.server.clone()
     }
 }
 
-/// Marker trait bundling the bounds every Gotcha application `Config` must meet.
+/// Compatibility bundle of the original configuration bounds.
 ///
-/// Blanket-implemented for every qualifying type. It exists so macro-generated
-/// code (the `#[state]` attribute) can bound the config type with a single path
-/// (`::gotcha::GotchaConfig`) instead of restating the serde bounds.
+/// Existing generic code can keep using this trait. Runtime containers, extractors, messages,
+/// and tasks do not require it; loading, serialization, and default construction impose their
+/// individual bounds only where needed.
 pub trait GotchaConfig: Clone + Send + Sync + 'static + Serialize + for<'de> Deserialize<'de> + Default {}
 impl<T> GotchaConfig for T where T: Clone + Send + Sync + 'static + Serialize + for<'de> Deserialize<'de> + Default {}
 
@@ -163,11 +160,16 @@ impl<T> GotchaConfig for T where T: Clone + Send + Sync + 'static + Serialize + 
 pub trait GotchaApp: Sized + Send + Sync {
     /// The application state, shared by every handler.
     type State: Clone + Send + Sync + 'static;
-    /// The application's own configuration, read from the top level of the config file.
-    type Config: Clone + Send + Sync + 'static + Serialize + for<'de> Deserialize<'de> + Default;
+    /// The application's own configuration. Loading via `config()`/`run()` additionally
+    /// requires `Deserialize`; `build_router()` accepts an already initialized context.
+    type Config: Clone + Send + Sync + 'static;
 
     /// Load the configuration. The default honours `GOTCHA_ACTIVE_PROFILE`.
-    fn config(&self) -> impl std::future::Future<Output = GotchaResult<ConfigWrapper<Self::Config>>> + Send {
+    /// This method's contract requires `Deserialize`, including when overridden.
+    fn config(&self) -> impl std::future::Future<Output = GotchaResult<ConfigWrapper<Self::Config>>> + Send
+    where
+        Self::Config: for<'de> Deserialize<'de>,
+    {
         async move {
             let config = GotchaConfigLoader::load::<ConfigWrapper<Self::Config>>(std::env::var("GOTCHA_ACTIVE_PROFILE").ok())?;
             Ok(config)
@@ -211,7 +213,12 @@ pub trait GotchaApp: Sized + Send + Sync {
     }
 
     /// Load configuration, build state and routes, then serve until shutdown.
-    fn run(self) -> impl std::future::Future<Output = GotchaResult<()>> + Send {
+    /// For configuration without `Deserialize`, assemble an explicit context using
+    /// [`Self::build_router`] or [`Gotcha::from_context`].
+    fn run(self) -> impl std::future::Future<Output = GotchaResult<()>> + Send
+    where
+        Self::Config: for<'de> Deserialize<'de>,
+    {
         async move {
             use std::net::{Ipv4Addr, SocketAddrV4};
             use std::str::FromStr;
