@@ -15,8 +15,9 @@
 # Unreleased: HTTP response contracts
 
 **`Schematic` no longer implies `Responsible`.** A data schema does not determine how a value is
-sent over HTTP. Custom return types implement `Responsible` separately, alongside `IntoResponse`;
-they can still derive `Schematic`. Ordinary JSON data should be returned as `Json<T>`.
+sent over HTTP. For automatic response inference, custom HTTP types implement `Responsible`
+separately, alongside `IntoResponse`; they can still derive `Schematic`.
+Ordinary JSON data should be returned as `Json<T>`.
 The HTTP-specific `Schematic::empty_body` hook has been removed; `()` has its own response impl.
 
 Built-in contracts now match the response representation:
@@ -48,10 +49,11 @@ compilation when constructed. Informational statuses, 204, 205, and 304 discard 
 headers. As with Axum's status tuple, the outer status overrides an inner error status too;
 prefer `Result<WithStatus<Json<User>, 201>, E>` to keep `E`'s status independent.
 
-**`Result<T, E>` now requires `Responsible` on both sides.** `ErrorResponsible` and its schema
-blanket impl have been removed. Migrate custom errors to `Responsible`, or use an explicit HTTP
-type such as `WithStatus<Json<ApiError>, 409>`. A schema-only error no longer automatically adds
-`default`. To retain a dynamic JSON error contract, implement `Responsible` using
+**Automatic inference for `Result<T, E>` requires `Responsible` on both sides.** `ErrorResponsible`
+and its schema blanket impl have been removed. Migrate custom errors to `Responsible`, use a fixed
+HTTP type such as `WithStatus<Json<ApiError>, 409>`, or declare the endpoint's complete error contract
+with `errors(...)` as shown below. A schema-only error no longer automatically adds `default`.
+To retain a dynamic JSON error contract, implement `Responsible` using
 `gotcha::response::default_response::<ApiError>("application/json", "Error")`.
 
 For runtime status tuples or additional responses, declare the contract on the handler:
@@ -78,6 +80,37 @@ Explicit entries replace inference for their status only. `drop_default` removes
 default, and at least one response must remain. These declarations change documentation only;
 the handler remains responsible for sending the declared status and content type. Declared body
 schemas participate in the same component collection and reference rewriting as inferred bodies.
+
+For a `thiserror` enum that already implements `IntoResponse`, use `errors(...)` to describe all
+errors for this endpoint without implementing `Responsible` on the enum:
+
+```rust,ignore
+#[api(errors(
+    response(status = 404, body = "ErrorBody", description = "Not found"),
+    response(status = 409, body = "ErrorBody", description = "Duplicate"),
+    response(status = 500, body = "ErrorBody", description = "Internal error")
+))]
+async fn create_user() -> Result<Json<User>, ApiError> {
+    // ApiError::into_response() sends the actual status and ErrorBody.
+}
+```
+
+`ErrorBody` is the serialized data type and must implement `Schematic`; `ApiError` itself needs
+neither `Schematic` nor `Responsible`. The success type still needs `Responsible`. Type aliases
+such as `type ApiResult<T> = Result<T, ApiError>` work as well. See the
+[README example](README.md#openapi-documentation) for a complete `thiserror` implementation.
+
+`errors(...)` requires a `Result` return type and at least one response, using the same declaration
+fields and validation as `responses(...)`. It completely replaces inference of the error branch,
+even if the error type implements `Responsible`. Another endpoint using the same enum can declare
+a different error set. The success contract is kept in full, including any dynamic `default`;
+`drop_default` is not needed to suppress error inference.
+
+Assembly order is: infer the success branch, merge the declared error alternatives, apply
+`responses(...)` overrides, then apply an explicit `drop_default`. If success and error branches
+share a status, their media types and schemas are combined using the same rules as ordinary
+`Result` inference. With no `errors(...)`, existing inference and `responses(...)` behavior are
+unchanged. None of these attributes changes runtime HTTP behavior.
 
 Public helpers in `gotcha::response` support custom contracts: `response::<T>(status, media,
 description)`, `empty_response(status, description)`, `default_response::<T>(media, description)`,
@@ -409,7 +442,7 @@ gotcha = { version = "0.4", features = ["openapi"] }
 ## 6. Smaller changes
 
 - **Validation rejections return `422`**, not `400`. `400` is still used for a malformed body. Every error now carries a readable `message`.
-- **`Result<T, E>` handlers** now require `Responsible` on both sides; see [HTTP response contracts](#unreleased-http-response-contracts) for migrating schema-only errors and the former `ErrorResponsible` trait.
+- **`Result<T, E>` handlers** require `Responsible` on both sides for automatic inference, or can use `#[api(errors(...))]` for explicit error documentation; see [HTTP response contracts](#unreleased-http-response-contracts) for migration.
 - **Handlers returning nothing** now compile (they previously failed with `E0782`) and document an empty body.
 - **`Operable`** gained `summary` and `security` fields; only relevant if you construct it by hand rather than through `#[api]`.
 - **axum 0.8** also removed `#[async_trait]` from its extractor traits. A hand-written `FromRequest` / `FromRequestParts` impl should drop the attribute and use a plain `async fn`.

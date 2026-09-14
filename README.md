@@ -244,12 +244,50 @@ async fn create() -> WithStatus<Json<String>, 201> {
 }
 ```
 
-`Result<T, E>` combines both HTTP response contracts. Custom response/error types can implement
-`Responsible` alongside `Schematic`, using the helpers in `gotcha::response`. For dynamic status
-codes, `#[api(responses(response(status = 404, body = "ApiError")), drop_default)]` declares the
-additional response and removes the inferred default. Declarations describe the contract; they
-do not change the handler's HTTP behavior. See [the migration guide](MIGRATION.md#unreleased-http-response-contracts)
-for custom errors, media types, and inference/override rules.
+`Result<T, E>` combines both HTTP response contracts by default. Custom response/error types can
+implement `Responsible` using the helpers in `gotcha::response`.
+
+To document errors on each endpoint, use `#[api(errors(...))]`. Only the success response is inferred;
+your error enum needs `IntoResponse` for HTTP behavior, with no `Responsible` implementation:
+
+```rust
+use gotcha::{Json, axum::{http::StatusCode, response::{IntoResponse, Response}}};
+
+#[derive(Debug, thiserror::Error)]
+enum ApiError {
+    #[error("User not found")]
+    NotFound,
+    #[error("User already exists")]
+    Conflict,
+}
+
+impl IntoResponse for ApiError {
+    fn into_response(self) -> Response {
+        let status = match self {
+            Self::NotFound => StatusCode::NOT_FOUND,
+            Self::Conflict => StatusCode::CONFLICT,
+        };
+        (status, Json(self.to_string())).into_response()
+    }
+}
+
+#[cfg_attr(feature = "openapi", gotcha::api(errors(
+    response(status = 404, body = "String", description = "User not found"),
+    response(status = 409, body = "String", description = "User already exists")
+)))]
+async fn create_user() -> Result<Json<String>, ApiError> {
+    Err(ApiError::Conflict)
+}
+```
+
+Each endpoint declares its complete error set; the same enum can be shared by endpoints with
+different errors. `body` describes the actual wire data, which may be separate from the error enum.
+`errors(...)` also supports return type aliases such as `ApiResult<T>`.
+
+Use `responses(...)` to add or override individual statuses while keeping response inference;
+`drop_default` explicitly removes an inferred default. Declarations only affect documentation.
+See [the migration guide](MIGRATION.md#unreleased-http-response-contracts) for media types and
+inference/override rules.
 
 ### Configuration System
 

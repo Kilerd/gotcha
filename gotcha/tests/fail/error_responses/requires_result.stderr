@@ -1,0 +1,11 @@
+error[E0277]: the trait bound `std::string::String: gotcha::response::ResultResponse` is not satisfied
+ --> tests/fail/error_responses/requires_result.rs:4:23
+  |
+4 | async fn handler() -> String {
+  |                       ^^^^^^ the trait `gotcha::response::ResultResponse` is not implemented for `std::string::String`
+  |
+help: the trait `gotcha::response::ResultResponse` is implemented for `Result<T, E>`
+ --> $WORKSPACE/gotcha_core/src/responsible.rs
+  |
+  | impl<T: Responsible, E> ResultResponse for Result<T, E> {
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

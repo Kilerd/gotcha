@@ -19,11 +19,25 @@ pub struct RouteMeta {
     /// Name of a security scheme required for this operation (empty scopes).
     security: Option<String>,
     responses: Option<ResponseDeclarations>,
+    errors: Option<ErrorDeclarations>,
     drop_default: Flag,
 }
 
 #[derive(Debug, Default)]
 struct ResponseDeclarations(Vec<ResponseMeta>);
+
+#[derive(Debug)]
+struct ErrorDeclarations(Vec<ResponseMeta>);
+
+impl FromMeta for ErrorDeclarations {
+    fn from_list(items: &[syn::NestedMeta]) -> darling::Result<Self> {
+        let ResponseDeclarations(responses) = ResponseDeclarations::from_list(items)?;
+        if responses.is_empty() {
+            return Err(darling::Error::custom("errors(...) must declare at least one response"));
+        }
+        Ok(Self(responses))
+    }
+}
 
 #[derive(Debug, FromMeta)]
 struct ResponseMeta {
@@ -91,6 +105,8 @@ pub(crate) fn request_handler(args: TokenStream, input_stream: TokenStream) -> T
     };
     let meta = args;
     let extra_responses: Vec<_> = meta.responses.unwrap_or_default().0.iter().map(ResponseMeta::tokens).collect();
+    let explicit_errors = meta.errors.is_some();
+    let error_responses: Vec<_> = meta.errors.into_iter().flat_map(|errors| errors.0).map(|response| response.tokens()).collect();
     let drop_default = meta.drop_default.is_present();
     let group = if let Some(group_name) = meta.group {
         quote! { Some(#group_name) }
@@ -153,22 +169,15 @@ pub(crate) fn request_handler(args: TokenStream, input_stream: TokenStream) -> T
             }
         })
         .collect();
-    let ret_pos = &input.sig.output;
-    let ret_schematic = match ret_pos {
-        // A handler with no return type returns `()`, which documents as 200 with no body.
-        // This used to be `( () as ::gotcha::Responsible)` — a cast to a *trait*, which does not
-        // compile (E0782), so such a handler could not be annotated at all.
-        ReturnType::Default => {
-            quote! {
-                <() as ::gotcha::Responsible>::response()
-            }
-        }
-
-        ReturnType::Type(_, ty) => {
-            quote! {
-                <#ty as ::gotcha::Responsible>::response()
-            }
-        }
+    let ret_type = match &input.sig.output {
+        // A handler without an explicit return type returns `()`.
+        ReturnType::Default => quote!(()),
+        ReturnType::Type(_, ty) => quote!(#ty),
+    };
+    let ret_responses = if explicit_errors {
+        quote!(<#ret_type as ::gotcha::response::ResultResponse>::success_responses())
+    } else {
+        quote!(<#ret_type as ::gotcha::Responsible>::response())
     };
 
     input.sig.inputs.iter_mut().for_each(|param| {
@@ -189,7 +198,9 @@ pub(crate) fn request_handler(args: TokenStream, input_stream: TokenStream) -> T
                 });
         static #ret_uuid_ident : ::gotcha::Lazy<Box<dyn Fn() -> ::gotcha::oas::Responses + Send + Sync + 'static>> = ::gotcha::Lazy::new(||{
             Box::new(|| {
-                let mut responses = #ret_schematic;
+                let mut responses = #ret_responses;
+                // Declared Err alternatives join the inferred Ok contract, including shared statuses.
+                #(::gotcha::response::merge_responses(&mut responses, #error_responses);)*
                 // Explicit declarations replace inference for their status only.
                 #(responses.data.extend((#extra_responses).data);)*
                 if #drop_default { responses.default = None; }
@@ -245,5 +256,18 @@ mod tests {
         ] {
             assert!(parse(invalid).is_err());
         }
+    }
+
+    #[test]
+    fn explicit_errors_require_nonempty_valid_response_declarations() {
+        let meta = parse(syn::parse_quote!(api(errors(
+            response(status = 404, body = "Problem", description = "Missing"),
+            response(status = 409, body = "Problem")
+        ))))
+        .unwrap();
+        assert_eq!(meta.errors.unwrap().0.len(), 2);
+        assert!(parse(syn::parse_quote!(api(errors()))).is_err());
+        // Both attributes use the same response validation; one invalid case checks the wiring.
+        assert!(parse(syn::parse_quote!(api(errors(response(status = 600))))).is_err());
     }
 }
