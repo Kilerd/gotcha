@@ -15,7 +15,7 @@ An enhanced web framework built on top of Axum, providing additional features an
 - 🔌 **WebSocket & SSE** - Real-time endpoints, re-exported and ready
 - 📁 **Static Files** - Serve static content effortlessly
 - ⏰ **Task Scheduling** - Cron and interval-based background tasks
-- 💌 **Message System** - Built-in inter-service communication
+- 💌 **Typed Commands** - Reusable messages with application state and configuration
 - ⚙️ **Smart Configuration** - Environment-based config with variable resolution
 - 🏗️ **Two APIs** - Choose between simple builder API or advanced trait-based API
 
@@ -414,6 +414,28 @@ Configuration supports:
 
   A single underscore stays part of the field name, so snake_case fields are addressable, and
   typed fields (numbers, booleans) parse the value rather than rejecting it.
+
+### Messages
+
+`Message<S, C>` groups a command's input, output, and handler. `Messager<S, C>` carries the
+application context and can be extracted as `State<Messager<S, C>>`. This optional convention lets
+HTTP handlers, scheduled tasks, and other commands reuse the same operations. Ordinary async
+service methods remain equally valid; no message feature flag is required.
+
+`messager.send(command).await` runs directly in the calling future. There is no queue, transport,
+retry, or new task. Results and panics propagate to the caller; dropping the future cancels its
+in-flight handler without undoing completed side effects.
+
+`messager.spawn(command)` starts a Tokio task and returns `JoinHandle<Command::Output>`. Await it
+to observe the result or a `JoinError` for panic/cancellation. If the command returns `Result<T, E>`,
+the application error stays in the inner result. Call `abort()` and then await the handle to request
+cancellation and wait for completion. Dropping the handle detaches the task, even when caused by
+cancelling the future that owns it; application shutdown does not automatically wait for it.
+
+To include a command in a scheduled execution's shutdown boundary, await `send` inside that
+execution. See the [message example](examples/message/src/main.rs) for nested commands and joining
+a spawned result, and the [migration guide](MIGRATION.md#unreleased-message-task-handles) for the
+changed `spawn` return type.
 
 ### Task Scheduling
 

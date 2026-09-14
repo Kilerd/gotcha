@@ -1,5 +1,6 @@
 # Migration Guide
 
+- [Unreleased: message task handles](#unreleased-message-task-handles)
 - [Unreleased: static OpenAPI descriptors](#unreleased-static-openapi-descriptors)
 - [Unreleased: owned scheduled tasks](#unreleased-owned-scheduled-tasks)
 - [Unreleased: shared startup](#unreleased-shared-startup)
@@ -13,6 +14,46 @@
 - [Unreleased: ordered configuration sources](#unreleased-ordered-configuration-sources)
 - [0.3 → 0.4](#03--04) — **every application must edit its route paths and configuration file**
 - [0.2 → 0.3: API simplification](#02--03-api-simplification)
+
+---
+
+# Unreleased: message task handles
+
+`Message` and `Messager` remain available in the same module and root exports, without a feature
+flag. They provide a typed command convention and application context, rather than a queue or
+transport. `send` still executes directly in the caller's future; its output (including application
+errors), panic, and cancellation remain at that boundary.
+
+`Messager::spawn` now returns `tokio::task::JoinHandle<M::Output>` and accepts any message output,
+including `Result<T, E>`. Previously it only accepted `Output = ()` and discarded the handle.
+
+```rust,no_run
+# use gotcha::{Message, Messager};
+# async fn example<M: Message<(), (), Output = Result<u32, std::io::Error>>>(
+#     messager: Messager<(), ()>, command: M,
+# ) -> Result<(), Box<dyn std::error::Error>> {
+let task = messager.spawn(command);
+let output = task.await?; // Task panic/cancellation is a JoinError.
+let value = output?;     // Application errors stay in the message's Result.
+# let _ = value;
+# Ok(())
+# }
+```
+
+Existing calls with a semicolon still compile. Code requiring a `()` return, such as a function
+ending in `messager.spawn(command)` without a semicolon or a stored function pointer, must adapt
+to the new return type. To explicitly keep the previous detached behavior, use
+`drop(messager.spawn(command));`.
+
+Retaining a handle allows joining or aborting; it does **not** enable automatic cancellation on
+drop. Dropping it, including when its owning future is cancelled, detaches the task and loses its
+result. To cancel, call `task.abort()` and then `task.await` to observe completion. Abort requires
+the task to yield and can race with normal completion; already performed side effects remain.
+
+These tasks are not registered with the application's shutdown or scheduler ownership. Await
+`messager.send(command)` inside a scheduled execution when the command should share that execution's
+lifetime. Commands that spawn further tasks must manage them separately. No queue, retry, or extra
+task has been introduced: `spawn` returns the handle from its existing `tokio::spawn` call.
 
 ---
 
