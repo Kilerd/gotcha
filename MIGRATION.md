@@ -1,5 +1,6 @@
 # Migration Guide
 
+- [Unreleased: static OpenAPI descriptors](#unreleased-static-openapi-descriptors)
 - [Unreleased: owned scheduled tasks](#unreleased-owned-scheduled-tasks)
 - [Unreleased: shared startup](#unreleased-shared-startup)
 - [Unreleased: runtime type bounds](#unreleased-runtime-type-bounds)
@@ -12,6 +13,42 @@
 - [Unreleased: ordered configuration sources](#unreleased-ordered-configuration-sources)
 - [0.3 → 0.4](#03--04) — **every application must edit its route paths and configuration file**
 - [0.2 → 0.3: API simplification](#02--03-api-simplification)
+
+---
+
+# Unreleased: static OpenAPI descriptors
+
+`#[api]` keeps its existing syntax and OpenAPI behavior. Its generated `Operable` now stores
+constructor function pointers directly, without `Lazy`, boxed closures, or a runtime constructor
+vector. The macro no longer needs UUID-named helper statics or a UUID dependency.
+
+Only code using the low-level descriptor types directly needs to migrate:
+
+| Public type or field | Previous representation | New representation |
+| --- | --- | --- |
+| `ParamConstructor` | `Box<dyn Fn(String) -> ParamType + Send + Sync>` | `fn(String) -> ParamType` |
+| `Operable::parameters` | `&'static Lazy<Vec<ParamConstructor>>` | `&'static [ParamConstructor]` |
+| `Operable::responses` | `&'static Lazy<Box<dyn Fn() -> Responses + Send + Sync>>` | `fn() -> Responses` |
+
+Replace lazy constructor collections with a static slice. Replace a lazy boxed response constructor
+with a function or a non-capturing closure. For example, these fields can be written directly in a
+static `Operable` initializer:
+
+```rust,ignore
+parameters: &[<Path<u32> as ParameterProvider>::generate],
+responses: <String as Responsible>::response,
+```
+
+Capturing closures cannot be stored in the new function-pointer fields. Apply configuration-dependent
+changes through the existing `.openapi(move |spec| ...)` transform instead. User transforms still
+support captured state. `ParameterProvider::generate`, `ParamType`, and the public `gotcha::Lazy`
+and `gotcha::Either` re-exports retain their existing interfaces.
+
+Static constructor storage does not cache generated parameters, responses, schemas, or complete
+OpenAPI documents. Constructors still run inside each document's schema collection scope, preserving
+path-specific parameter names, independent documents, generic DTOs, recursive references, and
+`errors(...)` / `responses(...)` behavior. This is a structural simplification; no benchmarked
+performance improvement is claimed.
 
 ---
 

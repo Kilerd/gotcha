@@ -1,7 +1,6 @@
 use proc_macro::TokenStream;
-use quote::{format_ident, quote};
+use quote::quote;
 use syn::{parse_macro_input, AttributeArgs, FnArg, ItemFn, ReturnType};
-use uuid::Uuid;
 
 use darling::util::Flag;
 
@@ -140,9 +139,6 @@ pub(crate) fn request_handler(args: TokenStream, input_stream: TokenStream) -> T
         }
     };
 
-    let random_uuid = Uuid::new_v4().simple().to_string();
-    let uuid_ident = format_ident!("__PARAM_{}", random_uuid);
-    let ret_uuid_ident = format_ident!("__RET_{}", random_uuid);
     let params_token: Vec<proc_macro2::TokenStream> = input
         .sig
         .inputs
@@ -165,7 +161,7 @@ pub(crate) fn request_handler(args: TokenStream, input_stream: TokenStream) -> T
                     return None;
                 }
                 let ty = &typed.ty;
-                Some(quote! { Box::new(|path:String| {<#ty as ::gotcha::ParameterProvider>::generate(path) }) })
+                Some(quote! { <#ty as ::gotcha::ParameterProvider>::generate })
             }
         })
         .collect();
@@ -191,23 +187,6 @@ pub(crate) fn request_handler(args: TokenStream, input_stream: TokenStream) -> T
 
         #input
 
-        static #uuid_ident : ::gotcha::Lazy<Vec<Box<dyn Fn(String) -> ::gotcha::Either<Vec<::gotcha::oas::Parameter>, ::gotcha::oas::RequestBody> + Send + Sync + 'static>>> = ::gotcha::Lazy::new(||{
-                    vec![
-                    #( #params_token , )*
-                ]
-                });
-        static #ret_uuid_ident : ::gotcha::Lazy<Box<dyn Fn() -> ::gotcha::oas::Responses + Send + Sync + 'static>> = ::gotcha::Lazy::new(||{
-            Box::new(|| {
-                let mut responses = #ret_responses;
-                // Declared Err alternatives join the inferred Ok contract, including shared statuses.
-                #(::gotcha::response::merge_responses(&mut responses, #error_responses);)*
-                // Explicit declarations replace inference for their status only.
-                #(responses.data.extend((#extra_responses).data);)*
-                if #drop_default { responses.default = None; }
-                assert!(!responses.data.is_empty() || responses.default.is_some(), "OpenAPI operation must declare at least one response");
-                responses
-            })
-        });
         ::gotcha::inventory::submit! {
             ::gotcha::Operable {
                 type_name: concat!(module_path!(), "::", #fn_ident_string),
@@ -217,8 +196,17 @@ pub(crate) fn request_handler(args: TokenStream, input_stream: TokenStream) -> T
                 description: #docs,
                 deprecated: #deprecated,
                 security: #security,
-                parameters: &#uuid_ident,
-                responses: &#ret_uuid_ident,
+                parameters: &[#(#params_token,)*],
+                responses: || {
+                    let mut responses = #ret_responses;
+                    // Declared Err alternatives join the inferred Ok contract, including shared statuses.
+                    #(::gotcha::response::merge_responses(&mut responses, #error_responses);)*
+                    // Explicit declarations replace inference for their status only.
+                    #(responses.data.extend((#extra_responses).data);)*
+                    if #drop_default { responses.default = None; }
+                    assert!(!responses.data.is_empty() || responses.default.is_some(), "OpenAPI operation must declare at least one response");
+                    responses
+                },
             }
         }
     };
