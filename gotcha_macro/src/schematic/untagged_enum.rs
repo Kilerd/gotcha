@@ -116,6 +116,7 @@ pub(crate) fn handler(
                         nullable: None,
                         description: Self::doc(),
                         extras: Default::default(),
+                        ..#core::oas::Schema::default()
                     },
                     required: Self::required(),
                 };

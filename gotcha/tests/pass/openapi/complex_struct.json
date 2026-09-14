@@ -8,15 +8,27 @@
       "type": "integer"
     },
     "option_string": {
-      "type": "string",
-      "nullable": true
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
     },
     "data": {
-      "type": "array",
-      "items": {
-        "type": "integer"
-      },
-      "nullable": true
+      "anyOf": [
+        {
+          "type": "array",
+          "items": {
+            "type": "integer"
+          }
+        },
+        {
+          "type": "null"
+        }
+      ]
     }
   },
   "required": [

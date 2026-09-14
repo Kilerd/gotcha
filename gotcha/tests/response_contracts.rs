@@ -171,7 +171,7 @@ async fn response_contracts_match_http_and_collect_explicit_components() {
     assert_eq!(spec["paths"]["/text"]["get"]["responses"]["200"]["description"], "Plain greeting");
     assert_eq!(
         spec["paths"]["/binary"]["get"]["responses"]["200"]["content"]["application/octet-stream"]["schema"],
-        json!({"type":"string","format":"binary"})
+        json!({})
     );
     assert!(spec["components"]["schemas"]["Record"].is_object());
     assert!(spec["components"]["schemas"]["Problem"].is_object());

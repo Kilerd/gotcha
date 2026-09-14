@@ -3,7 +3,7 @@
 //! custom HTTP types using [`response`], [`default_response`], and [`empty_response`].
 
 use crate::Schematic;
-use oas::{MediaType, Referenceable, Response, Responses, Schema};
+use oas::{MediaType, Referenceable, Response, Responses, Schema, SchemaValue};
 use std::collections::{btree_map::Entry, BTreeMap};
 use std::convert::Infallible;
 
@@ -33,10 +33,11 @@ fn body_response(schema: Schema, media_type: &str, description: impl Into<String
         content: Some(BTreeMap::from([(
             media_type.into(),
             MediaType {
-                schema: Some(Referenceable::Data(schema)),
+                schema: Some(schema.into()),
                 example: None,
                 examples: None,
                 encoding: None,
+                item_schema: None,
             },
         )])),
         links: None,
@@ -80,6 +81,27 @@ fn single_response(status: u16, response: Response) -> Responses {
     }
 }
 
+fn merge_schemas(target: &mut Option<SchemaValue>, incoming: Option<SchemaValue>) {
+    let left = serde_json::to_value(&*target).unwrap();
+    let right = serde_json::to_value(&incoming).unwrap();
+    if left == right {
+        return;
+    }
+    // An absent schema admits everything. Boolean schemas are actual constraints,
+    // and anyOf preserves them along with object schemas and reference siblings.
+    *target = if left.is_null() || right.is_null() {
+        None
+    } else {
+        Some(
+            Schema {
+                extras: BTreeMap::from([("anyOf".into(), serde_json::json!([left, right]))]),
+                ..Schema::default()
+            }
+            .into(),
+        )
+    };
+}
+
 fn merge_response(target: &mut Referenceable<Response>, other: Referenceable<Response>) {
     if serde_json::to_value(&*target).unwrap() == serde_json::to_value(&other).unwrap() {
         return;
@@ -104,22 +126,8 @@ fn merge_response(target: &mut Referenceable<Response>, other: Referenceable<Res
             }
             Entry::Occupied(mut entry) => {
                 let current = entry.get_mut();
-                let left = serde_json::to_value(&current.schema).unwrap();
-                let right = serde_json::to_value(&incoming.schema).unwrap();
-                if left != right {
-                    // A missing schema is unconstrained. anyOf allows overlapping alternatives.
-                    current.schema = if left.is_null() || right.is_null() {
-                        None
-                    } else {
-                        Some(Referenceable::Data(Schema {
-                            _type: None,
-                            format: None,
-                            nullable: None,
-                            description: None,
-                            extras: BTreeMap::from([("anyOf".into(), serde_json::json!([left, right]))]),
-                        }))
-                    };
-                }
+                merge_schemas(&mut current.schema, incoming.schema);
+                merge_schemas(&mut current.item_schema, incoming.item_schema);
                 if let Some(examples) = incoming.examples {
                     current.examples.get_or_insert_default().extend(examples);
                 }
@@ -135,7 +143,8 @@ fn merge_response(target: &mut Referenceable<Response>, other: Referenceable<Res
 }
 
 /// Union response alternatives. Different schemas for the same status/media type become `anyOf`;
-/// identical definitions are reused. Later header, link, and example keys win. Distinct response-level
+/// identical definitions are reused. This applies to whole-body and stream-item schemas.
+/// Later header, link, and example keys win. Distinct response-level
 /// `$ref`s cannot be combined and panic; schema references inside inline responses are supported.
 pub fn merge_responses(target: &mut Responses, other: Responses) {
     for (status, response) in other.data {
@@ -217,8 +226,9 @@ mod axum_responses {
     macro_rules! binary_response {
         ($($ty:ty),* $(,)?) => { $(impl Responsible for $ty {
             fn response() -> Responses {
-                single_response(200, body_response(Schema { _type: Some("string".into()), format: Some("binary".into()),
-                    nullable: None, description: None, extras: BTreeMap::new(), }, "application/octet-stream", "binary response"))
+                // In OpenAPI 3.2 the media type describes unencoded binary content.
+                // A string schema would constrain it as a JSON string instead.
+                single_response(200, body_response(Schema::default(), "application/octet-stream", "binary response"))
             }
         })* };
     }
@@ -251,6 +261,31 @@ impl<T: Responsible, E: Responsible> Responsible for Result<T, E> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn response_union_preserves_boolean_and_stream_item_schemas() {
+        use serde_json::json;
+        let make = |schema, item| {
+            serde_json::from_value::<Responses>(json!({"200": {
+                "description": "stream",
+                "content": {"application/jsonl": {"schema": schema, "itemSchema": item}}
+            }}))
+            .unwrap()
+        };
+        let item = json!({"$ref": "#/components/schemas/Item", "description": "First item"});
+        let mut responses = make(json!(true), item.clone());
+        merge_responses(&mut responses, make(json!(false), json!({"type": "null"})));
+        let value = serde_json::to_value(&responses).unwrap();
+        let media = &value["200"]["content"]["application/jsonl"];
+        assert_eq!(media["schema"], json!({"anyOf": [true, false]}));
+        assert_eq!(media["itemSchema"], json!({"anyOf": [item, {"type": "null"}]}));
+
+        merge_responses(&mut responses, make(json!(null), json!(null)));
+        let value = serde_json::to_value(responses).unwrap();
+        let media = &value["200"]["content"]["application/jsonl"];
+        assert!(media.get("schema").is_none());
+        assert!(media.get("itemSchema").is_none());
+    }
 
     #[test]
     fn success_inference_preserves_the_contract_without_consulting_the_error() {

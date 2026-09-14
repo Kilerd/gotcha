@@ -17,5 +17,5 @@ fn validation_uses_gotchas_trait_and_schema_support() {
     assert!(gotcha::Validate::validate(&Request { name: "Ada".into() }).is_ok());
     let fields = <Request as gotcha::Schematic>::fields();
     assert_eq!(fields[0].1.schema.extras["minLength"], 1);
-    assert_eq!(fields[0].1.schema.extras["example"], "Ada");
+    assert_eq!(fields[0].1.schema.extras["examples"][0], "Ada");
 }

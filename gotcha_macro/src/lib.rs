@@ -109,6 +109,7 @@ pub fn api(args: TokenStream, input_stream: TokenStream) -> TokenStream {
 ///
 /// An explicit `description` overrides the field's doc comment, and `example` /
 /// `default` preserve their JSON type (`example = 42` stays a number, not `"42"`).
+/// The `example` attribute emits an OpenAPI 3.2 schema `examples` array.
 ///
 /// Validation constraints belong in `#[validate(...)]` (the validator crate), not `#[schematic]`,
 /// so a rule is written once. Where they map cleanly they are also reflected in the schema:

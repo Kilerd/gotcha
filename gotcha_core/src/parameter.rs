@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 
 use axum::extract::{Extension, Json, Path, Query, Request, State};
 use either::Either;
-use oas::{MediaType, Parameter, ParameterIn, Referenceable, RequestBody, Schema};
+use oas::{MediaType, Parameter, ParameterIn, RequestBody, Schema};
 
 use crate::Schematic;
 
@@ -33,7 +33,7 @@ fn build_param(name: String, _in: ParameterIn, required: bool, schema: Schema, d
         style: None,
         explode: None,
         allow_reserved: None,
-        schema: Some(Referenceable::Data(schema)),
+        schema: Some(schema.into()),
         example: None,
         examples: None,
         content: None,
@@ -137,10 +137,11 @@ impl<T: Schematic> ParameterProvider for Json<T> {
         contents.insert(
             "application/json".to_owned(),
             MediaType {
-                schema: Some(Referenceable::Data(schema.schema)),
+                schema: Some(schema.schema.into()),
                 example: None,
                 examples: None,
                 encoding: None,
+                item_schema: None,
             },
         );
         let req_body = RequestBody {
@@ -198,11 +199,12 @@ impl ParameterProvider for axum::http::HeaderMap {}
 impl<T: axum_extra::headers::Header> ParameterProvider for axum_extra::TypedHeader<T> {
     fn generate(_url: String) -> Either<Vec<Parameter>, RequestBody> {
         let schema = Schema {
-            _type: Some("string".to_string()),
+            _type: Some("string".into()),
             format: None,
             nullable: None,
             description: None,
             extras: Default::default(),
+            ..Schema::default()
         };
         Either::Left(vec![build_param(T::name().as_str().to_string(), ParameterIn::Header, true, schema, None)])
     }
@@ -240,6 +242,7 @@ impl ParameterProvider for axum::extract::multipart::Multipart {
                 example: None,
                 examples: None,
                 encoding: None,
+                item_schema: None,
             },
         );
 

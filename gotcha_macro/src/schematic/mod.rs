@@ -178,7 +178,7 @@ impl ValidateConstraints {
                             match name.as_str() {
                                 "min" => c.minimum = lit_to_f64(lit),
                                 "max" => c.maximum = lit_to_f64(lit),
-                                // OpenAPI 3.0 models exclusivity as a `minimum` + `exclusiveMinimum: true` pair.
+                                // JSON Schema stores exclusive bounds as numbers.
                                 "exclusive_min" => {
                                     c.minimum = lit_to_f64(lit);
                                     c.exclusive_minimum = true;
@@ -297,16 +297,12 @@ impl ParameterStructFieldOpt {
         // still wins on any overlap (e.g. `format`).
         let validated = ValidateConstraints::from_attrs(&self.attrs);
         if let Some(min) = validated.minimum {
-            customizations.push(extra(core, "minimum", quote! { #min }));
-            if validated.exclusive_minimum {
-                customizations.push(extra(core, "exclusiveMinimum", quote! { true }));
-            }
+            let key = if validated.exclusive_minimum { "exclusiveMinimum" } else { "minimum" };
+            customizations.push(extra(core, key, quote! { #min }));
         }
         if let Some(max) = validated.maximum {
-            customizations.push(extra(core, "maximum", quote! { #max }));
-            if validated.exclusive_maximum {
-                customizations.push(extra(core, "exclusiveMaximum", quote! { true }));
-            }
+            let key = if validated.exclusive_maximum { "exclusiveMaximum" } else { "maximum" };
+            customizations.push(extra(core, key, quote! { #max }));
         }
         let (len_min, len_max) = if is_collection(&self.ty) {
             ("minItems", "maxItems")
@@ -332,7 +328,7 @@ impl ParameterStructFieldOpt {
         // `example` / `default` keep their JSON type when converted from the parsed literal.
         if let Some(v) = &self.example {
             let value = &v.0;
-            customizations.push(quote! { field_schema.schema.extras.insert("example".to_string(), #core::serde_json::Value::from(#value)); });
+            customizations.push(quote! { field_schema.schema.extras.insert("examples".to_string(), #core::serde_json::json!([#value])); });
         }
         if let Some(v) = &self.default {
             let value = &v.0;

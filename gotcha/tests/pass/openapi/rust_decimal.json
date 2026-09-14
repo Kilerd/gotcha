@@ -9,10 +9,19 @@
       "format": "decimal"
     },
     "discount": {
-      "type": "string",
-      "format": "decimal",
-      "nullable": true
+      "anyOf": [
+        {
+          "type": "string",
+          "format": "decimal"
+        },
+        {
+          "type": "null"
+        }
+      ]
     }
   },
-  "required": ["name", "price"]
+  "required": [
+    "name",
+    "price"
+  ]
 }

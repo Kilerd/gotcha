@@ -9,7 +9,7 @@
 //!
 //! - Automatic OpenAPI spec generation from route definitions
 //! - Support for operation parameters, request bodies, and responses
-//! - Built-in Redoc and Scalar UI for API documentation viewing
+//! - Scalar UI for API documentation viewing
 //! - Grouping operations by tags
 //! - Parameter validation and type information
 //!
@@ -29,7 +29,8 @@
 //! }
 //! ```
 //!
-//! The default endpoint configuration serves `/openapi.json`, `/redoc`, and `/scalar`.
+//! Generated documents use OpenAPI 3.2.0. The default endpoints are `/openapi.json` and `/scalar`.
+//! The legacy Redoc UI is disabled by default because it does not support 3.2.
 //! Use [`crate::GotchaRouter::into_openapi`] to export the document without HTTP.
 
 use std::collections::{BTreeMap, HashMap};
@@ -177,7 +178,7 @@ pub fn generate_openapi(operables: HashMap<(String, Method), &'static Operable>)
     });
 
     let components = (!schemas.is_empty()).then(|| Components {
-        schemas: Some(schemas.into_iter().map(|(name, schema)| (name, Referenceable::Data(schema))).collect()),
+        schemas: Some(schemas.into_iter().map(|(name, schema)| (name, schema.into())).collect()),
         responses: None,
         parameters: None,
         examples: None,
@@ -202,7 +203,7 @@ pub fn generate_openapi(operables: HashMap<(String, Method), &'static Operable>)
         components,
         security: None,
         tags: None,
-        openapi: "3.0.0".to_string(),
+        openapi: "3.2.0".to_string(),
         external_docs: None,
         extras: None,
     };
@@ -212,7 +213,7 @@ pub fn generate_openapi(operables: HashMap<(String, Method), &'static Operable>)
             added_tags.iter().for_each(|tag| {
                 if let Some(tags) = &mut spec.tags {
                     if !tags.iter().any(|each| each.name.eq(tag)) {
-                        tags.push(Tag::new(tag, None))
+                        tags.push(Tag::new(tag, None::<String>))
                     }
                 }
             })
