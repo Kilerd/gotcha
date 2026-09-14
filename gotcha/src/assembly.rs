@@ -21,7 +21,7 @@ pub(crate) fn assemble<State: Clone + Send + Sync + 'static>(
     Ok(finish(router))
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "http1"))]
 mod tests {
     use axum::{
         body::{to_bytes, Body},

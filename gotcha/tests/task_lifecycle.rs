@@ -1,4 +1,4 @@
-#![cfg(feature = "task")]
+#![cfg(all(feature = "task", feature = "http1"))]
 
 use gotcha::{ConfigWrapper, Gotcha, GotchaApp, GotchaContext, GotchaError, GotchaResult, GotchaRouter, ServerConfig, State, TaskScheduler};
 use std::future::Future;

@@ -86,6 +86,7 @@ async fn runtime_context_supports_extractors_messages_and_http_without_loading_b
     assert_eq!(requests.load(Ordering::SeqCst), 8);
 }
 
+#[cfg(feature = "http1")]
 #[test]
 fn initialized_builders_can_reach_every_serving_entry_point() {
     fn assert_send<T: Send>(_: T) {}

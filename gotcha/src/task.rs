@@ -134,6 +134,7 @@ where
         RunningTasks::start(self.tasks, self.shutdown)
     }
 
+    #[cfg(feature = "http1")]
     pub(crate) fn into_tasks(self) -> Vec<ScheduledTask> {
         self.tasks
     }

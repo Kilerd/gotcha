@@ -8,6 +8,8 @@
 //! ```no_run
 //! use gotcha::prelude::*;
 //!
+//! # #[cfg(not(feature = "http1"))] fn main() {}
+//! # #[cfg(feature = "http1")]
 //! #[tokio::main]
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {
 //!     Gotcha::new()

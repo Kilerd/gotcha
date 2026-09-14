@@ -9,6 +9,8 @@
 //! ```no_run
 //! use gotcha::prelude::*;
 //!
+//! # #[cfg(not(feature = "http1"))] fn main() {}
+//! # #[cfg(feature = "http1")]
 //! #[tokio::main]
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {
 //!     Gotcha::new()
@@ -20,6 +22,7 @@
 //! }
 //! ```
 
+#[cfg(feature = "http1")]
 use std::net::SocketAddr;
 
 use axum::extract::Request;
@@ -30,11 +33,17 @@ use serde::{Deserialize, Serialize};
 use tower_layer::Layer;
 use tower_service::Service;
 
-use crate::config::{Config, ConfigBuilder, ConfigErrorPolicy, ConfigWrapper, GotchaConfigLoader};
-use crate::error::{GotchaError, GotchaResult};
+use crate::config::{Config, ConfigBuilder, ConfigErrorPolicy, ConfigWrapper};
+#[cfg(any(feature = "http1", test))]
+use crate::error::GotchaError;
+use crate::error::GotchaResult;
 use crate::router::{GotchaRouter, Responder};
 use crate::routing::MethodRouter;
-use crate::startup::{self, ListenOptions};
+#[cfg(feature = "http1")]
+use crate::startup;
+use crate::startup::ListenOptions;
+#[cfg(any(feature = "http1", test))]
+use crate::GotchaConfigLoader;
 use crate::GotchaContext;
 
 /// A one-shot closure that registers background tasks on the scheduler when the
@@ -46,14 +55,18 @@ type AppLayer = Box<dyn FnOnce(axum::Router) -> axum::Router + Send>;
 
 enum StateSource<S> {
     Provided(S),
-    Default(fn() -> S),
+    Default {
+        #[cfg(feature = "http1")]
+        create: fn() -> S,
+    },
 }
 
+#[cfg(feature = "http1")]
 impl<S: Clone> StateSource<S> {
     fn resolve(&self) -> S {
         match self {
             Self::Provided(state) => state.clone(),
-            Self::Default(create) => create(),
+            Self::Default { create } => create(),
         }
     }
 }
@@ -62,6 +75,7 @@ enum Configuration<C> {
     Provided(ConfigWrapper<C>),
     Deferred {
         sources: Option<ConfigBuilder>,
+        #[cfg(any(feature = "http1", test))]
         load: fn(Option<&ConfigBuilder>) -> GotchaResult<ConfigWrapper<C>>,
     },
 }
@@ -73,6 +87,7 @@ impl<C> Configuration<C> {
     {
         Self::Deferred {
             sources: None,
+            #[cfg(any(feature = "http1", test))]
             load: load_config::<C>,
         }
     }
@@ -84,6 +99,7 @@ impl<C> Configuration<C> {
         }
     }
 
+    #[cfg(any(feature = "http1", test))]
     fn resolve(&self) -> GotchaResult<ConfigWrapper<C>>
     where
         C: Clone,
@@ -95,6 +111,7 @@ impl<C> Configuration<C> {
     }
 }
 
+#[cfg(any(feature = "http1", test))]
 fn load_config<C: DeserializeOwned>(sources: Option<&ConfigBuilder>) -> GotchaResult<ConfigWrapper<C>> {
     if let Some(builder) = sources {
         return Ok(builder.clone().build()?);
@@ -180,7 +197,13 @@ impl Gotcha {
         S: Clone + Send + Sync + 'static + Default,
         C: Clone + Send + Sync + 'static + DeserializeOwned,
     {
-        Gotcha::from_sources(StateSource::Default(S::default), Configuration::automatic())
+        Gotcha::from_sources(
+            StateSource::Default {
+                #[cfg(feature = "http1")]
+                create: S::default,
+            },
+            Configuration::automatic(),
+        )
     }
 
     /// Create a Gotcha builder with custom state type and default config
@@ -830,6 +853,7 @@ where
     }
 
     /// Start the server and listen on the configured address
+    /// Requires the `http1` feature, which is enabled by default.
     ///
     /// # Example
     /// ```no_run
@@ -844,6 +868,8 @@ where
     ///     Ok(())
     /// }
     /// ```
+    #[cfg(feature = "http1")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "http1")))]
     pub async fn listen<A>(self, addr: A) -> GotchaResult<()>
     where
         A: AsRef<str>,
@@ -854,6 +880,9 @@ where
     }
 
     /// Start the server on a specific socket address
+    /// Requires the `http1` feature, which is enabled by default.
+    #[cfg(feature = "http1")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "http1")))]
     pub async fn listen_on(self, addr: SocketAddr) -> GotchaResult<()> {
         startup::run(self, Some(addr)).await
     }
@@ -861,11 +890,15 @@ where
     /// Start using `host`/`port` overrides, then loaded server settings, then framework defaults.
     /// Bind before initializing state, assembling routes, or registering tasks. The context
     /// contains the effective bound address, including the port chosen for port 0.
+    /// Requires the `http1` feature, which is enabled by default.
+    #[cfg(feature = "http1")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "http1")))]
     pub async fn run(self) -> GotchaResult<()> {
         startup::run(self, None).await
     }
 }
 
+#[cfg(feature = "http1")]
 impl<S, C> startup::Application for Gotcha<S, C>
 where
     S: Clone + Send + Sync + 'static,
@@ -929,6 +962,8 @@ impl Gotcha<EmptyState, EmptyConfig> {
     /// ```no_run
     /// use gotcha::prelude::*;
     ///
+    /// # #[cfg(not(feature = "http1"))] fn main() {}
+    /// # #[cfg(feature = "http1")]
     /// #[tokio::main]
     /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
     ///     Gotcha::quick_start()
@@ -948,8 +983,10 @@ impl Gotcha<EmptyState, EmptyConfig> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(feature = "http1")]
     use crate::ServerConfig;
 
+    #[cfg(feature = "http1")]
     #[tokio::test]
     async fn provided_state_does_not_construct_the_unused_default() {
         #[derive(Clone)]
@@ -963,6 +1000,7 @@ mod tests {
         startup::prepare(&mut app, Some("127.0.0.1:0".parse().unwrap())).await.unwrap();
     }
 
+    #[cfg(feature = "http1")]
     #[tokio::test]
     async fn nested_and_merged_routes_share_the_application_context() {
         use axum::{

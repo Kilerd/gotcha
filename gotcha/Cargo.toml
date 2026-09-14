@@ -22,6 +22,7 @@ doctest = true
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [features]
 default = ["http1"]
+# Enables the framework's HTTP serving entry points; route construction is always available.
 http1 = ["axum/http1", "axum/tokio"]
 prometheus = ["dep:axum-prometheus"]
 openapi = ["dep:oas", "dep:gotcha_core", "gotcha_core/axum"]

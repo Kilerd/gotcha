@@ -1,6 +1,7 @@
 //! Configuration descriptions must retain their behavior when cloned, restored, or used to start an app.
 
 use gotcha::config::{ConfigBuilder, ConfigSource, ConfigState};
+#[cfg(feature = "http1")]
 use gotcha::{Gotcha, GotchaError};
 use serde_json::{json, Value};
 
@@ -118,6 +119,7 @@ fn public_source_descriptions_can_be_constructed_directly() {
     assert_roundtrip(ConfigBuilder::from_state(state), json!({"base": "configured", "value": "configured"}));
 }
 
+#[cfg(feature = "http1")]
 #[tokio::test]
 async fn explicit_source_errors_reach_the_server_startup_caller() {
     let dir = tempfile::tempdir().unwrap();

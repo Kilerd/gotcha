@@ -38,6 +38,7 @@ impl<C> ConfigErrorPolicy<C> {
         Self::Fallback(ConfigWrapper::default)
     }
 
+    #[cfg(any(feature = "http1", test))]
     pub(crate) fn apply(self, result: crate::GotchaResult<ConfigWrapper<C>>) -> crate::GotchaResult<ConfigWrapper<C>> {
         match (result, self) {
             (Ok(config), _) => Ok(config),

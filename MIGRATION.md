@@ -1,5 +1,6 @@
 # Migration Guide
 
+- [Unreleased: HTTP serving feature boundary](#unreleased-http-serving-feature-boundary)
 - [Unreleased: derive dependency paths](#unreleased-derive-dependency-paths)
 - [Unreleased: explicit OpenAPI endpoints](#unreleased-explicit-openapi-endpoints)
 - [Unreleased: message task handles](#unreleased-message-task-handles)
@@ -18,6 +19,19 @@
 - [0.2 → 0.3: API simplification](#02--03-api-simplification)
 
 ---
+
+# Unreleased: HTTP serving feature boundary
+
+`http1` remains enabled by default. Applications using default features keep the same startup
+behavior. The builder's `run`, `listen`, and `listen_on`, and the trait's `GotchaApp::run`, now
+require this feature explicitly, even if another dependency enables Axum's HTTP support.
+
+With `default-features = false`, gotcha now compiles without HTTP serving. Route construction
+and `GotchaApp::build_router` remain available. Adding `openapi` enables document generation
+and export through `into_openapi()` / `openapi_document()` without enabling server startup.
+
+If an application previously relied on workspace feature unification to make startup compile,
+enable `http1` on gotcha itself. Schematic-only libraries can continue to use `gotcha_core`.
 
 # Unreleased: derive dependency paths
 

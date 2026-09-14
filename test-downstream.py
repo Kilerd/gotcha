@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Test derives in standalone Cargo projects without workspace dev-dependencies."""
+"""Test standalone consumers without workspace dependency feature unification."""
 
 import os
 from pathlib import Path
@@ -25,6 +25,12 @@ def main():
             unexpected = packages & {"gotcha", "axum", "tokio", "tower"}
             if unexpected:
                 raise RuntimeError(f"{name} pulled in web dependencies: {sorted(unexpected)}")
+
+    manifest = str(root / "tests" / "fixtures" / "no-http1" / "Cargo.toml")
+    subprocess.run(["cargo", "fmt", "--manifest-path", manifest, "--", "--check"], check=True, env=env)
+    for features in ([], ["--features", "openapi"]):
+        print(f"Testing without http1: {features}", flush=True)
+        subprocess.run(["cargo", "test", "--manifest-path", manifest, *features], check=True, env=env)
 
 
 if __name__ == "__main__":
