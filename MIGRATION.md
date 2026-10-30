@@ -74,7 +74,8 @@ Axum or the gotcha facade. Existing derive dependency aliases and crate override
 
 This release migrates Gotcha's generated subset, not every OpenAPI 3.2 object or keyword.
 See the [oas migration guide](https://github.com/Kilerd/oas/blob/main/MIGRATION.md) for remaining
-model differences. Typed SSE annotations and WebSocket/AsyncAPI contracts remain separate work.
+model differences. SSE responses can now be declared with `skip_response` and `item`;
+WebSocket message contracts remain separate AsyncAPI work.
 
 # Unreleased: HTTP/1 is always enabled
 
@@ -506,6 +507,27 @@ Explicit entries replace inference for their status only. `drop_default` removes
 default, and at least one response must remain. These declarations change documentation only;
 the handler remains responsible for sending the declared status and content type. Declared body
 schemas participate in the same component collection and reference rewriting as inferred bodies.
+
+When the return type cannot be inferred — WebSocket upgrades, SSE streams, or any opaque type
+such as `Sse<impl Stream<...>>` — add `skip_response`. The nonempty `responses(...)` list is then
+the complete contract and the return type is never placed in a trait path:
+
+```rust,ignore
+#[api(
+    skip_response,
+    responses(response(status = 200, content_type = "text/event-stream", item = "ChatEvent"))
+)]
+async fn events() -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+    // Return the stream here.
+}
+```
+
+`item` requires an explicit `content_type` and sets OpenAPI 3.2's `itemSchema`, the schema of
+each parsed item in a sequential media type; `body` remains the independent whole-body schema.
+`skip_response` cannot be combined with `errors(...)` or `drop_default`: with no inference there
+is no inferred default to drop. A WebSocket route declares its upgrade as an empty response with
+`skip_response, responses(response(status = 101))`. Declared item types join the same component
+collection as inferred bodies.
 
 For a `thiserror` enum that already implements `IntoResponse`, use `errors(...)` to describe all
 errors for this endpoint without implementing `Responsible` on the enum:

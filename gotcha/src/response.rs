@@ -6,7 +6,7 @@ use axum::{
 };
 
 #[cfg(feature = "openapi")]
-pub use gotcha_core::responsible::{default_response, empty_response, merge_responses, response, Responsible};
+pub use gotcha_core::responsible::{default_response, empty_response, item_response, merge_responses, response, response_with_item, Responsible};
 
 #[cfg(feature = "openapi")]
 #[doc(hidden)]

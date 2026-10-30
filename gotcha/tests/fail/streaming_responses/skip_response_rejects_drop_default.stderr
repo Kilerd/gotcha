@@ -1,0 +1,5 @@
+error: drop_default has no effect with skip_response; remove it
+ --> tests/fail/streaming_responses/skip_response_rejects_drop_default.rs:3:7
+  |
+3 | #[api(skip_response, drop_default, responses(response(status = 200)))]
+  |       ^^^^^^^^^^^^^

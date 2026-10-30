@@ -1,0 +1,5 @@
+error: item requires an explicit content_type
+ --> tests/fail/streaming_responses/item_requires_content_type.rs:3:17
+  |
+3 | #[api(responses(response(status = 200, item = "String")))]
+  |                 ^^^^^^^^

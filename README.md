@@ -422,6 +422,59 @@ Use `responses(...)` to add or override individual statuses while keeping respon
 See [the migration guide](MIGRATION.md#unreleased-http-response-contracts) for media types and
 inference/override rules.
 
+Handlers whose response cannot be inferred — WebSocket upgrades, SSE streams, or any opaque
+return type — use `skip_response`. The nonempty `responses(...)` list is then the complete
+contract and the return type is never referenced by the macro, so `impl Trait` is allowed:
+
+```rust
+# #[cfg(feature = "openapi")]
+# mod streaming_example {
+use std::convert::Infallible;
+
+use gotcha::prelude::*;
+
+#[derive(Schematic)]
+struct Tick {
+    seq: u64,
+}
+
+#[api(
+    skip_response,
+    responses(response(
+        status = 200,
+        content_type = "text/event-stream",
+        item = "Tick"
+    ))
+)]
+async fn events() -> Sse<impl futures_core::Stream<Item = Result<Event, Infallible>>> {
+    Sse::new(futures_util::stream::once(async { Ok(Event::default().data("tick")) }))
+}
+# }
+```
+
+`item` emits OpenAPI 3.2's `itemSchema`, describing each parsed stream item; it requires an
+explicit `content_type`. `body` remains the whole-body schema and the two fields are independent.
+`skip_response` cannot be combined with `errors(...)` (declare every status under `responses(...)`)
+or `drop_default` (there is no inferred default to remove). A WebSocket route documents its
+upgrade as an empty `101` response and needs no `Responsible` implementation:
+
+```rust
+# #[cfg(feature = "openapi")]
+# mod websocket_example {
+use gotcha::prelude::*;
+
+#[api(
+    skip_response,
+    responses(response(status = 101, description = "Switching protocols"))
+)]
+async fn socket(upgrade: WebSocketUpgrade) -> Response {
+    upgrade.on_upgrade(|socket| async move {
+        drop(socket);
+    })
+}
+# }
+```
+
 ### Configuration System
 
 Create a `configurations/application.toml` file. Your application's own settings live at the top

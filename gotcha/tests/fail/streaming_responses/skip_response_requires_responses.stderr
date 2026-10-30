@@ -1,0 +1,5 @@
+error: skip_response requires at least one responses(response(...)) declaration
+ --> tests/fail/streaming_responses/skip_response_requires_responses.rs:3:7
+  |
+3 | #[api(skip_response)]
+  |       ^^^^^^^^^^^^^

@@ -52,18 +52,26 @@ pub(crate) mod utils;
 /// - `responses(response(status = 404, body = "ApiError", description = "Not found"))` -
 ///   Explicit response declarations, replacing inferred entries for those statuses. `body`
 ///   is an optional Rust type string; `content_type` defaults to `application/json` for bodies.
+///   `item = "Event"` declares the OpenAPI 3.2 `itemSchema` for sequential media types such as
+///   `text/event-stream`, requires an explicit `content_type`, and is independent of `body`.
 /// - `errors(response(status = 404, body = "ErrorBody", description = "Not found"))` -
 ///   Fully describe the `Err` branch of `Result<T, E>` (including type aliases). Requires at
 ///   least one declaration and only infers `T: Responsible`; `E` does not need `Responsible`.
 ///   Uses the same fields as `responses`. Error alternatives merge with the inferred success
 ///   contract; `responses(...)` overrides matching statuses afterward.
 /// - `drop_default` - Remove the inferred `default` response. At least one response must remain.
+/// - `skip_response` - Do not infer responses from the return type. The nonempty `responses(...)`
+///   list is the complete contract, and the return type is never placed in a trait path, so
+///   opaque types such as `Sse<impl Stream<...>>` are accepted. Cannot be combined with
+///   `errors(...)` (declare every status in `responses(...)`) or `drop_default` (nothing is
+///   inferred to drop).
 ///
 /// Response declarations describe HTTP behavior; they do not change what the handler sends.
 /// `errors(...)` preserves any `default` from the success branch unless `drop_default` is explicit.
 /// The error type still needs `IntoResponse` when the handler is registered on a router, and
-/// declared body types must implement `Schematic`. Without `errors(...)`, the whole return type
-/// must implement `Responsible`, even when `responses(...)` is present.
+/// declared body and item types must implement `Schematic`. Without `errors(...)` or
+/// `skip_response`, the whole return type must implement `Responsible`, even when `responses(...)`
+/// is present.
 ///
 /// ## Example
 ///
@@ -73,9 +81,21 @@ pub(crate) mod utils;
 /// #[derive(Schematic)]
 /// struct User { id: u32, name: String }
 ///
-/// /// Get user by ID  
+/// /// Get user by ID
 /// #[api(id = "get_user", group = "users")]
 /// async fn get_user(Path(id): Path<u32>) -> Json<User> {
+///     // Implementation
+/// }
+/// ```
+///
+/// Streaming handlers can declare their whole contract explicitly:
+///
+/// ```rust,ignore
+/// #[api(
+///     skip_response,
+///     responses(response(status = 200, content_type = "text/event-stream", item = "Tick"))
+/// )]
+/// async fn events() -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
 ///     // Implementation
 /// }
 /// ```

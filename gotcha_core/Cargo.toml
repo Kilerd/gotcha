@@ -17,15 +17,15 @@ doctest = true
 
 [features]
 # Enables the axum-facing schema glue: `Responsible for Json<T>` and the whole
-# `ParameterProvider` family (impls for Path/Json/Query/State/Extension/Request/Multipart).
-# Off by default so a crate that only needs the Schematic schema layer stays free of
-# axum/regex/either. The `gotcha` crate turns this on.
+# `ParameterProvider` family (impls for Path/Json/Query/State/Extension/Request/Multipart/
+# WebSocketUpgrade). Off by default so a crate that only needs the Schematic schema layer stays
+# free of axum/regex/either. The `gotcha` crate turns this on.
 axum = ["dep:axum", "dep:axum-extra", "dep:regex", "dep:either"]
 
 [dependencies]
 gotcha_macro = { version = "0.4.1", path = "../gotcha_macro" }
 oas = "0.3"
-axum = { version = "0.8", default-features = false, features = ["json", "query", "multipart"], optional = true }
+axum = { version = "0.8", default-features = false, features = ["json", "query", "multipart", "ws"], optional = true }
 # `TypedHeader<T>` lives here since axum 0.7; the impl must be in this crate because that is where
 # `ParameterProvider` is defined (orphan rule).
 axum-extra = { version = "0.10", default-features = false, features = ["typed-header"], optional = true }

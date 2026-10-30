@@ -255,3 +255,7 @@ impl ParameterProvider for axum::extract::multipart::Multipart {
         Either::Right(req_body)
     }
 }
+
+/// The WebSocket upgrade handshake contributes no parameter of its own; a route that takes it
+/// declares its `101` response with `#[api(responses(...))]`.
+impl ParameterProvider for axum::extract::ws::WebSocketUpgrade {}
