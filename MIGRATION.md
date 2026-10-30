@@ -16,6 +16,7 @@
 - [Unreleased: nested OpenAPI paths](#unreleased-nested-openapi-paths)
 - [Unreleased: schema identity and component names](#unreleased-schema-identity-and-component-names)
 - [Unreleased: ordered configuration sources](#unreleased-ordered-configuration-sources)
+- [Unreleased: typed configuration defaults](#unreleased-typed-configuration-defaults)
 - [0.3 → 0.4](#03--04) — **every application must edit its route paths and configuration file**
 - [0.2 → 0.3: API simplification](#02--03-api-simplification)
 
@@ -772,6 +773,25 @@ by `with_default_files` are still optional, but errors in existing files propaga
 An already supplied `.config(...)` value still takes precedence over accumulated sources.
 Automatic loading now follows the same strict default policy; see [shared startup](#unreleased-shared-startup)
 for explicitly opting into fallback.
+
+---
+
+# Unreleased: typed configuration defaults
+
+Framework-managed loading now installs the reserved `[server]` settings as typed defaults beneath
+files and environment variables. `APP_SERVER__PORT=9000` therefore loads on a machine with no
+`configurations/application.toml` instead of failing with
+`invalid type: string "9000", expected u16`. Because the defaults provide real TOML types, string
+values for those fields are coerced rather than rejected.
+
+- `ConfigSource` gained a `Defaults { value }` variant. Add a wildcard arm to exhaustive matches.
+- `ConfigBuilder::defaults(value)` registers application defaults at the same layer and returns
+  `ConfigResult<Self>` because the value must be representable as TOML. Application defaults
+  override framework defaults, while files and environment variables override both. Use it from
+  `Gotcha::build_config` or a custom `GotchaApp::config()`.
+- `Gotcha::build_config` starts its builder function above the framework defaults. Automatic
+  loading (`GotchaApp::config`'s default and the builder's automatic stack) and every `with_*`
+  source helper use the same defaults layer.
 
 ---
 

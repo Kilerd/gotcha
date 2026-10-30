@@ -470,6 +470,42 @@ Configuration supports:
   A single underscore stays part of the field name, so snake_case fields are addressable, and
   typed fields (numbers, booleans) parse the value rather than rejecting it.
 
+The reserved `[server]` section always starts from typed framework defaults installed beneath
+every file and environment source. Environment-only configuration therefore works without a
+configuration file:
+
+```sh
+APP_SERVER__PORT=9000 cargo run
+```
+
+Applications can register their own typed defaults at the same layer with
+`ConfigBuilder::defaults`. Application defaults beat the framework's `127.0.0.1:3000`, while
+files and environment variables still beat them:
+
+```rust,no_run
+use gotcha::prelude::*;
+use gotcha::config::ConfigBuilder;
+
+#[derive(Serialize)]
+struct Defaults {
+    database_url: String,
+    server: ServerConfig,
+}
+
+let _app = Gotcha::new()
+    .build_config(|builder| {
+        builder
+            .defaults(Defaults {
+                database_url: "postgres://localhost/app".into(),
+                server: ServerConfig { host: "0.0.0.0".into(), port: 8700 },
+            })
+            .expect("defaults serialize")
+    })
+    .expect("configuration loads");
+```
+
+The trait API can use the same builder in a custom `GotchaApp::config()`.
+
 ### Messages
 
 `Message<S, C>` groups a command's input, output, and handler. `Messager<S, C>` carries the
