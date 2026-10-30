@@ -343,13 +343,17 @@ impl Config {
 
     /// Load `configurations/application.toml` and the `APP` environment prefix, with variable
     /// substitution, above the framework's typed server defaults.
-    pub fn load_default<T: for<'de> Deserialize<'de> + Default>() -> T {
+    ///
+    /// Returns the loading error instead of falling back to `T::default()`. For an explicit
+    /// fallback, choose it at the call site or use
+    /// [`ConfigErrorPolicy::fallback_to_default`](crate::ConfigErrorPolicy::fallback_to_default)
+    /// in startup.
+    pub fn load_default<T: for<'de> Deserialize<'de>>() -> ConfigResult<T> {
         ConfigBuilder::framework_defaults()
             .file_optional("configurations/application.toml")
             .env("APP")
             .enable_vars()
             .build()
-            .unwrap_or_else(|_| T::default())
     }
 }
 
@@ -539,6 +543,24 @@ mod tests {
         // TOML table keys are strings; integer keys cannot be represented.
         let unsupported = std::collections::HashMap::from([(1u32, 2u8)]);
         assert!(ConfigBuilder::new().defaults(unsupported).is_err());
+    }
+
+    #[test]
+    fn load_default_returns_loading_errors_instead_of_falling_back() {
+        if !in_isolated_child("config::tests::load_default_returns_loading_errors_instead_of_falling_back", &[]) {
+            return;
+        }
+
+        // With no file, the framework's typed defaults still produce a complete server section.
+        let config: ConfigWrapper<TestConfig> = Config::load_default().expect("defaults load without a file");
+        assert_eq!(config.server.port, ServerConfig::default().port);
+
+        std::fs::create_dir_all("configurations").unwrap();
+        std::fs::write("configurations/application.toml", "value = [").unwrap();
+        assert!(
+            Config::load_default::<ConfigWrapper<TestConfig>>().is_err(),
+            "a loading error must not become T::default()"
+        );
     }
 
     #[test]
