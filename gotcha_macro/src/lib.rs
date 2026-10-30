@@ -67,6 +67,9 @@ pub(crate) mod utils;
 ///   opaque types such as `Sse<impl Stream<...>>` are accepted. Cannot be combined with
 ///   `errors(...)` (declare every status in `responses(...)`) or `drop_default` (nothing is
 ///   inferred to drop).
+/// - On a handler parameter, `#[api(skip)]` excludes that extractor from the documented
+///   parameters. It accepts exactly that form; other parameter-level `#[api(...)]` contents are
+///   compile errors.
 ///
 /// Response declarations describe HTTP behavior; they do not change what the handler sends.
 /// `errors(...)` preserves any `default` from the success branch unless `drop_default` is explicit.

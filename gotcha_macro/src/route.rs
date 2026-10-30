@@ -138,6 +138,25 @@ impl ResponseMeta {
     }
 }
 
+/// Validate a parameter-level `#[api(...)]` attribute. `#[api(skip)]` is the only supported
+/// form, and it is parsed rather than matched by substring.
+fn validate_parameter_skip(attr: &syn::Attribute) -> syn::Result<()> {
+    match attr.parse_meta()? {
+        syn::Meta::List(meta) if meta.path.is_ident("api") => {
+            let mut nested = meta.nested.iter();
+            match (nested.next(), nested.next()) {
+                (Some(syn::NestedMeta::Meta(syn::Meta::Path(path))), None) if path.is_ident("skip") => Ok(()),
+                _ => Err(unknown_parameter_attribute(&meta)),
+            }
+        }
+        meta => Err(unknown_parameter_attribute(&meta)),
+    }
+}
+
+fn unknown_parameter_attribute(tokens: &impl quote::ToTokens) -> syn::Error {
+    syn::Error::new_spanned(tokens, "unknown parameter-level #[api(...)]; only #[api(skip)] is supported")
+}
+
 pub(crate) fn request_handler(args: TokenStream, input_stream: TokenStream) -> TokenStream {
     let attr_args = parse_macro_input!(args as AttributeArgs);
 
@@ -188,32 +207,24 @@ pub(crate) fn request_handler(args: TokenStream, input_stream: TokenStream) -> T
         }
     };
 
-    let params_token: Vec<proc_macro2::TokenStream> = input
-        .sig
-        .inputs
-        .iter()
-        .flat_map(|param| match param {
-            FnArg::Receiver(_) => None,
-            FnArg::Typed(typed) => {
-                // Check if the parameter has the #[api(skip)] attribute
-                let should_skip = typed.attrs.iter().any(|attr| {
-                    if attr.path.is_ident("api") {
-                        // Parse the attribute tokens to check for "skip"
-                        let tokens = attr.tokens.to_string();
-                        tokens.contains("skip")
-                    } else {
-                        false
-                    }
-                });
-
-                if should_skip {
-                    return None;
-                }
-                let ty = &typed.ty;
-                Some(quote! { <#ty as ::gotcha::ParameterProvider>::generate })
+    let mut params_token: Vec<proc_macro2::TokenStream> = Vec::new();
+    for param in &input.sig.inputs {
+        let FnArg::Typed(typed) = param else {
+            continue;
+        };
+        let mut skip = false;
+        for attr in typed.attrs.iter().filter(|attr| attr.path.is_ident("api")) {
+            if let Err(error) = validate_parameter_skip(attr) {
+                return TokenStream::from(error.to_compile_error());
             }
-        })
-        .collect();
+            skip = true;
+        }
+        if skip {
+            continue;
+        }
+        let ty = &typed.ty;
+        params_token.push(quote! { <#ty as ::gotcha::ParameterProvider>::generate });
+    }
     let ret_type = match &input.sig.output {
         // A handler without an explicit return type returns `()`.
         ReturnType::Default => quote!(()),
@@ -333,6 +344,23 @@ mod tests {
             syn::parse_quote!(api(skip_response, errors(response(status = 404)), responses(response(status = 200)))),
         ] {
             assert!(parse_validated(invalid).is_err());
+        }
+    }
+
+    #[test]
+    fn parameter_attributes_are_parsed_structurally() {
+        let skip: syn::Attribute = syn::parse_quote!(#[api(skip)]);
+        assert!(validate_parameter_skip(&skip).is_ok());
+
+        for invalid in [
+            syn::parse_quote!(#[api(skipper)]),
+            syn::parse_quote!(#[api(skip = true)]),
+            syn::parse_quote!(#[api()]),
+            syn::parse_quote!(#[api(skip, skip)]),
+            syn::parse_quote!(#[api(id = "not_a_parameter")]),
+        ] {
+            let error = validate_parameter_skip(&invalid).unwrap_err();
+            assert!(error.to_string().contains("only #[api(skip)] is supported"));
         }
     }
 

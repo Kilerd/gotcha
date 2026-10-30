@@ -551,6 +551,10 @@ is no inferred default to drop. A WebSocket route declares its upgrade as an emp
 `skip_response, responses(response(status = 101))`. Declared item types join the same component
 collection as inferred bodies.
 
+Parameter-level `#[api(skip)]` is now parsed structurally: it accepts exactly `#[api(skip)]`, and
+unknown `#[api(...)]` contents on a parameter are compile errors instead of being matched by
+substring.
+
 For a `thiserror` enum that already implements `IntoResponse`, use `errors(...)` to describe all
 errors for this endpoint without implementing `Responsible` on the enum:
 
