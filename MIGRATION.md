@@ -513,9 +513,21 @@ such as `Sse<impl Stream<...>>` — add `skip_response`. The nonempty `responses
 the complete contract and the return type is never placed in a trait path:
 
 ```rust,ignore
+#[derive(Schematic)]
+struct ChatSseEvent {
+    data: String,
+    event: Option<String>,
+    id: Option<String>,
+    retry: Option<u32>,
+}
+
 #[api(
     skip_response,
-    responses(response(status = 200, content_type = "text/event-stream", item = "ChatEvent"))
+    responses(response(
+        status = 200,
+        content_type = "text/event-stream",
+        item = "ChatSseEvent"
+    ))
 )]
 async fn events() -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
     // Return the stream here.
@@ -524,6 +536,11 @@ async fn events() -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
 
 `item` requires an explicit `content_type` and sets OpenAPI 3.2's `itemSchema`, the schema of
 each parsed item in a sequential media type; `body` remains the independent whole-body schema.
+For `text/event-stream`, the item schema must describe the **parsed event envelope** — `data`
+plus the optional `event`, `id`, and `retry` fields — not only the JSON carried inside `data`.
+A hand-written `Schematic` can attach `contentMediaType: application/json` and `contentSchema`
+to `data` when that JSON has its own schema. For `application/jsonl`, `item` describes each
+JSON value instead.
 `skip_response` cannot be combined with `errors(...)` or `drop_default`: with no inference there
 is no inferred default to drop. A WebSocket route declares its upgrade as an empty response with
 `skip_response, responses(response(status = 101))`. Declared item types join the same component

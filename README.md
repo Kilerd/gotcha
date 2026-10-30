@@ -433,9 +433,13 @@ use std::convert::Infallible;
 
 use gotcha::prelude::*;
 
+/// A parsed server-sent event: its `data` plus the optional SSE fields.
 #[derive(Schematic)]
-struct Tick {
-    seq: u64,
+struct ChatSseEvent {
+    data: String,
+    event: Option<String>,
+    id: Option<String>,
+    retry: Option<u32>,
 }
 
 #[api(
@@ -443,17 +447,24 @@ struct Tick {
     responses(response(
         status = 200,
         content_type = "text/event-stream",
-        item = "Tick"
+        item = "ChatSseEvent"
     ))
 )]
 async fn events() -> Sse<impl futures_core::Stream<Item = Result<Event, Infallible>>> {
-    Sse::new(futures_util::stream::once(async { Ok(Event::default().data("tick")) }))
+    Sse::new(futures_util::stream::once(async {
+        Ok(Event::default().event("message").data(r#"{"seq":1}"#))
+    }))
 }
 # }
 ```
 
-`item` emits OpenAPI 3.2's `itemSchema`, describing each parsed stream item; it requires an
-explicit `content_type`. `body` remains the whole-body schema and the two fields are independent.
+`item` emits OpenAPI 3.2's `itemSchema`, describing each parsed item of a sequential media type,
+and requires an explicit `content_type`. For `text/event-stream` the item **must describe the
+parsed event envelope** (`data` plus the optional `event`, `id`, and `retry` fields), not just the
+JSON carried inside `data`; a hand-written `Schematic` can attach `contentMediaType` and
+`contentSchema` to `data` when that JSON has its own schema. For `application/jsonl`, `item`
+describes each JSON value instead. `body` remains the whole-body schema and the two fields are
+independent.
 `skip_response` cannot be combined with `errors(...)` (declare every status under `responses(...)`)
 or `drop_default` (there is no inferred default to remove). A WebSocket route documents its
 upgrade as an empty `101` response and needs no `Responsible` implementation:

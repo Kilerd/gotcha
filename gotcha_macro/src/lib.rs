@@ -53,7 +53,9 @@ pub(crate) mod utils;
 ///   Explicit response declarations, replacing inferred entries for those statuses. `body`
 ///   is an optional Rust type string; `content_type` defaults to `application/json` for bodies.
 ///   `item = "Event"` declares the OpenAPI 3.2 `itemSchema` for sequential media types such as
-///   `text/event-stream`, requires an explicit `content_type`, and is independent of `body`.
+///   `text/event-stream`, requires an explicit `content_type`, and is independent of `body`. For
+///   `text/event-stream` it must describe the parsed event envelope (`data` plus the optional
+///   `event`, `id`, and `retry` fields), not only JSON carried inside `data`.
 /// - `errors(response(status = 404, body = "ErrorBody", description = "Not found"))` -
 ///   Fully describe the `Err` branch of `Result<T, E>` (including type aliases). Requires at
 ///   least one declaration and only infers `T: Responsible`; `E` does not need `Responsible`.
@@ -91,9 +93,10 @@ pub(crate) mod utils;
 /// Streaming handlers can declare their whole contract explicitly:
 ///
 /// ```rust,ignore
+/// // For `text/event-stream`, `item` describes the parsed event, not the JSON in `data`.
 /// #[api(
 ///     skip_response,
-///     responses(response(status = 200, content_type = "text/event-stream", item = "Tick"))
+///     responses(response(status = 200, content_type = "text/event-stream", item = "ChatSseEvent"))
 /// )]
 /// async fn events() -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
 ///     // Implementation
