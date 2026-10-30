@@ -309,6 +309,44 @@ See [the migration guide](MIGRATION.md#unreleased-schema-identity-and-component-
 Generated documents use OpenAPI 3.2.0 and JSON Schema 2020-12 semantics. See the
 [OpenAPI migration notes](MIGRATION.md#unreleased-openapi-32) for custom schemas and tooling compatibility.
 
+#### Optional and nullable fields
+
+`Option<T>` means optional *and* nullable at once. When a contract distinguishes the two — zod's
+`.optional()` versus `.nullable()` — use the field wrappers:
+
+- `Nullable<T>` is zod's `.nullable()`: the key is required, the value may be `null`. A missing
+  key fails deserialization, `null` becomes `Nullable(None)`, and `None` serializes as `null`.
+  The schema is `anyOf: [<T>, {"type": "null"}]`, with the field in `required`.
+- `Optional<T>` is zod's `.optional()`: the key may be absent, and the value is never `null`.
+  A missing key becomes `Optional(None)` without `#[serde(default)]`. The schema is exactly
+  `T`'s schema (no null branch), with the field left out of `required`. `None` serializes as
+  `null` unless the field sets `#[serde(skip_serializing_if = "Optional::is_none")]`, which
+  response fields should. Deserialization also accepts `null` as `None`; the schema does not
+  advertise it.
+
+`Optional<serde_json::Value>` covers optional opaque JSON: `serde_json::Value` already documents
+as the empty schema `{}`, so no separate "any value" type is needed.
+
+```rust
+# #[cfg(feature = "openapi")]
+# mod optional_nullable_example {
+use gotcha::prelude::*;
+
+#[derive(Schematic, Serialize, Deserialize)]
+struct UpdateUser {
+    /// Always present; `null` clears the display name.
+    display_name: Nullable<String>,
+    /// Absent means "unchanged", never `null`.
+    #[serde(skip_serializing_if = "Optional::is_none")]
+    nickname: Optional<String>,
+    /// Optional client-owned JSON.
+    #[serde(skip_serializing_if = "Optional::is_none")]
+    metadata: Optional<JsonValue>,
+}
+# }
+```
+`display_name` is listed in `required`, the two `Optional` fields are not.
+
 Documentation HTTP endpoints are disabled by default. Enable them explicitly with
 `Gotcha::with_openapi()`, or return `Some(OpenApiEndpoints::default())` from
 `GotchaApp::openapi_endpoints()`. The default paths are:

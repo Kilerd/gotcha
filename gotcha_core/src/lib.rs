@@ -49,6 +49,9 @@ pub mod registry;
 pub mod responsible;
 pub use responsible::Responsible;
 
+pub mod wrappers;
+pub use wrappers::{Nullable, Optional};
+
 #[cfg(feature = "axum")]
 #[cfg_attr(docsrs, doc(cfg(feature = "axum")))]
 pub mod parameter;

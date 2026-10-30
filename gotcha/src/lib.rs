@@ -54,6 +54,10 @@ pub use gotcha_core;
 #[cfg(feature = "openapi")]
 #[cfg_attr(docsrs, doc(cfg(feature = "openapi")))]
 pub use gotcha_core::Responsible;
+/// Field wrappers that keep "the key may be absent" apart from "the value may be `null`".
+#[cfg(feature = "openapi")]
+#[cfg_attr(docsrs, doc(cfg(feature = "openapi")))]
+pub use gotcha_core::{Nullable, Optional};
 
 #[cfg(feature = "openapi")]
 #[cfg_attr(docsrs, doc(cfg(feature = "openapi")))]
