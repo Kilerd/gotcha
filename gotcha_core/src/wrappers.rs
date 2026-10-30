@@ -24,6 +24,17 @@ use crate::{nullable_schema, EnhancedSchema, Schematic};
 /// The generated schema is the same `anyOf: [<T>, {"type": "null"}]` shape used for
 /// `Option<T>`, and the field stays in the parent object's `required` list.
 ///
+/// # Caveats
+///
+/// Use it on ordinary struct fields. With `#[serde(flatten)]`, serde merges `T`'s keys into
+/// the parent, but the generated schema does not follow the flatten and documents no
+/// properties — the same pre-existing limitation as `Option<T>` with `flatten`.
+///
+/// The "a missing key is an error" guarantee assumes no `#[serde(default)]` is applied to the
+/// field or to its container. A default (at either level) makes a missing key deserialize as
+/// `Nullable(None)` — `Default` for this type — while the schema still lists the field as
+/// required, because the derive only inspects field-level attributes.
+///
 /// # Example
 ///
 /// ```
@@ -143,6 +154,16 @@ impl<T: SchemaReferences> SchemaReferences for Nullable<T> {
 /// object's `required` list. `Optional<serde_json::Value>` is the optional opaque-JSON case;
 /// no separate "any value" type is needed because `serde_json::Value` already documents as
 /// the empty schema `{}`.
+///
+/// # Caveats
+///
+/// Use it on ordinary struct fields. With `#[serde(flatten)]`, serde merges `T`'s keys into
+/// the parent, but the generated schema does not follow the flatten and documents no
+/// properties — the same pre-existing limitation as `Option<T>` with `flatten`.
+///
+/// Because a missing key already deserializes as `Optional(None)`, field- or container-level
+/// `#[serde(default)]` is unnecessary and has no additional effect on this field: its
+/// `Default` is also `Optional(None)` and the field is already documented as not required.
 ///
 /// # Example
 ///

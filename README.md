@@ -327,6 +327,13 @@ Generated documents use OpenAPI 3.2.0 and JSON Schema 2020-12 semantics. See the
 `Optional<serde_json::Value>` covers optional opaque JSON: `serde_json::Value` already documents
 as the empty schema `{}`, so no separate "any value" type is needed.
 
+Both wrappers are for ordinary struct fields: with `#[serde(flatten)]`, serde merges the inner
+type's keys into the parent, but the generated schema does not follow the flatten (the same
+pre-existing limitation as `Option<T>`). A container- or field-level `#[serde(default)]`
+replaces a missing `Nullable` key with `Nullable(None)`, while the field stays documented as
+required, so `Nullable`'s "a missing key is an error" guarantee assumes no default attribute is
+applied.
+
 ```rust
 # #[cfg(feature = "openapi")]
 # mod optional_nullable_example {
