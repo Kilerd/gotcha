@@ -5,8 +5,11 @@ use axum::Router;
 use crate::{GotchaResult, GotchaRouter};
 
 pub(crate) fn assemble<State: Clone + Send + Sync + 'static>(
-    router: GotchaRouter<State>, state: State, #[cfg(feature = "openapi")] endpoints: Option<crate::OpenApiEndpoints>, finish: impl FnOnce(Router) -> Router,
+    router: GotchaRouter<State>, state: State, #[cfg(feature = "openapi")] endpoints: Option<crate::OpenApiEndpoints>,
+    finish: impl FnOnce(Router, &State) -> Router,
 ) -> GotchaResult<Router> {
+    // `with_state` consumes the state, so keep the context the finish hook should observe.
+    let context = state.clone();
     #[cfg(feature = "openapi")]
     let router = if let Some(endpoints) = endpoints {
         endpoints.validate()?;
@@ -18,7 +21,7 @@ pub(crate) fn assemble<State: Clone + Send + Sync + 'static>(
     #[cfg(not(feature = "openapi"))]
     let router = router.into_axum_router(state);
 
-    Ok(finish(router))
+    Ok(finish(router, &context))
 }
 
 #[cfg(test)]
@@ -73,7 +76,7 @@ mod tests {
             fn routes(&self, router: GotchaRouter<GotchaContext<(), EmptyConfig>>) -> GotchaRouter<GotchaContext<(), EmptyConfig>> {
                 router.get("/late", order).fallback(order)
             }
-            fn finish_router(&self, router: Router) -> Router {
+            fn finish_router(&self, router: Router, _context: &GotchaContext<(), EmptyConfig>) -> Router {
                 router.layer(from_fn_with_state("inner", mark)).layer(from_fn_with_state("outer", mark))
             }
         }
@@ -158,7 +161,7 @@ mod tests {
                     router
                 }
             }
-            fn finish_router(&self, router: Router) -> Router {
+            fn finish_router(&self, router: Router, _context: &Context) -> Router {
                 if matches!(self.protection, Protection::Application) {
                     router.layer(axum::middleware::from_fn(deny))
                 } else {

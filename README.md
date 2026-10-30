@@ -255,6 +255,40 @@ Passing a complete `Gotcha` application is a compile error. For independently co
 applications, run each separately. See [the migration guide](MIGRATION.md#unreleased-application-and-route-composition)
 for moving existing child settings and task registrations to the top level.
 
+### Scoping Middleware and Mounting Services
+
+`GotchaRouter::route_layer` (and the builder's `route_layer`) applies middleware only to routes
+already registered. Requests that match no route bypass it entirely, including the fallback, and
+documentation endpoints are not covered. To scope middleware to a documented prefix without
+re-registering its routes, nest a child router and layer the child: `nest` prefixes the child's
+documented paths, so `.nest("/api", api.layer(guard))` guards exactly `/api/*` and the generated
+document still lists `/api/...`.
+
+`nest_service` mounts a bare tower `Service` under a path prefix, for reverse proxies, file
+handlers, or other services that are not Gotcha routes. Nested services are opaque to OpenAPI:
+neither the prefix nor the service's responses appear in the document. They also do not receive the
+application context, so a service that needs state at construction time is mounted from a
+post-assembly hook:
+
+```rust,no_run
+use gotcha::{Gotcha, GotchaContext};
+
+let app = Gotcha::from_state(())
+    .get("/health", || async { "ok" })
+    .finish_router(|router, context: &GotchaContext<(), gotcha::EmptyConfig>| {
+        // Build the service from `context.state` here, then mount it:
+        // router.nest_service("/proxy", proxy)
+        let _ = context;
+        router
+    });
+```
+
+The builder's `finish_router` mirrors the trait's
+`GotchaApp::finish_router(&self, router, context)` hook. Hooks run once at startup after business
+routes, fallback, and documentation are mounted, and receive the same `GotchaContext` the routes
+run with. `app_layer` middleware is installed after these hooks, so it covers whatever they mount.
+`finish_router` is not called during document export.
+
 ### OpenAPI Documentation
 
 `Schematic` lives in `gotcha_core`, so a library can implement or derive it without depending on
@@ -332,11 +366,12 @@ let app = Gotcha::new().openapi_endpoints(Some(OpenApiEndpoints {
 # }
 ```
 
-`layer` covers business routes already registered, following Axum's ordering. Use builder
-`app_layer` or the trait's `finish_router` hook for authentication that must cover **every endpoint**,
-including documentation and fallbacks. Application layers run after documentation is mounted,
-regardless of when `with_openapi()` was called. Keeping authentication on business routes leaves
-explicitly enabled documentation public.
+`layer` covers every business route already registered on the router, following Axum's ordering;
+`route_layer` covers only requests that match a registered route and leaves the fallback untouched.
+Use builder `app_layer` or the trait's `finish_router` hook for authentication that must cover
+**every endpoint**, including documentation and fallbacks. Application layers run after
+documentation is mounted, regardless of when `with_openapi()` was called. Keeping authentication
+on business routes leaves explicitly enabled documentation public.
 
 Export the complete document with `Gotcha::into_openapi()`, `GotchaRouter::into_openapi()`, or
 `GotchaApp::openapi_document()`. Export needs no listener or runtime and does not initialize

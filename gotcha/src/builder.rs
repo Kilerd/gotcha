@@ -44,6 +44,9 @@ type TaskRegistrar<S, C> = Box<dyn FnOnce(&mut crate::TaskScheduler<S, C>) + Sen
 
 type AppLayer = Box<dyn FnOnce(axum::Router) -> axum::Router + Send>;
 
+/// A post-assembly hook with access to the application context. See [`Gotcha::finish_router`].
+type FinishRouter<S, C> = Box<dyn FnOnce(axum::Router, &GotchaContext<S, C>) -> axum::Router + Send>;
+
 enum StateSource<S> {
     Provided(S),
     Default(fn() -> S),
@@ -118,6 +121,7 @@ where
 {
     router: GotchaRouter<GotchaContext<S, C>>,
     app_layers: Vec<AppLayer>,
+    finish_routers: Vec<FinishRouter<S, C>>,
     #[cfg(feature = "openapi")]
     openapi_endpoints: Option<crate::OpenApiEndpoints>,
     listen_options: ListenOptions,
@@ -274,6 +278,7 @@ where
         Self {
             router: GotchaRouter::default(),
             app_layers: Vec::new(),
+            finish_routers: Vec::new(),
             #[cfg(feature = "openapi")]
             openapi_endpoints: None,
             listen_options: ListenOptions::default(),
@@ -690,6 +695,22 @@ where
         self
     }
 
+    /// Apply a layer only to business routes already registered, following Axum's ordering.
+    ///
+    /// Requests that match no route bypass the layer entirely, including the fallback, and
+    /// documentation endpoints are not covered. Use [`Self::app_layer`] for every endpoint.
+    pub fn route_layer<L>(mut self, layer: L) -> Self
+    where
+        L: Layer<axum::routing::Route> + Clone + Send + Sync + 'static,
+        L::Service: Service<Request> + Clone + Send + Sync + 'static,
+        <L::Service as Service<Request>>::Response: Responder + 'static,
+        <L::Service as Service<Request>>::Error: Into<std::convert::Infallible> + 'static,
+        <L::Service as Service<Request>>::Future: Send + 'static,
+    {
+        self.router = self.router.route_layer(layer);
+        self
+    }
+
     /// Apply middleware to the final application, including documentation and fallback routes.
     ///
     /// Layers are deferred until all routes are assembled, so this covers routes registered
@@ -708,6 +729,39 @@ where
         self
     }
 
+    /// Register a post-assembly hook that receives the assembled router and the application
+    /// context. This is the builder equivalent of
+    /// [`GotchaApp::finish_router`](crate::GotchaApp::finish_router).
+    ///
+    /// Hooks run once when the application starts, after business routes, fallback, and
+    /// documentation endpoints are mounted, in registration order. Use them to mount services
+    /// that need state at construction time, for example a proxy or file handler closing over
+    /// `context.state` via `nest_service` or `fallback_service`. Routes and services added here
+    /// use native Axum routing and are not included in OpenAPI metadata.
+    ///
+    /// [`Self::app_layer`] middleware is installed after these hooks, regardless of registration
+    /// order, so it also covers everything a hook mounts. Hooks do not run during
+    /// [`Self::into_openapi`], which never assembles the application.
+    ///
+    /// ```rust,ignore
+    /// use gotcha::{Gotcha, GotchaContext};
+    ///
+    /// let app = Gotcha::from_state(())
+    ///     .get("/health", || async { "ok" })
+    ///     .finish_router(|router, context: &GotchaContext<(), gotcha::EmptyConfig>| {
+    ///         // let proxy = Proxy::new(context.state.clone());
+    ///         // router.nest_service("/proxy", proxy)
+    ///         router
+    ///     });
+    /// ```
+    pub fn finish_router<F>(mut self, finish: F) -> Self
+    where
+        F: FnOnce(axum::Router, &GotchaContext<S, C>) -> axum::Router + Send + 'static,
+    {
+        self.finish_routers.push(Box::new(finish));
+        self
+    }
+
     /// Set a fallback handler for requests that don't match any route
     pub fn fallback<H, T>(mut self, handler: H) -> Self
     where
@@ -715,6 +769,23 @@ where
         T: 'static,
     {
         self.router = self.router.fallback(handler);
+        self
+    }
+
+    /// Mount a tower `Service` at `path`, handling every request below that prefix.
+    ///
+    /// The service is opaque to OpenAPI: neither the prefix nor its responses appear in the
+    /// generated document. It also does not receive the application context; build it from state
+    /// in [`Self::finish_router`] when it needs application state. See
+    /// [`GotchaRouter::nest_service`](crate::GotchaRouter::nest_service) for the full semantics,
+    /// including how the nested prefix is stripped from the request.
+    pub fn nest_service<T>(mut self, path: &str, service: T) -> Self
+    where
+        T: Service<Request, Error = std::convert::Infallible> + Clone + Send + Sync + 'static,
+        T::Response: Responder,
+        T::Future: Send + 'static,
+    {
+        self.router = self.router.nest_service(path, service);
         self
     }
 
@@ -821,9 +892,9 @@ where
     /// Consume the application builder and export its complete OpenAPI document without HTTP.
     ///
     /// Uses the same generation and transform pipeline as documentation endpoints. Does not
-    /// load configuration, construct default state, register tasks, install application layers,
-    /// or start a server. Registered routes and `FnOnce` transforms are consumed; endpoint
-    /// settings do not affect the document. User transforms execute normally.
+    /// load configuration, construct default state, register tasks, install finish hooks or
+    /// application layers, or start a server. Registered routes and `FnOnce` transforms are
+    /// consumed; endpoint settings do not affect the document. User transforms execute normally.
     #[cfg(feature = "openapi")]
     pub fn into_openapi(self) -> oas::OpenAPIV3 {
         self.router.into_openapi()
@@ -903,12 +974,18 @@ where
     }
 
     async fn router(&mut self, context: GotchaContext<S, C>) -> GotchaResult<axum::Router> {
+        let finish_routers = std::mem::take(&mut self.finish_routers);
+        let app_layers = std::mem::take(&mut self.app_layers);
         crate::assembly::assemble(
             std::mem::take(&mut self.router),
             context,
             #[cfg(feature = "openapi")]
             self.openapi_endpoints.take(),
-            |router| std::mem::take(&mut self.app_layers).into_iter().fold(router, |router, layer| layer(router)),
+            |router, context| {
+                let router = finish_routers.into_iter().fold(router, |router, finish| finish(router, context));
+                // Application layers stay outermost so they cover services mounted by the hooks.
+                app_layers.into_iter().fold(router, |router, layer| layer(router))
+            },
         )
     }
 
@@ -1029,6 +1106,92 @@ mod tests {
             assert_eq!(response.status(), axum::http::StatusCode::OK);
             assert_eq!(to_bytes(response.into_body(), 1024).await.unwrap(), expected);
         }
+    }
+
+    #[tokio::test]
+    async fn builder_route_layers_nest_services_and_finish_hooks_compose() {
+        use axum::{
+            body::{to_bytes, Body},
+            extract::Request,
+            http::{Request as HttpRequest, StatusCode},
+            middleware::{self, Next},
+            response::Response,
+        };
+        use std::sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc,
+        };
+        use tower::ServiceExt;
+
+        #[derive(Clone)]
+        struct RuntimeState(Arc<AtomicUsize>);
+
+        async fn mark_route(request: Request, next: Next) -> Response {
+            let mut response = next.run(request).await;
+            response.headers_mut().insert("x-route-layer", "applied".parse().unwrap());
+            response
+        }
+
+        async fn mark_app(request: Request, next: Next) -> Response {
+            let mut response = next.run(request).await;
+            response.headers_mut().insert("x-app-layer", "applied".parse().unwrap());
+            response
+        }
+
+        let calls = Arc::new(AtomicUsize::new(3));
+        let mut app = Gotcha::from_context(GotchaContext {
+            state: RuntimeState(calls.clone()),
+            config: ConfigWrapper::<EmptyConfig>::default(),
+        })
+        .get("/guarded", || async { "guarded" })
+        .route_layer(middleware::from_fn(mark_route))
+        .nest_service("/assets", tower::service_fn(|_: Request| async { Ok::<_, std::convert::Infallible>("asset") }))
+        .finish_router(|router, context| {
+            let calls = context.state.0.clone();
+            router.nest_service(
+                "/proxy",
+                tower::service_fn(move |_: Request| {
+                    let calls = calls.clone();
+                    async move {
+                        let current = calls.fetch_add(1, Ordering::SeqCst);
+                        Ok::<_, std::convert::Infallible>(format!("proxied {current}"))
+                    }
+                }),
+            )
+        })
+        .fallback(|| async { (StatusCode::NOT_FOUND, "fallback") })
+        .app_layer(middleware::from_fn(mark_app));
+        let router = startup::prepare(&mut app, Some("127.0.0.1:0".parse().unwrap())).await.unwrap().router;
+
+        let get = |path: &'static str| {
+            let router = router.clone();
+            async move {
+                let response = router.oneshot(HttpRequest::builder().uri(path).body(Body::empty()).unwrap()).await.unwrap();
+                let status = response.status();
+                let headers = response.headers().clone();
+                let body = to_bytes(response.into_body(), 1024).await.unwrap().to_vec();
+                (status, headers, body)
+            }
+        };
+
+        let (status, headers, body) = get("/guarded").await;
+        assert_eq!((status, body.as_slice()), (StatusCode::OK, b"guarded".as_slice()));
+        assert_eq!(headers.get("x-route-layer").unwrap(), "applied");
+        assert_eq!(headers.get("x-app-layer").unwrap(), "applied");
+
+        let (status, headers, body) = get("/missing").await;
+        assert_eq!((status, body.as_slice()), (StatusCode::NOT_FOUND, b"fallback".as_slice()));
+        assert!(headers.get("x-route-layer").is_none(), "unmatched requests bypass route_layer");
+        assert_eq!(headers.get("x-app-layer").unwrap(), "applied");
+
+        let (status, headers, body) = get("/assets/file").await;
+        assert_eq!((status, body.as_slice()), (StatusCode::OK, b"asset".as_slice()));
+        assert_eq!(headers.get("x-app-layer").unwrap(), "applied", "app_layer covers nested services");
+
+        let (status, headers, body) = get("/proxy/status").await;
+        assert_eq!((status, body.as_slice()), (StatusCode::OK, b"proxied 3".as_slice()));
+        assert_eq!(headers.get("x-app-layer").unwrap(), "applied", "app_layer covers finish-hook services");
+        assert_eq!(calls.load(Ordering::SeqCst), 4, "the finish hook built the proxy from application state");
     }
 
     #[cfg(feature = "openapi")]
