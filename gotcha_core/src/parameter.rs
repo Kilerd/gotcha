@@ -3,8 +3,9 @@
 //!
 //! It lives in this crate (behind the `axum` feature) rather
 //! than in `gotcha` because the generic `Path<T>` impl overlaps the tuple impls
-//! `Path<(T1,)>` / `Path<(T1, T2)>`. The compiler can only prove those do not overlap — i.e.
-//! that `(T1,)` does not implement [`Schematic`] — in the crate where `Schematic` is defined.
+//! `Path<(T1,)>` through `Path<(T1, ..., T16)>`. The compiler can only prove those do not
+//! overlap — i.e. that a tuple does not implement [`Schematic`] — in the crate where
+//! `Schematic` is defined.
 
 use std::collections::BTreeMap;
 
@@ -40,47 +41,50 @@ fn build_param(name: String, _in: ParameterIn, required: bool, schema: Schema, d
     }
 }
 
-impl<T1: Schematic> ParameterProvider for Path<(T1,)> {
-    fn generate(url: String) -> Either<Vec<Parameter>, RequestBody> {
-        // Since axum 0.8 a captured segment is written `{name}`, matching OpenAPI's own syntax.
-        let pattern = regex::Regex::new(r"\{([^}]+)\}").unwrap();
-        let param_names_in_path: Vec<String> = pattern.captures_iter(&url).map(|digits| digits.get(1).unwrap().as_str().to_string()).collect();
-
-        let t1_param = build_param(
-            param_names_in_path.first().cloned().expect("cannot get param in path"),
-            ParameterIn::Path,
-            T1::required(),
-            T1::generate_schema().schema,
-            T1::doc(),
-        );
-        Either::Left(vec![t1_param])
-    }
+/// Implement [`ParameterProvider`] for [`Path`] tuples of a given arity.
+///
+/// axum deserialises `Path<T>` through serde, which implements `Deserialize` for tuples up to
+/// 16 elements, so 16 is the largest route arity this can document. Parameters are named and
+/// ordered by the route's `{name}` segments.
+macro_rules! impl_path_tuple {
+    ($($t: ident),+) => {
+        impl<$($t: Schematic),+> ParameterProvider for Path<($($t,)+)> {
+            fn generate(url: String) -> Either<Vec<Parameter>, RequestBody> {
+                // Since axum 0.8 a captured segment is written `{name}`, matching OpenAPI's own syntax.
+                let pattern = regex::Regex::new(r"\{([^}]+)\}").unwrap();
+                let mut param_names_in_path = pattern.captures_iter(&url).map(|digits| digits.get(1).unwrap().as_str().to_string());
+                let mut params = vec![];
+                $(
+                    params.push(build_param(
+                        param_names_in_path.next().expect("cannot get param in path"),
+                        ParameterIn::Path,
+                        $t::required(),
+                        $t::generate_schema().schema,
+                        $t::doc(),
+                    ));
+                )+
+                Either::Left(params)
+            }
+        }
+    };
 }
 
-impl<T1: Schematic, T2: Schematic> ParameterProvider for Path<(T1, T2)> {
-    fn generate(url: String) -> Either<Vec<Parameter>, RequestBody> {
-        // Since axum 0.8 a captured segment is written `{name}`, matching OpenAPI's own syntax.
-        let pattern = regex::Regex::new(r"\{([^}]+)\}").unwrap();
-        let param_names_in_path: Vec<String> = pattern.captures_iter(&url).map(|digits| digits.get(1).unwrap().as_str().to_string()).collect();
-
-        let t1_param = build_param(
-            param_names_in_path.first().cloned().expect("cannot get param in path"),
-            ParameterIn::Path,
-            T1::required(),
-            T1::generate_schema().schema,
-            T1::doc(),
-        );
-        let t2_param = build_param(
-            param_names_in_path.get(1).cloned().expect("cannot get param in path"),
-            ParameterIn::Path,
-            T2::required(),
-            T2::generate_schema().schema,
-            T2::doc(),
-        );
-
-        Either::Left(vec![t1_param, t2_param])
-    }
-}
+impl_path_tuple!(T1);
+impl_path_tuple!(T1, T2);
+impl_path_tuple!(T1, T2, T3);
+impl_path_tuple!(T1, T2, T3, T4);
+impl_path_tuple!(T1, T2, T3, T4, T5);
+impl_path_tuple!(T1, T2, T3, T4, T5, T6);
+impl_path_tuple!(T1, T2, T3, T4, T5, T6, T7);
+impl_path_tuple!(T1, T2, T3, T4, T5, T6, T7, T8);
+impl_path_tuple!(T1, T2, T3, T4, T5, T6, T7, T8, T9);
+impl_path_tuple!(T1, T2, T3, T4, T5, T6, T7, T8, T9, T10);
+impl_path_tuple!(T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11);
+impl_path_tuple!(T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12);
+impl_path_tuple!(T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13);
+impl_path_tuple!(T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14);
+impl_path_tuple!(T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15);
+impl_path_tuple!(T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15, T16);
 
 impl<T: Schematic> ParameterProvider for Path<T> {
     fn generate(url: String) -> Either<Vec<Parameter>, RequestBody> {
