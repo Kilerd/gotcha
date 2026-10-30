@@ -699,6 +699,9 @@ where
     ///
     /// Requests that match no route bypass the layer entirely, including the fallback, and
     /// documentation endpoints are not covered. Use [`Self::app_layer`] for every endpoint.
+    ///
+    /// As in Axum, this panics if no routes have been registered yet; register the routes the
+    /// layer should cover first.
     pub fn route_layer<L>(mut self, layer: L) -> Self
     where
         L: Layer<axum::routing::Route> + Clone + Send + Sync + 'static,
@@ -729,8 +732,8 @@ where
         self
     }
 
-    /// Register a post-assembly hook that receives the assembled router and the application
-    /// context. This is the builder equivalent of
+    /// Register a post-assembly hook that receives the assembled router and a clone of the
+    /// application context. This is the builder equivalent of
     /// [`GotchaApp::finish_router`](crate::GotchaApp::finish_router).
     ///
     /// Hooks run once when the application starts, after business routes, fallback, and
