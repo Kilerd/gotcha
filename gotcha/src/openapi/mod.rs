@@ -207,14 +207,15 @@ pub fn generate_openapi(operables: HashMap<(String, Method), &'static Operable>)
         external_docs: None,
         extras: None,
     };
+    let mut document_tags: Vec<Tag> = vec![];
     for (((path, method), _), operation) in operables.into_iter().zip(operations) {
         let path = replace_path_variable(path);
-        if let Some(added_tags) = &operation.tags {
-            added_tags.iter().for_each(|tag| {
-                if let Some(tags) = &mut spec.tags {
-                    if !tags.iter().any(|each| each.name.eq(tag)) {
-                        tags.push(Tag::new(tag, None::<String>))
-                    }
+        // Declare every operation tag at the document level, once, in first-seen order. The
+        // operations were sorted by path and method above, so the document order is stable.
+        if let Some(operation_tags) = &operation.tags {
+            operation_tags.iter().for_each(|tag| {
+                if !document_tags.iter().any(|each| each.name.eq(tag)) {
+                    document_tags.push(Tag::new(tag, None::<String>))
                 }
             })
         }
@@ -245,6 +246,9 @@ pub fn generate_openapi(operables: HashMap<(String, Method), &'static Operable>)
             _ => {}
         }
     }
+    // Documents with no grouped operations stay without a `tags` array rather than gaining an
+    // empty one.
+    spec.tags = (!document_tags.is_empty()).then_some(document_tags);
     spec
 }
 
