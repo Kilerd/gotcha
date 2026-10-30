@@ -470,7 +470,7 @@ Configuration supports:
   A single underscore stays part of the field name, so snake_case fields are addressable, and
   typed fields (numbers, booleans) parse the value rather than rejecting it.
 
-The reserved `[server]` section always starts from typed framework defaults installed beneath
+Framework-managed loading installs typed defaults for the reserved `[server]` section beneath
 every file and environment source. Environment-only configuration therefore works without a
 configuration file:
 
@@ -504,7 +504,20 @@ let _app = Gotcha::new()
     .expect("configuration loads");
 ```
 
-The trait API can use the same builder in a custom `GotchaApp::config()`.
+The trait API can use the same builder in a custom `GotchaApp::config()`. Manual loaders should
+start from `ConfigBuilder::framework_defaults()` rather than `ConfigBuilder::new()`; without the
+typed `[server]` base, `APP_SERVER__PORT` is not coerced when no file supplies `server.port`:
+
+```rust,no_run
+use gotcha::config::{ConfigBuilder, ConfigWrapper};
+
+let config: ConfigWrapper<gotcha::EmptyConfig> = ConfigBuilder::framework_defaults()
+    .file_optional("configurations/application.toml")
+    .env("APP")
+    .enable_vars()
+    .build()
+    .expect("configuration loads");
+```
 
 ### Messages
 

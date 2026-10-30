@@ -785,6 +785,10 @@ files and environment variables. `APP_SERVER__PORT=9000` therefore loads on a ma
 values for those fields are coerced rather than rejected.
 
 - `ConfigSource` gained a `Defaults { value }` variant. Add a wildcard arm to exhaustive matches.
+- `ConfigBuilder::framework_defaults()` creates a builder with the framework's typed server
+  defaults beneath every other source. Framework-managed loading starts there; custom
+  `GotchaApp::config()` implementations should too, or environment-only `APP_SERVER__PORT`
+  will not coerce.
 - `ConfigBuilder::defaults(value)` registers application defaults at the same layer and returns
   `ConfigResult<Self>` because the value must be representable as TOML. Application defaults
   override framework defaults, while files and environment variables override both. Use it from

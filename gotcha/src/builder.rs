@@ -30,7 +30,7 @@ use serde::{Deserialize, Serialize};
 use tower_layer::Layer;
 use tower_service::Service;
 
-use crate::config::{Config, ConfigBuilder, ConfigErrorPolicy, ConfigWrapper, GotchaConfigLoader};
+use crate::config::{ConfigBuilder, ConfigErrorPolicy, ConfigWrapper, GotchaConfigLoader};
 use crate::error::{GotchaError, GotchaResult};
 use crate::router::{GotchaRouter, Responder};
 use crate::routing::MethodRouter;
@@ -333,7 +333,7 @@ where
         F: FnOnce(ConfigBuilder) -> ConfigBuilder,
         C: DeserializeOwned,
     {
-        let builder = Config::framework_builder();
+        let builder = ConfigBuilder::framework_defaults();
         let configured_builder = builder_fn(builder);
         let config: ConfigWrapper<C> = configured_builder.build()?;
         self.config = Configuration::Provided(config);
@@ -375,7 +375,7 @@ where
     /// ```
     pub fn with_env_config<P: AsRef<str>>(mut self, prefix: P) -> Self {
         self.config
-            .update_sources(|builder| builder.unwrap_or_else(Config::framework_builder).enable_vars().env(prefix.as_ref()));
+            .update_sources(|builder| builder.unwrap_or_else(ConfigBuilder::framework_defaults).enable_vars().env(prefix.as_ref()));
         self
     }
 
@@ -395,7 +395,7 @@ where
     /// ```
     pub fn with_file_config<P: AsRef<std::path::Path>>(mut self, path: P) -> Self {
         self.config
-            .update_sources(|builder| builder.unwrap_or_else(Config::framework_builder).enable_vars().file(path));
+            .update_sources(|builder| builder.unwrap_or_else(ConfigBuilder::framework_defaults).enable_vars().file(path));
         self
     }
 
@@ -415,7 +415,7 @@ where
     /// ```
     pub fn with_optional_config<P: AsRef<std::path::Path>>(mut self, path: P) -> Self {
         self.config
-            .update_sources(|builder| builder.unwrap_or_else(Config::framework_builder).enable_vars().file_optional(path));
+            .update_sources(|builder| builder.unwrap_or_else(ConfigBuilder::framework_defaults).enable_vars().file_optional(path));
         self
     }
 
@@ -434,7 +434,7 @@ where
     pub fn with_default_files(mut self) -> Self {
         self.config.update_sources(|builder| {
             let mut builder = builder
-                .unwrap_or_else(Config::framework_builder)
+                .unwrap_or_else(ConfigBuilder::framework_defaults)
                 .file_optional("configurations/application.toml");
             if let Ok(profile) = std::env::var("GOTCHA_ACTIVE_PROFILE") {
                 builder = builder.file_optional(format!("configurations/application_{}.toml", profile));
@@ -457,7 +457,7 @@ where
     /// ```
     pub fn with_default_env(mut self) -> Self {
         self.config
-            .update_sources(|builder| builder.unwrap_or_else(Config::framework_builder).env("APP"));
+            .update_sources(|builder| builder.unwrap_or_else(ConfigBuilder::framework_defaults).env("APP"));
         self
     }
 
@@ -475,7 +475,7 @@ where
     /// ```
     pub fn enable_variable_substitution(mut self) -> Self {
         self.config
-            .update_sources(|builder| builder.unwrap_or_else(Config::framework_builder).enable_vars());
+            .update_sources(|builder| builder.unwrap_or_else(ConfigBuilder::framework_defaults).enable_vars());
         self
     }
 

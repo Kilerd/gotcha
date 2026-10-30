@@ -258,8 +258,25 @@ impl ConfigBuilder {
         self.state.sources.insert(index, ConfigSource::Defaults { value });
     }
 
-    /// Build a loader with the framework's typed server defaults beneath every other source.
-    pub(crate) fn framework_defaults() -> Self {
+    /// Create a builder with the framework's typed server defaults beneath every other source.
+    ///
+    /// Framework-managed loading starts here, so files and environment variables always have
+    /// typed `server.host` and `server.port` values to override and coerce against. A manually
+    /// assembled loader, such as a custom [`GotchaApp::config`](crate::GotchaApp::config)
+    /// implementation, should also start here: without a typed base, mofa cannot coerce
+    /// `APP_SERVER__PORT` to a port number when no file supplies `server.port`.
+    ///
+    /// ```rust,no_run
+    /// use gotcha::config::{ConfigBuilder, ConfigWrapper};
+    ///
+    /// let config: ConfigWrapper<gotcha::EmptyConfig> = ConfigBuilder::framework_defaults()
+    ///     .file_optional("configurations/application.toml")
+    ///     .env("APP")
+    ///     .enable_vars()
+    ///     .build()
+    ///     .expect("configuration loads");
+    /// ```
+    pub fn framework_defaults() -> Self {
         let mut builder = Self::new();
         builder.push_defaults(framework_default_values());
         builder
@@ -316,18 +333,18 @@ pub struct Config;
 
 impl Config {
     /// Create new builder
+    ///
+    /// This does not install the framework's typed server defaults. Use
+    /// [`ConfigBuilder::framework_defaults`] for a loader that also coerces environment-only
+    /// server settings.
     pub fn builder() -> ConfigBuilder {
         ConfigBuilder::new()
     }
 
-    /// Start a loader with the framework's typed server defaults beneath every other source.
-    pub(crate) fn framework_builder() -> ConfigBuilder {
-        ConfigBuilder::framework_defaults()
-    }
-
-    /// Load with defaults
+    /// Load `configurations/application.toml` and the `APP` environment prefix, with variable
+    /// substitution, above the framework's typed server defaults.
     pub fn load_default<T: for<'de> Deserialize<'de> + Default>() -> T {
-        Self::framework_builder()
+        ConfigBuilder::framework_defaults()
             .file_optional("configurations/application.toml")
             .env("APP")
             .enable_vars()
@@ -348,7 +365,7 @@ impl GotchaConfigLoader {
     /// The framework's typed server defaults sit beneath these sources, so environment-only
     /// configuration such as `APP_SERVER__PORT` is coerced to the field's type.
     pub fn load<T: for<'de> Deserialize<'de>>(profile: Option<String>) -> ConfigResult<T> {
-        let mut builder = Config::framework_builder().file_optional("configurations/application.toml");
+        let mut builder = ConfigBuilder::framework_defaults().file_optional("configurations/application.toml");
         if let Some(profile) = profile {
             builder = builder.file_optional(format!("configurations/application_{profile}.toml"));
         }

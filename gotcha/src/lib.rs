@@ -193,8 +193,9 @@ pub trait GotchaApp: Sized + Send + Sync {
     ///
     /// The default loads `configurations/application.toml`, the profile-specific file, and the
     /// `APP` environment prefix above the framework's typed server defaults, so
-    /// `APP_SERVER__PORT` also works without a configuration file. To give the application's own
-    /// fields typed defaults, override this method and build the configuration with
+    /// `APP_SERVER__PORT` also works without a configuration file. An override should start from
+    /// [`ConfigBuilder::framework_defaults`](config::ConfigBuilder::framework_defaults) to keep
+    /// that typed base, and can add application defaults with
     /// [`ConfigBuilder::defaults`](config::ConfigBuilder::defaults).
     fn config(&self) -> impl std::future::Future<Output = GotchaResult<ConfigWrapper<Self::Config>>> + Send
     where
