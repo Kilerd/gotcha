@@ -52,16 +52,20 @@ macro_rules! impl_path_tuple {
             fn generate(url: String) -> Either<Vec<Parameter>, RequestBody> {
                 // Since axum 0.8 a captured segment is written `{name}`, matching OpenAPI's own syntax.
                 let pattern = regex::Regex::new(r"\{([^}]+)\}").unwrap();
-                let mut param_names_in_path = pattern.captures_iter(&url).map(|digits| digits.get(1).unwrap().as_str().to_string());
+                let param_names_in_path: Vec<String> = pattern.captures_iter(&url).map(|digits| digits.get(1).unwrap().as_str().to_string()).collect();
+                let found = param_names_in_path.len();
+                let expected = [$(stringify!($t)),+].len();
+                let types = [$(stringify!($t)),+].join(", ");
+                let mut param_names_in_path = param_names_in_path.into_iter();
                 let mut params = vec![];
                 $(
-                    params.push(build_param(
-                        param_names_in_path.next().expect("cannot get param in path"),
-                        ParameterIn::Path,
-                        $t::required(),
-                        $t::generate_schema().schema,
-                        $t::doc(),
-                    ));
+                    let name = param_names_in_path.next().unwrap_or_else(|| {
+                        panic!("route '{url}' captures {found} path parameter(s), but Path<({types})> expects {expected}")
+                    });
+                    // A matched route always supplies its segments, so every path parameter is
+                    // required regardless of the element type: OpenAPI mandates `required: true`
+                    // for `in: path`, and an `Option` element does not make a segment optional.
+                    params.push(build_param(name, ParameterIn::Path, true, $t::generate_schema().schema, $t::doc()));
                 )+
                 Either::Left(params)
             }

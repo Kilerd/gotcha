@@ -89,3 +89,25 @@ fn sixteen_segment_tuple_is_the_largest_documentable_arity() {
         Either::Right(_) => panic!("Path<(..16 types..)> should generate parameters, not a request body"),
     }
 }
+
+#[test]
+fn optional_tuple_element_does_not_make_a_path_parameter_optional() {
+    // `Option` is not a valid axum extractor for a path segment, but even if a tuple element is
+    // optional by itself, a matched route always supplies the segment and OpenAPI requires
+    // `required: true` for every `in: path` parameter.
+    match <Path<(String, Option<u32>)> as ParameterProvider>::generate("/items/{name}/{version}".to_owned()) {
+        Either::Left(params) => {
+            assert_eq!(params.iter().map(|param| param.name.as_str()).collect::<Vec<_>>(), ["name", "version"]);
+            for param in &params {
+                assert_eq!(param.required, Some(true), "path parameter '{}' must be required", param.name);
+            }
+        }
+        Either::Right(_) => panic!("Path<(String, Option<u32>)> should generate parameters, not a request body"),
+    }
+}
+
+#[test]
+#[should_panic(expected = "route '/items/{id}' captures 1 path parameter(s), but Path<(T1, T2)> expects 2")]
+fn arity_mismatch_panics_with_the_route_and_segment_counts() {
+    let _ = <Path<(String, u32)> as ParameterProvider>::generate("/items/{id}".to_owned());
+}
