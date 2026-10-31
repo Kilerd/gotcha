@@ -1,6 +1,7 @@
 # Migration Guide
 
 - [Unreleased: serde-driven field presence](#unreleased-serde-driven-field-presence)
+- [Unreleased: validation error bodies](#unreleased-validation-error-bodies)
 - [Unreleased: JSON error bodies and extractors](#unreleased-json-error-bodies-and-extractors)
 - [Unreleased: OpenAPI 3.2](#unreleased-openapi-32)
 - [Unreleased: HTTP/1 is always enabled](#unreleased-http1-is-always-enabled)
@@ -59,6 +60,53 @@ needed unless a type relied on the previous document shape.
 
 ---
 
+# Unreleased: validation error bodies
+
+A `Valid` validation failure still returns `422 Unprocessable Entity`, but its body is now the
+framework-wide `ErrorBody` instead of validator's raw `ValidationErrors` structure:
+
+```json
+{
+  "error": "validation failed",
+  "fields": {
+    "address.city": ["length must be at least 1 and at most 64"],
+    "items[0].name": ["length must be at least 1"]
+  }
+}
+```
+
+- Nested struct fields join with `.` (`address.city`), list elements use `[n]`
+  (`items[0].name`), and struct-level (schema) validations keep validator's `__all__` key
+  (`address.__all__` for a nested struct).
+- Every message is non-empty: the declared `#[validate(.., message = "..")]` text or the same
+  readable default the previous body filled in.
+- `ErrorBody` gains `fields: Option<BTreeMap<String, Vec<String>>>`, serialized only when
+  `Some`. Every other provider's body is unchanged. Code that constructs `ErrorBody` with a
+  struct literal must add `fields: None`; `ErrorBody::new(error)` and
+  `ErrorBody::with_fields(error, fields)` avoid depending on the struct's fields.
+- A value validated directly as a collection keeps no field name: `Valid<Json<Vec<T>>>` reports
+  `[0].name`, and a collection of collections `[0][1].name`, instead of validator's internal
+  `_tmp_validator` key.
+- Values of a nested map (`HashMap`/`BTreeMap` with `#[validate(nested)]`) appear as
+  `entries[<index>].name`. Validator indexes them by map iteration order and drops the key, so
+  the original key cannot be recovered and the index may differ between requests.
+- Field segments are Rust field names. Validator keys errors by the Rust identifier and ignores
+  `#[serde(rename = "..")]` / `#[serde(rename_all = "..")]`, so a `first_name` field serialized
+  as `firstName` is reported as `first_name`. Until a follow-up maps wire names, remap the keys
+  in a `ValidConfig::error_handler` if clients need the JSON names.
+- The unreleased `ValidationErrorsBody` type is removed. A custom
+  `ValidConfig::error_handler` still receives `&validator::ValidationErrors`; use
+  `gotcha::validation::flatten_errors(&errors)` to build the same field map (or any other
+  response shape).
+- `ValidationErrors` is no longer registered as an OpenAPI component. The `Valid` default now
+  sends `ErrorBody`, so a document that references `ErrorBody` shows `fields` as an optional
+  object of string arrays (no null branch). Documents that never reference `ErrorBody` are
+  unchanged.
+
+Clients that parsed the raw `ValidationErrors` structure must move to the `fields` map.
+
+---
+
 # Unreleased: JSON error bodies and extractors
 
 **Every extractor provider now has its own rejection configuration.** The defaults keep Axum's
@@ -78,9 +126,10 @@ Default behavior by provider:
   (`rejection.status()`) and `{"error": rejection.body_text()}`. For `TypedHeader` the status is
   `400`.
 - `Header`, `Cookie`: `400` with the same JSON body.
-- `Valid`: validation failures keep today's `422 Unprocessable Entity` with the structured
-  `ValidationErrors` body. A malformed body inside `Valid<Json<T>>` is a `Json` rejection and
-  uses the `Json` handler.
+- `Valid`: validation failures keep today's `422 Unprocessable Entity`, now with the shared
+  `ErrorBody` plus a flattened `fields` map (see
+  [validation error bodies](#unreleased-validation-error-bodies)). A malformed body inside
+  `Valid<Json<T>>` is a `Json` rejection and uses the `Json` handler.
 
 Override one provider on the builder with
 `.extractor_config(JsonConfig::default().error_handler(|rejection| (status, body)))`, or in the
@@ -133,8 +182,9 @@ use gotcha::axum_extra::TypedHeader;
 same JSON body; constructors are `new`, `bad_request`, `not_found`, `conflict`, and `internal`.
 It implements `IntoResponse`, `Schematic`, and `Responsible`, so it can be returned from handlers
 and declared in `#[api(errors(response(status = 404, body = "HttpError")))]` or
-`#[api(responses(...))]`. The registered component is `ErrorBody { error: String }`; either type
-name can be used in a declaration.
+`#[api(responses(...))]`. The registered component is `ErrorBody { error: String, fields:
+Option<BTreeMap<String, Vec<String>>> }`; either type name can be used in a declaration.
+`fields` is optional and omitted when `None`; only `Valid` sets it.
 
 **`GotchaError` no longer leaks its message.** It still renders `500 Internal Server Error`, but
 the body is now `{"error": "internal server error"}`. The full error (including configuration

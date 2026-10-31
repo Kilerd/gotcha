@@ -1,5 +1,7 @@
 //! Error types and the JSON error body used by every framework-generated error response.
 
+use std::collections::BTreeMap;
+
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use serde::Serialize;
@@ -9,14 +11,42 @@ use crate::config::ConfigError;
 
 /// The JSON body of every error response Gotcha generates.
 ///
-/// It serializes as `{"error": "..."}`. The type is public so it can be declared as the body of
-/// an OpenAPI response (`body = "ErrorBody"` in `#[api(errors(...))]` / `#[api(responses(...))]`),
-/// and so applications can reuse the same wire shape for their own errors.
+/// It serializes as `{"error": "..."}`, plus a `fields` map for failures that report more than
+/// one problem: `Valid` sends `{"error": "validation failed", "fields": {"name": ["is
+/// required"]}}`. `fields` is omitted when there is nothing to report, so every other provider's
+/// body is unchanged. The type is public so it can be declared as the body of an OpenAPI response
+/// (`body = "ErrorBody"` in `#[api(errors(...))]` / `#[api(responses(...))]`), and so applications
+/// can reuse the same wire shape for their own errors.
 #[derive(Debug, Clone, Serialize)]
 #[cfg_attr(feature = "openapi", derive(gotcha_macro::Schematic))]
 pub struct ErrorBody {
     /// Human-readable description of the failure.
     pub error: String,
+    /// Per-field failure messages keyed by the field's flattened path (for example `address.city`
+    /// or `items[0].name`). Omitted when `None`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fields: Option<BTreeMap<String, Vec<String>>>,
+}
+
+impl ErrorBody {
+    /// A body with only the `error` message; `fields` stays omitted.
+    pub fn new(error: impl Into<String>) -> Self {
+        Self {
+            error: error.into(),
+            fields: None,
+        }
+    }
+
+    /// A body with the `error` message and per-field failure messages.
+    ///
+    /// `fields` maps a flattened field path (for example `address.city` or `items[0].name`) to
+    /// its messages. [`crate::validation::flatten_errors`] builds this map from validator errors.
+    pub fn with_fields(error: impl Into<String>, fields: BTreeMap<String, Vec<String>>) -> Self {
+        Self {
+            error: error.into(),
+            fields: Some(fields),
+        }
+    }
 }
 
 /// An HTTP error rendered as `{"error": "<message>"}` with `Content-Type: application/json`.
@@ -87,7 +117,7 @@ impl HttpError {
 
 impl IntoResponse for HttpError {
     fn into_response(self) -> Response {
-        json_response(self.status, ErrorBody { error: self.message })
+        json_response(self.status, ErrorBody::new(self.message))
     }
 }
 
@@ -323,5 +353,45 @@ mod tests {
     fn config_error_converts() {
         let err: GotchaError = ConfigError::Error("bad".into()).into();
         assert!(matches!(err, GotchaError::Config(_)));
+    }
+
+    #[test]
+    fn error_body_omits_fields_when_none() {
+        let body = ErrorBody::new("bad");
+        assert_eq!(serde_json::to_value(body).unwrap(), serde_json::json!({"error": "bad"}));
+    }
+
+    #[test]
+    fn error_body_serializes_fields_when_present() {
+        let body = ErrorBody::with_fields(
+            "validation failed",
+            BTreeMap::from([
+                ("address.city".into(), vec!["is required".into()]),
+                ("items[0].name".into(), vec!["too short".into(), "must not be empty".into()]),
+            ]),
+        );
+        assert_eq!(
+            serde_json::to_value(body).unwrap(),
+            serde_json::json!({
+                "error": "validation failed",
+                "fields": {
+                    "address.city": ["is required"],
+                    "items[0].name": ["too short", "must not be empty"]
+                }
+            })
+        );
+    }
+
+    #[cfg(feature = "openapi")]
+    #[test]
+    fn error_body_documents_fields_as_an_optional_object_of_string_arrays() {
+        let schema = serde_json::to_value(<ErrorBody as crate::Schematic>::generate_schema().schema).unwrap();
+        assert_eq!(schema["required"], serde_json::json!(["error"]));
+        assert_eq!(schema["properties"]["error"]["type"], "string");
+        // `skip_serializing_if = "Option::is_none"` means optional with no null branch.
+        assert!(schema["properties"]["fields"].get("anyOf").is_none());
+        assert_eq!(schema["properties"]["fields"]["type"], "object");
+        assert_eq!(schema["properties"]["fields"]["additionalProperties"]["type"], "array");
+        assert_eq!(schema["properties"]["fields"]["additionalProperties"]["items"]["type"], "string");
     }
 }

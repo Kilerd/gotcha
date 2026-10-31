@@ -731,7 +731,7 @@ where
     /// Replace one extractor provider's rejection response.
     ///
     /// Configurations default to the framework's handlers (the original status with a JSON
-    /// `{"error": "..."}` body, or `422` with the structured validation errors for
+    /// `{"error": "..."}` body, or `422` with `{"error": "validation failed", "fields": {...}}` for
     /// [`ValidConfig`](crate::ValidConfig)). Each provider is configured independently; this
     /// method is the builder equivalent of
     /// [`GotchaApp::extractor_configs`](crate::GotchaApp::extractor_configs).
@@ -741,7 +741,7 @@ where
     ///
     /// let app = Gotcha::new()
     ///     .extractor_config(JsonConfig::default().error_handler(|rejection| {
-    ///         (gotcha::axum::http::StatusCode::BAD_REQUEST, gotcha::ErrorBody { error: rejection.body_text() })
+    ///         (gotcha::axum::http::StatusCode::BAD_REQUEST, gotcha::ErrorBody::new(rejection.body_text()))
     ///     }))
     ///     .post("/items", || async { "created" });
     /// ```

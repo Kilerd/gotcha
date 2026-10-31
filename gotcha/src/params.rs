@@ -128,7 +128,7 @@ impl IntoResponse for ParamRejection {
     fn into_response(self) -> Response {
         // The default response for this concrete rejection. A configured `HeaderConfig` or
         // `CookieConfig` can replace it when the extractor renders the rejection.
-        crate::error::json_response(axum::http::StatusCode::BAD_REQUEST, crate::ErrorBody { error: self.to_string() })
+        crate::error::json_response(axum::http::StatusCode::BAD_REQUEST, crate::ErrorBody::new(self.to_string()))
     }
 }
 
