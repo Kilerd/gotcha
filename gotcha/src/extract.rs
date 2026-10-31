@@ -510,6 +510,10 @@ mod openapi {
         fn generate(url: String) -> Either<Vec<oas::Parameter>, oas::RequestBody> {
             <axum::Json<T> as ParameterProvider>::generate(url)
         }
+
+        fn is_request_body() -> bool {
+            <axum::Json<T> as ParameterProvider>::is_request_body()
+        }
     }
 
     impl<T> ParameterProvider for Path<T>
@@ -537,11 +541,19 @@ mod openapi {
         fn generate(url: String) -> Either<Vec<oas::Parameter>, oas::RequestBody> {
             <axum::extract::Form<T> as ParameterProvider>::generate(url)
         }
+
+        fn is_request_body() -> bool {
+            <axum::extract::Form<T> as ParameterProvider>::is_request_body()
+        }
     }
 
     impl ParameterProvider for Multipart {
         fn generate(url: String) -> Either<Vec<oas::Parameter>, oas::RequestBody> {
             <axum::extract::Multipart as ParameterProvider>::generate(url)
+        }
+
+        fn is_request_body() -> bool {
+            <axum::extract::Multipart as ParameterProvider>::is_request_body()
         }
     }
 

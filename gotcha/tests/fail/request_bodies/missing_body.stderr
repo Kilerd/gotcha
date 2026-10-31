@@ -1,0 +1,5 @@
+error: Missing field `body`
+ --> tests/fail/request_bodies/missing_body.rs:3:7
+  |
+3 | #[api(request_body(content_type = "multipart/form-data"))]
+  |       ^^^^^^^^^^^^

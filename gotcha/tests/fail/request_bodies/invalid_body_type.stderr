@@ -1,0 +1,5 @@
+error: unexpected end of input, expected one of: `for`, parentheses, `fn`, `unsafe`, `extern`, identifier, `::`, `<`, square brackets, `*`, `&`, `!`, `impl`, `_`, lifetime
+ --> tests/fail/request_bodies/invalid_body_type.rs:3:7
+  |
+3 | #[api(request_body(body = "Vec<"))]
+  |       ^^^^^^^^^^^^

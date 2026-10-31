@@ -1,0 +1,5 @@
+error: duplicate request_body content_type "application/json"; every entry must declare a distinct media type
+ --> tests/fail/request_bodies/duplicate_content_type.rs:5:5
+  |
+5 |     request_body(body = "String", content_type = "application/json")
+  |     ^^^^^^^^^^^^

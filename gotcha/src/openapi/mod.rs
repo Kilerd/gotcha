@@ -44,6 +44,8 @@ use regex::Regex;
 mod endpoints;
 pub use endpoints::OpenApiEndpoints;
 pub mod schematic;
+/// A binary payload, such as a file field in a `multipart/form-data` form.
+pub use schematic::Binary;
 pub(crate) mod transforms;
 
 /// Match a `{name}` path parameter.
@@ -75,6 +77,19 @@ pub fn replace_path_variable(path: String) -> String {
 pub fn path_variable_names(path: &str) -> Vec<String> {
     let regex = Regex::new(PATH_VARIABLE_PATTERN).expect("path variable pattern is valid");
     regex.captures_iter(path).map(|caps| caps[1].to_string()).collect()
+}
+
+/// Generate the parameters an extractor contributes, dropping any request body it would infer.
+///
+/// `#[api(request_body(...))]` uses this for every handler argument, so a declared body replaces
+/// the inferred one while path, query, header, and cookie parameters are unchanged.
+#[doc(hidden)]
+pub fn parameters_only<T: crate::ParameterProvider>(url: String) -> ParamType {
+    if T::is_request_body() {
+        Either::Left(Vec::new())
+    } else {
+        T::generate(url)
+    }
 }
 
 /// Everything the `#[api]` macro records about one handler, collected via `inventory`.

@@ -641,6 +641,44 @@ Use `responses(...)` to add or override individual statuses while keeping respon
 See [the migration guide](MIGRATION.md#unreleased-http-response-contracts) for media types and
 inference/override rules.
 
+Request bodies are inferred from body extractors such as `Json<T>` and `Form<T>`. When the wire
+shape differs from the extractor's type — most often a `multipart/form-data` upload parsed field
+by field — declare the body with `request_body(...)`:
+
+```rust
+# #[cfg(feature = "openapi")]
+# mod upload_example {
+use gotcha::openapi::Binary;
+use gotcha::prelude::*;
+
+/// A file upload with a title.
+#[derive(Schematic)]
+struct UploadForm {
+    file: Binary,
+    title: String,
+}
+
+#[api(request_body(
+    content_type = "multipart/form-data",
+    body = "UploadForm",
+    description = "File upload"
+))]
+async fn upload(_form: Multipart) -> String {
+    // Read the fields with `Multipart`; the declaration documents the wire format only.
+    String::new()
+}
+# }
+```
+
+The declaration replaces the body that `Json`, `Form`, or `Multipart` would have inferred; path,
+query, header, and cookie parameters are still documented. `content_type` defaults to
+`application/json`, `required` defaults to `true`, and `description` is optional. Repeat
+`request_body(...)` with distinct `content_type` values to describe several representations of the
+same body — the entries must agree on `description` and `required`. Body types become components
+exactly like response bodies.
+`Binary` describes a file field as the OpenAPI 3.2 form
+`{"type": "string", "contentMediaType": "application/octet-stream"}`.
+
 Handlers whose response cannot be inferred — WebSocket upgrades, SSE streams, or any opaque
 return type — use `skip_response`. The nonempty `responses(...)` list is then the complete
 contract and the return type is never referenced by the macro, so `impl Trait` is allowed:
