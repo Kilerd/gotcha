@@ -827,6 +827,14 @@ endpoint itself, and routes or services mounted by `finish_router` are not measu
 `app_layer` middleware runs outside the layer. Custom metrics recorded through
 `gotcha::prometheus` appear on the same endpoint.
 
+Matched routes report their route template (`/users/{id}`), never the concrete URL. Unmatched
+requests, custom fallbacks, and services mounted with `nest_service` share the `<unmatched>`
+label, so scans for random paths cannot grow the metric registry and raw URLs stay out of
+metrics. A metrics path that collides with an enabled documentation endpoint fails assembly;
+collisions with business routes panic as usual in Axum. An application overriding
+`GotchaApp::build_router` can install the same layer and route with
+`MetricsEndpoint::layer(router)`.
+
 The `metrics` recorder is process-wide: the first application assembled with metrics enabled
 installs it, and every later application in the process shares it, so counters and histograms from
 all of them are rendered together. Building several applications with metrics in one process

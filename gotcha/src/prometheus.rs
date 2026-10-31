@@ -24,11 +24,14 @@ use axum::http::header;
 use axum::routing::get;
 use axum::Router;
 use axum_prometheus::metrics_exporter_prometheus::{Matcher, PrometheusBuilder, PrometheusHandle};
-use axum_prometheus::PrometheusMetricLayerBuilder;
+use axum_prometheus::{EndpointLabel, PrometheusMetricLayerBuilder};
 
 use crate::{GotchaError, GotchaResult};
 
 pub use axum_prometheus::metrics::*;
+
+/// Endpoint label reported for requests without a matched route template.
+const UNMATCHED_ENDPOINT: &str = "<unmatched>";
 
 /// HTTP path for the explicitly enabled Prometheus metrics endpoint.
 ///
@@ -38,13 +41,22 @@ pub use axum_prometheus::metrics::*;
 /// to serve it somewhere other than `/metrics`.
 ///
 /// The path must be a literal, absolute URI path without a query, fragment, or `.` / `..`
-/// segment; invalid configuration returns an error during router assembly. Collisions with
-/// existing routes follow Axum's usual route-conflict behavior (panic).
+/// segment; invalid configuration returns an error during router assembly. A path that is also
+/// an enabled OpenAPI documentation endpoint is reported as an assembly error. Collisions with
+/// business routes follow Axum's usual route-conflict behavior (panic).
 ///
 /// The metric layer covers the business routes registered through the application's route
 /// methods, including nested routers. Documentation endpoints, the metrics endpoint itself, and
 /// routes or services mounted by `finish_router` are not measured; middleware added with
 /// `app_layer` runs outside the layer, so requests it short-circuits are not counted either.
+///
+/// Matched routes are labelled with their route template (`/users/{id}`), never with the concrete
+/// URL. Requests that match no route — unmatched paths, a custom fallback, and routes mounted
+/// with `nest_service` — share one `<unmatched>` label instead of producing a label per URL, so
+/// scanning for random paths cannot grow the metric registry and raw URLs stay out of metrics.
+///
+/// [`layer`](Self::layer) is the building block used by the framework, and the way for a custom
+/// [`GotchaApp::build_router`](crate::GotchaApp::build_router) override to install metrics.
 ///
 /// ```
 /// use gotcha::{Gotcha, MetricsEndpoint};
@@ -64,25 +76,73 @@ impl Default for MetricsEndpoint {
 }
 
 impl MetricsEndpoint {
-    pub(crate) fn install(self) -> GotchaResult<InstalledMetrics> {
+    /// Install the metric layer over every route already registered in `router`, then mount the
+    /// render route at [`path`](Self::path).
+    ///
+    /// The framework calls this while assembling; a custom
+    /// [`GotchaApp::build_router`](crate::GotchaApp::build_router) override can call it too, on
+    /// the router holding the application's business routes. Mount documentation routes after
+    /// this call so their requests are not measured; the metrics route itself is mounted after
+    /// the layer and is never measured. Avoid registering another route at
+    /// [`path`](Self::path): Axum panics on the conflict.
+    ///
+    /// The `metrics` recorder is process-wide (see [`prometheus`](crate::prometheus)): the first
+    /// call in the process installs it and later calls reuse it. An invalid path, or a
+    /// pre-existing foreign `metrics` recorder, returns an error.
+    ///
+    /// ```
+    /// use gotcha::axum::routing::get;
+    /// use gotcha::axum::Router;
+    /// use gotcha::MetricsEndpoint;
+    ///
+    /// # async fn example() -> gotcha::GotchaResult<()> {
+    /// let router = Router::new().route("/health", get(|| async { "ok" }));
+    /// let router = MetricsEndpoint::default().layer(router)?;
+    /// # Ok(()) }
+    /// ```
+    pub fn layer(self, router: Router) -> GotchaResult<Router> {
+        let installed = self.install()?;
+        let router = router.layer(installed.layer.clone());
+        Ok(installed.mount(router))
+    }
+
+    fn install(self) -> GotchaResult<InstalledMetrics> {
         crate::endpoint::validate_path("metrics endpoint", &self.path)?;
         let handle = recorder()?;
-        let (layer, _) = PrometheusMetricLayerBuilder::new().with_metrics_from_fn(|| handle.clone()).build_pair();
+        let (layer, _) = PrometheusMetricLayerBuilder::new()
+            .with_endpoint_label_type(EndpointLabel::MatchedPathWithFallbackFn(|_| UNMATCHED_ENDPOINT.to_owned()))
+            .with_metrics_from_fn(|| handle.clone())
+            .build_pair();
         Ok(InstalledMetrics { endpoint: self, layer, handle })
+    }
+
+    #[cfg(feature = "openapi")]
+    pub(crate) fn ensure_no_openapi_conflict(&self, endpoints: &crate::OpenApiEndpoints) -> GotchaResult<()> {
+        let documentation = [
+            Some(endpoints.json_path.as_str()),
+            endpoints.redoc_path.as_deref(),
+            endpoints.scalar_path.as_deref(),
+        ];
+        if documentation.into_iter().flatten().any(|path| path == self.path) {
+            return Err(GotchaError::message(format!(
+                "metrics endpoint path conflicts with an enabled OpenAPI documentation endpoint: {:?}",
+                self.path
+            )));
+        }
+        Ok(())
     }
 }
 
 /// The metric layer, recorder handle, and path chosen for one assembled application.
-pub(crate) struct InstalledMetrics {
+struct InstalledMetrics {
     endpoint: MetricsEndpoint,
-    pub(crate) layer: axum_prometheus::PrometheusMetricLayer<'static>,
+    layer: axum_prometheus::PrometheusMetricLayer<'static>,
     handle: PrometheusHandle,
 }
 
 impl InstalledMetrics {
-    /// Mount the render route. Called after the layer is installed on the business routes so a
-    /// scrape is not itself recorded.
-    pub(crate) fn mount(self, router: Router) -> Router {
+    // The layer is installed first; mounting afterwards keeps scrapes out of the metrics.
+    fn mount(self, router: Router) -> Router {
         let handle = self.handle;
         router.route(
             &self.endpoint.path,
@@ -96,9 +156,10 @@ impl InstalledMetrics {
 
 /// The process-wide recorder, installed on first use and shared by every application afterwards.
 ///
-/// The exporter's upkeep runs in the runtime that first installs the recorder, keeping histogram
-/// samples bounded when nothing scrapes the endpoint. In a process without a Tokio runtime it is
-/// skipped; rendering still works and drains histograms on each scrape.
+/// Upkeep runs on one dedicated thread, started with the recorder and independent of any Tokio
+/// runtime, so it outlives test runtimes and is started even when the first install happens
+/// outside a runtime. It keeps histogram samples bounded when nothing scrapes the endpoint;
+/// rendering also drains histograms on each scrape.
 fn recorder() -> GotchaResult<PrometheusHandle> {
     static RECORDER: OnceLock<Result<PrometheusHandle, String>> = OnceLock::new();
     RECORDER
@@ -112,14 +173,12 @@ fn recorder() -> GotchaResult<PrometheusHandle> {
                 .build_recorder();
             let handle = recorder.handle();
             axum_prometheus::metrics::set_global_recorder(recorder).map_err(|error| format!("failed to install the Prometheus metrics recorder: {error}"))?;
-            if let Ok(runtime) = tokio::runtime::Handle::try_current() {
-                let upkeep = handle.clone();
-                runtime.spawn(async move {
-                    loop {
-                        tokio::time::sleep(Duration::from_secs(5)).await;
-                        upkeep.run_upkeep();
-                    }
-                });
+            let upkeep = handle.clone();
+            if let Err(error) = std::thread::Builder::new().name("gotcha-metrics-upkeep".into()).spawn(move || loop {
+                std::thread::sleep(Duration::from_secs(5));
+                upkeep.run_upkeep();
+            }) {
+                tracing::warn!("failed to start the Prometheus metrics upkeep thread: {error}");
             }
             Ok(handle)
         })

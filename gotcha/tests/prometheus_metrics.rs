@@ -28,6 +28,7 @@ impl GotchaApp for App {
     fn routes(&self, router: GotchaRouter<Context>) -> GotchaRouter<Context> {
         router
             .get("/hello", || async { "hello" })
+            .get("/users/{id}", || async { "user" })
             .nest("/nested", GotchaRouter::default().get("/ping", || async { "pong" }))
     }
 
@@ -88,6 +89,30 @@ async fn enabled_endpoint_records_business_and_nested_routes() {
 }
 
 #[tokio::test]
+async fn unmatched_requests_share_one_label_and_routes_keep_their_templates() {
+    let app = App {
+        metrics: Some(MetricsEndpoint::default()),
+        ..Default::default()
+    };
+    let router = router(&app).await;
+
+    assert_eq!(get(&router, "/users/42").await.0, StatusCode::OK);
+    for index in 0..50 {
+        let path = format!("/scanning-attempt-{index}");
+        assert_eq!(get(&router, &path).await.0, StatusCode::NOT_FOUND);
+    }
+
+    let (status, _, body) = get(&router, "/metrics").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body.contains(r#"endpoint="/users/{id}""#), "parameterised routes keep their template:\n{body}");
+    assert!(body.contains(r#"endpoint="<unmatched>""#), "{body}");
+    for index in 0..50 {
+        let leaked = format!(r#"endpoint="/scanning-attempt-{index}""#);
+        assert!(!body.contains(&leaked), "unmatched URLs must not become labels:\n{body}");
+    }
+}
+
+#[tokio::test]
 async fn metrics_are_disabled_by_default() {
     let router = router(&App::default()).await;
     assert_eq!(get(&router, "/metrics").await.0, StatusCode::NOT_FOUND);
@@ -125,6 +150,42 @@ async fn invalid_path_fails_assembly() {
         Err(error) => error,
     };
     assert!(error.to_string().contains("metrics endpoint"), "{error}");
+}
+
+#[tokio::test]
+async fn public_layer_helper_installs_the_metrics_endpoint() {
+    let router = Router::new().route("/direct", gotcha::axum::routing::get(|| async { "direct" }));
+    let router = MetricsEndpoint::default().layer(router).expect("metrics layer installs");
+
+    assert_eq!(get(&router, "/direct").await.0, StatusCode::OK);
+    let (status, content_type, body) = get(&router, "/metrics").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(content_type.starts_with("text/plain"), "{content_type}");
+    assert!(body.contains(r#"endpoint="/direct""#), "{body}");
+}
+
+#[cfg(feature = "openapi")]
+#[tokio::test]
+async fn metrics_path_conflicting_with_enabled_documentation_fails_assembly() {
+    for path in ["/openapi.json", "/scalar"] {
+        let app = App {
+            metrics: Some(MetricsEndpoint { path: path.into() }),
+            openapi: true,
+        };
+        let error = match app.build_router(GotchaContext::new((), ConfigWrapper::default())).await {
+            Ok(_) => panic!("{path} conflicts with an enabled documentation endpoint"),
+            Err(error) => error,
+        };
+        assert!(error.to_string().contains("conflicts with an enabled OpenAPI"), "{path}: {error}");
+    }
+
+    // Without documentation endpoints the same path is free.
+    let app = App {
+        metrics: Some(MetricsEndpoint { path: "/openapi.json".into() }),
+        openapi: false,
+    };
+    let router = router(&app).await;
+    assert_eq!(get(&router, "/openapi.json").await.0, StatusCode::OK);
 }
 
 #[tokio::test]
