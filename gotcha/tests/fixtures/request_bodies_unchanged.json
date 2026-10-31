@@ -14,9 +14,8 @@
     }
   },
   "info": {
-    "description": "Gotcha is a framework for building microservices",
-    "title": "Gotcha",
-    "version": "1.0.0"
+    "title": "API",
+    "version": "0.1.0"
   },
   "openapi": "3.2.0",
   "paths": {
