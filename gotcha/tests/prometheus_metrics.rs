@@ -241,14 +241,10 @@ async fn application_layers_wrap_the_metric_layer_and_extractor_configs_stay_out
         }
 
         fn extractor_configs(&self) -> gotcha::ExtractorConfigs {
-            gotcha::ExtractorConfigs::default().set(gotcha::JsonConfig::default().error_handler(|rejection| {
-                (
-                    StatusCode::BAD_REQUEST,
-                    gotcha::ErrorBody {
-                        error: format!("custom: {}", rejection.body_text()),
-                    },
-                )
-            }))
+            gotcha::ExtractorConfigs::default().set(
+                gotcha::JsonConfig::default()
+                    .error_handler(|rejection| (StatusCode::BAD_REQUEST, gotcha::ErrorBody::new(format!("custom: {}", rejection.body_text())))),
+            )
         }
 
         fn finish_router(&self, router: Router, _: &Context) -> Router {
