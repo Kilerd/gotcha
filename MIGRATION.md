@@ -82,7 +82,14 @@ framework-wide `ErrorBody` instead of validator's raw `ValidationErrors` structu
   readable default the previous body filled in.
 - `ErrorBody` gains `fields: Option<BTreeMap<String, Vec<String>>>`, serialized only when
   `Some`. Every other provider's body is unchanged. Code that constructs `ErrorBody` with a
-  struct literal must add `fields: None`.
+  struct literal must add `fields: None`; `ErrorBody::new(error)` and
+  `ErrorBody::with_fields(error, fields)` avoid depending on the struct's fields.
+- A value validated directly as a collection keeps no field name: `Valid<Json<Vec<T>>>` reports
+  `[0].name`, and a collection of collections `[0][1].name`, instead of validator's internal
+  `_tmp_validator` key.
+- Values of a nested map (`HashMap`/`BTreeMap` with `#[validate(nested)]`) appear as
+  `entries[<index>].name`. Validator indexes them by map iteration order and drops the key, so
+  the original key cannot be recovered and the index may differ between requests.
 - The unreleased `ValidationErrorsBody` type is removed. A custom
   `ValidConfig::error_handler` still receives `&validator::ValidationErrors`; use
   `gotcha::validation::flatten_errors(&errors)` to build the same field map (or any other

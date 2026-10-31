@@ -119,27 +119,11 @@ mod tests {
         }
 
         fn json_config() -> JsonConfig {
-            JsonConfig::default().error_handler(|rejection| {
-                (
-                    StatusCode::BAD_REQUEST,
-                    ErrorBody {
-                        error: format!("json: {}", rejection.body_text()),
-                        fields: None,
-                    },
-                )
-            })
+            JsonConfig::default().error_handler(|rejection| (StatusCode::BAD_REQUEST, ErrorBody::new(format!("json: {}", rejection.body_text()))))
         }
 
         fn query_config() -> QueryConfig {
-            QueryConfig::default().error_handler(|rejection| {
-                (
-                    StatusCode::BAD_REQUEST,
-                    ErrorBody {
-                        error: format!("query: {}", rejection.body_text()),
-                        fields: None,
-                    },
-                )
-            })
+            QueryConfig::default().error_handler(|rejection| (StatusCode::BAD_REQUEST, ErrorBody::new(format!("query: {}", rejection.body_text()))))
         }
 
         async fn post_json(router: &Router, path: &str) -> (StatusCode, String) {

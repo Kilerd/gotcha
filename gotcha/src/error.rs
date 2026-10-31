@@ -28,6 +28,27 @@ pub struct ErrorBody {
     pub fields: Option<BTreeMap<String, Vec<String>>>,
 }
 
+impl ErrorBody {
+    /// A body with only the `error` message; `fields` stays omitted.
+    pub fn new(error: impl Into<String>) -> Self {
+        Self {
+            error: error.into(),
+            fields: None,
+        }
+    }
+
+    /// A body with the `error` message and per-field failure messages.
+    ///
+    /// `fields` maps a flattened field path (for example `address.city` or `items[0].name`) to
+    /// its messages. [`crate::validation::flatten_errors`] builds this map from validator errors.
+    pub fn with_fields(error: impl Into<String>, fields: BTreeMap<String, Vec<String>>) -> Self {
+        Self {
+            error: error.into(),
+            fields: Some(fields),
+        }
+    }
+}
+
 /// An HTTP error rendered as `{"error": "<message>"}` with `Content-Type: application/json`.
 ///
 /// Use it as a handler return type or inside `Result<T, HttpError>`:
@@ -96,13 +117,7 @@ impl HttpError {
 
 impl IntoResponse for HttpError {
     fn into_response(self) -> Response {
-        json_response(
-            self.status,
-            ErrorBody {
-                error: self.message,
-                fields: None,
-            },
-        )
+        json_response(self.status, ErrorBody::new(self.message))
     }
 }
 
@@ -342,22 +357,19 @@ mod tests {
 
     #[test]
     fn error_body_omits_fields_when_none() {
-        let body = ErrorBody {
-            error: "bad".into(),
-            fields: None,
-        };
+        let body = ErrorBody::new("bad");
         assert_eq!(serde_json::to_value(body).unwrap(), serde_json::json!({"error": "bad"}));
     }
 
     #[test]
     fn error_body_serializes_fields_when_present() {
-        let body = ErrorBody {
-            error: "validation failed".into(),
-            fields: Some(BTreeMap::from([
+        let body = ErrorBody::with_fields(
+            "validation failed",
+            BTreeMap::from([
                 ("address.city".into(), vec!["is required".into()]),
                 ("items[0].name".into(), vec!["too short".into(), "must not be empty".into()]),
-            ])),
-        };
+            ]),
+        );
         assert_eq!(
             serde_json::to_value(body).unwrap(),
             serde_json::json!({

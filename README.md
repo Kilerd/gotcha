@@ -585,7 +585,7 @@ let app = Gotcha::new()
     .extractor_config(JsonConfig::default().error_handler(|rejection| {
         (
             gotcha::axum::http::StatusCode::UNPROCESSABLE_ENTITY,
-            ErrorBody { error: rejection.body_text(), fields: None },
+            ErrorBody::new(rejection.body_text()),
         )
     }))
     .post("/items", |Json(item): Json<CreateItem>| async move { Json(item) });
@@ -607,9 +607,11 @@ A `Valid` failure keeps `422 Unprocessable Entity` and also renders as `ErrorBod
 ```
 
 Nested struct fields use dotted paths (`address.city`), list elements are indexed
-(`items[0].name`), and struct-level validations keep validator's `__all__` key. Messages are the
-declared ones or readable defaults. A `ValidConfig` handler still receives the original
-`validator::ValidationErrors`; `gotcha::validation::flatten_errors` builds the same field map.
+(`items[0].name`), and struct-level validations keep validator's `__all__` key. A directly
+validated collection has no field name (`[0].name`). Values of a nested map are indexed by
+validator's iteration order and lose their key. Messages are the declared ones or readable
+defaults. A `ValidConfig` handler still receives the original `validator::ValidationErrors`;
+`gotcha::validation::flatten_errors` builds the same field map.
 
 Extractor rejections are `Rejected<R>`: they carry both the original rejection and the rendered
 response, so Axum's per-handler pattern still works:

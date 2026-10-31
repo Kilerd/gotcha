@@ -124,6 +124,14 @@ async fn validate_order(Valid(Json(order)): Valid<Json<Order>>) -> String {
     format!("{}:{}", order.address.city, order.items.len())
 }
 
+async fn validate_list(Valid(Json(items)): Valid<Json<Vec<Validated>>>) -> String {
+    items.len().to_string()
+}
+
+async fn validate_nested_list(Valid(Json(items)): Valid<Json<Vec<Vec<Validated>>>>) -> String {
+    items.len().to_string()
+}
+
 async fn optional(body: Option<Json<Item>>) -> String {
     format!("{:?}", body.map(|Json(item)| item.id))
 }
@@ -167,6 +175,8 @@ impl GotchaApp for App {
             .get("/typed-header", host)
             .post("/valid", validate)
             .post("/valid-order", validate_order)
+            .post("/valid-list", validate_list)
+            .post("/valid-nested-list", validate_nested_list)
             .post("/optional", optional)
             .get("/optional-path", optional_path)
             .post("/per-handler", per_handler)
@@ -308,6 +318,29 @@ async fn valid_default_flattens_nested_list_and_struct_level_errors() {
     assert_eq!(
         serde_json::from_slice::<Value>(&body).unwrap(),
         json!({"error": "validation failed", "fields": {"__all__": ["at least one item is required"]}})
+    );
+}
+
+#[tokio::test]
+async fn valid_default_drops_the_internal_key_for_top_level_collections() {
+    let router = app().await;
+
+    let (status, content_type, body) = send(&router, request("POST", "/valid-list", Some("application/json"), r#"[{"name":""}]"#)).await;
+    assert_eq!((status, content_type.as_str()), (StatusCode::UNPROCESSABLE_ENTITY, "application/json"));
+    assert_eq!(
+        serde_json::from_slice::<Value>(&body).unwrap(),
+        json!({"error": "validation failed", "fields": {"[0].name": ["length must be at least 1"]}})
+    );
+
+    let (status, _, body) = send(
+        &router,
+        request("POST", "/valid-nested-list", Some("application/json"), r#"[[{"name":"ok"}],[{"name":""}]]"#),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(
+        serde_json::from_slice::<Value>(&body).unwrap(),
+        json!({"error": "validation failed", "fields": {"[1][0].name": ["length must be at least 1"]}})
     );
 }
 

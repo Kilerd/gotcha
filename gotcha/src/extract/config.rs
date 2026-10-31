@@ -103,13 +103,7 @@ fn schema_of<E: ErrorBodyResponse>() -> fn() -> crate::EnhancedSchema {
 }
 
 fn default_error(status: StatusCode, message: impl Into<String>) -> Response {
-    json_response(
-        status,
-        crate::ErrorBody {
-            error: message.into(),
-            fields: None,
-        },
-    )
+    json_response(status, crate::ErrorBody::new(message))
 }
 
 macro_rules! rejection_config {

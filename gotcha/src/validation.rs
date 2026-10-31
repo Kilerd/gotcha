@@ -98,9 +98,15 @@ impl<E> std::ops::DerefMut for Valid<E> {
 /// keep validator's own `__all__` key (`__all__` for the validated value itself, or
 /// `address.__all__` for a nested struct).
 ///
+/// A value validated directly as a collection (`Valid<Json<Vec<T>>>`) contributes no field name,
+/// so its elements are keyed `[0].name` (`[0][1].name` for a collection of collections).
+///
 /// Any error without a user-supplied message gets the readable default that the default
 /// [`ValidConfig`](crate::ValidConfig) rejection uses, so no message is empty. The returned map is
-/// ordered by key, so responses are deterministic.
+/// sorted by path, but the paths themselves are only as stable as validator's error structure:
+/// list indices follow validator's index map, and values of a nested map (`HashMap`/`BTreeMap`
+/// with `#[validate(nested)]`) are indexed by map iteration order without their key, so that
+/// index can vary between requests and the original key cannot be recovered.
 ///
 /// The default `Valid` rejection body is this map in [`ErrorBody::fields`](crate::ErrorBody).
 /// Custom [`ValidConfig::error_handler`](crate::ValidConfig::error_handler) handlers receive the
@@ -114,10 +120,7 @@ impl<E> std::ops::DerefMut for Valid<E> {
 /// fn handler(errors: &ValidationErrors) -> (StatusCode, ErrorBody) {
 ///     (
 ///         StatusCode::UNPROCESSABLE_ENTITY,
-///         ErrorBody {
-///             error: "invalid input".into(),
-///             fields: Some(flatten_errors(errors)),
-///         },
+///         ErrorBody::with_fields("invalid input", flatten_errors(errors)),
 ///     )
 /// }
 ///
@@ -138,7 +141,16 @@ pub fn flatten_errors(errors: &ValidationErrors) -> BTreeMap<String, Vec<String>
 
 fn flatten_into(errors: &ValidationErrors, prefix: &str, fields: &mut BTreeMap<String, Vec<String>>) {
     for (field, kind) in errors.0.iter() {
-        let path = if prefix.is_empty() { field.to_string() } else { format!("{prefix}.{field}") };
+        // A collection's own errors are stored under this internal key (the validated value
+        // itself is a `Vec`/map, or an element of a collection is). It names no field, so it
+        // contributes no path segment: `[0].name` instead of `_tmp_validator[0].name`.
+        let path = if field.as_ref() == "_tmp_validator" {
+            prefix.to_string()
+        } else if prefix.is_empty() {
+            field.to_string()
+        } else {
+            format!("{prefix}.{field}")
+        };
         match kind {
             ValidationErrorsKind::Field(errors) => {
                 let messages = fields.entry(path).or_default();
@@ -184,10 +196,7 @@ impl std::fmt::Display for ValidRejection {
 /// The default `Valid` rejection: send the flattened errors inside an [`ErrorBody`](crate::ErrorBody)
 /// as `422 Unprocessable Entity`.
 pub(crate) fn validation_error_response(errors: &ValidationErrors) -> Response {
-    let body = crate::ErrorBody {
-        error: "validation failed".to_string(),
-        fields: Some(flatten_errors(errors)),
-    };
+    let body = crate::ErrorBody::with_fields("validation failed", flatten_errors(errors));
     crate::error::json_response(StatusCode::UNPROCESSABLE_ENTITY, body)
 }
 
@@ -402,6 +411,12 @@ mod tests {
         child: NestedSchema,
     }
 
+    #[derive(Deserialize, Validate)]
+    struct MapHolder {
+        #[validate(nested)]
+        entries: std::collections::HashMap<String, LineItem>,
+    }
+
     /// The single field error recorded for `field`.
     fn field_error<'a>(errors: &'a ValidationErrors, field: &str) -> &'a ValidationError {
         match errors.0.get(field).expect("field has errors") {
@@ -484,6 +499,47 @@ mod tests {
             flatten_errors(&errors),
             BTreeMap::from([("child.__all__".to_string(), vec!["failed validation: some_custom_rule".to_string()])])
         );
+    }
+
+    #[test]
+    fn flatten_errors_drops_validators_internal_collection_key() {
+        // validator reports errors of the validated value itself under `_tmp_validator`, which
+        // names no field; a top-level list therefore starts at `[0]`.
+        let errors = vec![Payload { age: 200 }].validate().unwrap_err();
+        assert_eq!(
+            flatten_errors(&errors),
+            BTreeMap::from([("[0].age".to_string(), vec!["must be at least 0 and at most 150".to_string()])])
+        );
+
+        // Nested lists repeat the internal key at each level: `[0][1].age`.
+        let errors = vec![vec![Payload { age: 3 }, Payload { age: 200 }]].validate().unwrap_err();
+        assert_eq!(
+            flatten_errors(&errors),
+            BTreeMap::from([("[0][1].age".to_string(), vec!["must be at least 0 and at most 150".to_string()])])
+        );
+    }
+
+    #[test]
+    fn flatten_errors_indexes_map_values_without_their_keys() {
+        // validator indexes map values by iteration order and drops the key, so the path shape is
+        // stable but the index is not.
+        let holder = MapHolder {
+            entries: std::collections::HashMap::from([
+                ("ok".to_string(), LineItem { name: "ok".into() }),
+                ("user@example.com".to_string(), LineItem { name: String::new() }),
+            ]),
+        };
+        let errors = holder.validate().unwrap_err();
+        let fields = flatten_errors(&errors);
+        assert_eq!(fields.len(), 1, "{fields:?}");
+        let (path, messages) = fields.iter().next().unwrap();
+        assert!(
+            path == "entries[0].name" || path == "entries[1].name",
+            "map values are indexed by iteration order, without their key: {path}"
+        );
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0], "length must be at least 1");
+        assert!(!path.contains("user@example.com"));
     }
 
     #[tokio::test]

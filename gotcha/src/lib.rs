@@ -351,7 +351,7 @@ pub trait GotchaApp: Sized + Send + Sync {
     ///     type Config = EmptyConfig;
     ///     fn extractor_configs(&self) -> ExtractorConfigs {
     ///         ExtractorConfigs::default().set(JsonConfig::default().error_handler(|rejection| {
-    ///             (gotcha::axum::http::StatusCode::UNPROCESSABLE_ENTITY, ErrorBody { error: rejection.body_text(), fields: None })
+    ///             (gotcha::axum::http::StatusCode::UNPROCESSABLE_ENTITY, ErrorBody::new(rejection.body_text()))
     ///         }))
     ///     }
     ///     fn routes(&self, router: GotchaRouter<GotchaContext<(), EmptyConfig>>) -> GotchaRouter<GotchaContext<(), EmptyConfig>> {

@@ -741,7 +741,7 @@ where
     ///
     /// let app = Gotcha::new()
     ///     .extractor_config(JsonConfig::default().error_handler(|rejection| {
-    ///         (gotcha::axum::http::StatusCode::BAD_REQUEST, gotcha::ErrorBody { error: rejection.body_text(), fields: None })
+    ///         (gotcha::axum::http::StatusCode::BAD_REQUEST, gotcha::ErrorBody::new(rejection.body_text()))
     ///     }))
     ///     .post("/items", || async { "created" });
     /// ```
