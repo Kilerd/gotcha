@@ -65,6 +65,9 @@ pub struct GotchaRouter<State = ()> {
     openapi_info: oas::Info,
     /// Per-extractor rejection configurations, applied when the application is assembled.
     pub(crate) extractor_configs: crate::extract::ExtractorConfigs,
+    /// Whether operations document Gotcha's extractor rejection responses.
+    #[cfg(feature = "openapi")]
+    pub(crate) document_extractor_errors: bool,
     pub(crate) router: Router<State>,
 }
 impl<State: Clone + Send + Sync + 'static> Default for GotchaRouter<State> {
@@ -77,6 +80,8 @@ impl<State: Clone + Send + Sync + 'static> Default for GotchaRouter<State> {
             #[cfg(feature = "openapi")]
             openapi_info: crate::openapi::default_info(),
             extractor_configs: Default::default(),
+            #[cfg(feature = "openapi")]
+            document_extractor_errors: true,
             router: Router::new(),
         }
     }
@@ -189,6 +194,8 @@ impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
             #[cfg(feature = "openapi")]
             openapi_info: self.openapi_info,
             extractor_configs: self.extractor_configs,
+            #[cfg(feature = "openapi")]
+            document_extractor_errors: self.document_extractor_errors,
             router: self.router.nest(path, router.router),
         }
     }
@@ -213,6 +220,8 @@ impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
             #[cfg(feature = "openapi")]
             openapi_info: self.openapi_info,
             extractor_configs: self.extractor_configs,
+            #[cfg(feature = "openapi")]
+            document_extractor_errors: self.document_extractor_errors,
             router: self.router.merge(other.router),
         }
     }
@@ -247,6 +256,8 @@ impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
             #[cfg(feature = "openapi")]
             openapi_info: self.openapi_info,
             extractor_configs: self.extractor_configs,
+            #[cfg(feature = "openapi")]
+            document_extractor_errors: self.document_extractor_errors,
             router: self.router.layer(layer),
         }
     }
@@ -285,6 +296,8 @@ impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
             #[cfg(feature = "openapi")]
             openapi_info: self.openapi_info,
             extractor_configs: self.extractor_configs,
+            #[cfg(feature = "openapi")]
+            document_extractor_errors: self.document_extractor_errors,
             router: self.router.route_layer(layer),
         }
     }
@@ -303,6 +316,8 @@ impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
             #[cfg(feature = "openapi")]
             openapi_info: self.openapi_info,
             extractor_configs: self.extractor_configs,
+            #[cfg(feature = "openapi")]
+            document_extractor_errors: self.document_extractor_errors,
             router: self.router.fallback(handler),
         }
     }
@@ -337,6 +352,8 @@ impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
             #[cfg(feature = "openapi")]
             openapi_info: self.openapi_info,
             extractor_configs: self.extractor_configs,
+            #[cfg(feature = "openapi")]
+            document_extractor_errors: self.document_extractor_errors,
             router: self.router.fallback_service(service),
         }
     }
@@ -380,6 +397,8 @@ impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
             #[cfg(feature = "openapi")]
             openapi_info: self.openapi_info,
             extractor_configs: self.extractor_configs,
+            #[cfg(feature = "openapi")]
+            document_extractor_errors: self.document_extractor_errors,
             router: self.router.nest_service(path, service),
         }
     }
@@ -453,13 +472,28 @@ impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
         self
     }
 
+    /// Include or omit the rejection responses of the Gotcha extractor providers.
+    ///
+    /// Documentation adds them by default: every operation documents the statuses its `Json`,
+    /// `Form`, `Query`, `Path`, `Multipart`, `TypedHeader`, `Header`, `Cookie`, and `Valid`
+    /// arguments can reject with, using the application's extractor configurations. Pass `false`
+    /// to document only the responses inferred from the return type and declared in `#[api]`.
+    ///
+    /// The setting is application-level: `nest` and `merge` keep the parent's value, like
+    /// extractor configurations. It applies to documents served by the application and to
+    /// [`Self::into_openapi`].
+    #[cfg(feature = "openapi")]
+    pub fn document_extractor_errors(mut self, document: bool) -> Self {
+        self.document_extractor_errors = document;
+        self
+    }
+
     #[cfg(feature = "openapi")]
     pub(crate) fn into_openapi_parts(mut self) -> (Router<State>, oas::OpenAPIV3, crate::extract::ExtractorConfigs) {
-        // Configured handlers register their body types as components, as in HTTP assembly.
-        let schemas = self.extractor_configs.schemas();
-        let spec = self.openapi_transforms.apply(crate::openapi::generate_openapi_with_schemas_and_info(
+        let spec = self.openapi_transforms.apply(crate::openapi::generate_openapi_with_configs_and_info(
             self.operations,
-            schemas,
+            &self.extractor_configs,
+            self.document_extractor_errors,
             self.openapi_info,
         ));
         let configs = std::mem::take(&mut self.extractor_configs);

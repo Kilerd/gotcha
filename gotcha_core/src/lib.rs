@@ -55,7 +55,7 @@ pub use responsible::Responsible;
 pub mod parameter;
 #[cfg(feature = "axum")]
 #[cfg_attr(docsrs, doc(cfg(feature = "axum")))]
-pub use parameter::ParameterProvider;
+pub use parameter::{ExtractorKind, ParameterProvider};
 
 /// A schema plus whether the value it describes is required where it appears.
 pub struct EnhancedSchema {

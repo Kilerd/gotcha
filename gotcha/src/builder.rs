@@ -754,6 +754,26 @@ where
         self
     }
 
+    /// Include or omit the rejection responses of Gotcha's extractor providers in OpenAPI.
+    ///
+    /// They are documented by default. Pass `false` to document only the responses inferred from
+    /// the handler's return type and declared in `#[api]`. The builder equivalent of
+    /// [`GotchaApp::document_extractor_errors`](crate::GotchaApp::document_extractor_errors);
+    /// the setting applies to served and exported documents.
+    ///
+    /// ```rust,no_run
+    /// use gotcha::{Gotcha, Json};
+    ///
+    /// let app = Gotcha::new()
+    ///     .document_extractor_errors(false)
+    ///     .post("/items", |_: Json<String>| async { "created" });
+    /// ```
+    #[cfg(feature = "openapi")]
+    pub fn document_extractor_errors(mut self, document: bool) -> Self {
+        self.router = self.router.document_extractor_errors(document);
+        self
+    }
+
     /// Apply a layer to business routes already registered, following Axum's ordering.
     /// Documentation endpoints are not covered. Use [`Self::app_layer`] for every endpoint.
     pub fn layer<L>(mut self, layer: L) -> Self

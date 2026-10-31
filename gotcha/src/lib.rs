@@ -68,7 +68,7 @@ pub use gotcha_core::Responsible;
 
 #[cfg(feature = "openapi")]
 #[cfg_attr(docsrs, doc(cfg(feature = "openapi")))]
-pub use crate::openapi::schematic::{ParameterProvider, Schematic};
+pub use crate::openapi::schematic::{ExtractorKind, ParameterProvider, Schematic};
 #[cfg(feature = "openapi")]
 #[cfg_attr(docsrs, doc(cfg(feature = "openapi")))]
 pub use gotcha_macro::api;
@@ -399,6 +399,24 @@ pub trait GotchaApp: Sized + Send + Sync {
         None
     }
 
+    /// Whether operations document the rejection responses of Gotcha's extractor providers.
+    ///
+    /// The default is `true`: every operation documents the statuses its `Json`, `Form`, `Query`,
+    /// `Path`, `Multipart`, `TypedHeader`, `Header`, `Cookie`, and `Valid` arguments can reject
+    /// with, using [`Self::extractor_configs`]. Return `false` to document only the responses
+    /// inferred from the handler's return type and declared in `#[api]`.
+    ///
+    /// The same setting applies to the served document and to [`Self::openapi_document`]. The
+    /// builder equivalent is
+    /// [`Gotcha::document_extractor_errors`](crate::Gotcha::document_extractor_errors). Exporting
+    /// directly from `routes(..)` does not see this hook: pass the value on with
+    /// [`GotchaRouter::document_extractor_errors`], as in
+    /// `app.routes(GotchaRouter::default()).document_extractor_errors(app.document_extractor_errors())`.
+    #[cfg(feature = "openapi")]
+    fn document_extractor_errors(&self) -> bool {
+        true
+    }
+
     /// Rejection responses for the extractors this application uses.
     ///
     /// The default is every provider's default handler. Override it and use
@@ -440,6 +458,7 @@ pub trait GotchaApp: Sized + Send + Sync {
         self.routes(GotchaRouter::default())
             .with_extractor_configs(self.extractor_configs())
             .openapi_info(self.openapi_info())
+            .document_extractor_errors(self.document_extractor_errors())
             .into_openapi()
     }
 
@@ -475,7 +494,9 @@ pub trait GotchaApp: Sized + Send + Sync {
             let router = GotchaRouter::<GotchaContext<Self::State, Self::Config>>::default();
             let router = self.routes(router).with_extractor_configs(self.extractor_configs());
             #[cfg(feature = "openapi")]
-            let router = router.openapi_info(self.openapi_info());
+            let router = router
+                .openapi_info(self.openapi_info())
+                .document_extractor_errors(self.document_extractor_errors());
             assembly::assemble(
                 router,
                 context,

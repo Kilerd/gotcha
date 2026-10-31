@@ -598,6 +598,46 @@ Each endpoint declares its complete error set; the same enum can be shared by en
 different errors. `body` describes the actual wire data, which may be separate from the error enum.
 `errors(...)` also supports return type aliases such as `ApiResult<T>`.
 
+#### Extractor rejection responses
+
+Operations also document the rejections of Gotcha's extractor providers, on by default. An
+argument using `Json`, `Form`, `Query`, `Path`, `Multipart`, `TypedHeader`, `Header`, `Cookie`, or
+`Valid` adds one response per status that provider can reject with:
+
+| Provider | Statuses | Default body |
+| --- | --- | --- |
+| `Json` | `400`, `413`, `415`, `422` | `ErrorBody` |
+| `Form` | `400`, `413`, `415`, `422` | `ErrorBody` |
+| `Query` | `400` | `ErrorBody` |
+| `Path` | `400`, `500` | `ErrorBody` |
+| `Multipart` | `400` | `ErrorBody` |
+| `TypedHeader`, `Header`, `Cookie` | `400` | `ErrorBody` |
+| `Valid` | `422` plus its inner extractor's statuses | `ErrorBody` |
+
+The body is whatever the provider's `error_handler` sends: `ErrorBody` by default, or the custom
+type. When several providers share a status with the same body, one response is emitted;
+different bodies become `oneOf` references under `application/json`. Descriptions list the causes,
+for example `Request rejected: invalid query string / invalid JSON body`. A status declared in
+`errors(...)` or `responses(...)` wins over the automatic one.
+
+A custom handler declares the statuses it actually returns with `.statuses([..])`; otherwise the
+provider's default statuses above are documented:
+
+```rust
+use gotcha::axum::http::StatusCode;
+use gotcha::{Gotcha, JsonConfig};
+
+let app = Gotcha::new()
+    .extractor_config(JsonConfig::default().statuses([StatusCode::BAD_REQUEST, StatusCode::CONFLICT]));
+```
+
+Axum's own extractors (`gotcha::axum::extract::*`) and custom `ParameterProvider` implementations
+keep their own rejection contract and document nothing automatically. A declared
+`request_body(...)` replaces only the body schema; the extractor that runs still contributes its
+rejections. Opt the whole application out with `.document_extractor_errors(false)` on the builder,
+`GotchaApp::document_extractor_errors`, or `GotchaRouter::document_extractor_errors`. See
+[the migration guide](MIGRATION.md#unreleased-extractor-rejection-responses-in-openapi).
+
 Each extractor provider has its own rejection configuration. The defaults keep Axum's own status
 (`400`, `415`, `422`, ...) and send `{"error": "<message>"}` as JSON; a `Valid` validation failure
 adds a `fields` map to that body, and `GotchaError` renders `500` with a generic message while
@@ -619,9 +659,10 @@ let app = Gotcha::new()
 ```
 
 The handler receives a reference to that provider's concrete rejection type and returns
-`(StatusCode, E)`. With the `openapi` feature, `E` must also implement `Schematic`, and an
-overridden body is registered as a component; defaults add no components, so existing documents
-stay unchanged. The builder and the trait API (`GotchaApp::extractor_configs`) share the same
+`(StatusCode, E)`. With the `openapi` feature, `E` must also implement `Schematic`, and every
+configured body used by an operation is registered as a component. The default `ErrorBody` is
+referenced by the automatic rejection responses described above. The builder and the trait API
+(`GotchaApp::extractor_configs`) share the same
 config types. Providers are `Json`, `Form`, `Query`, `Path`, `Multipart`, `TypedHeader`,
 `Header`, `Cookie`, and `Valid` (validation failures only; a malformed body inside
 `Valid<Json<T>>` uses the `Json` handler).
@@ -724,8 +765,10 @@ exactly like response bodies.
 `{"type": "string", "contentMediaType": "application/octet-stream"}`.
 
 Handlers whose response cannot be inferred — WebSocket upgrades, SSE streams, or any opaque
-return type — use `skip_response`. The nonempty `responses(...)` list is then the complete
-contract and the return type is never referenced by the macro, so `impl Trait` is allowed:
+return type — use `skip_response`. The nonempty `responses(...)` list then describes the
+return-type part of the contract, and the return type is never referenced by the macro, so
+`impl Trait` is allowed. Extractor rejection responses are still added, and explicit statuses
+still win, as described above:
 
 ```rust
 # #[cfg(feature = "openapi")]

@@ -56,6 +56,11 @@ static PARAMETERS: &[ParamConstructor] = &[
     <Query<Filter> as ParameterProvider>::generate,
     <Json<Envelope<Node>> as ParameterProvider>::generate,
 ];
+static EXTRACTORS: &[gotcha::openapi::ExtractorConstructor] = &[
+    <Path<u64> as ParameterProvider>::extractor_kinds,
+    <Query<Filter> as ParameterProvider>::extractor_kinds,
+    <Json<Envelope<Node>> as ParameterProvider>::extractor_kinds,
+];
 static MANUAL: Operable = Operable {
     type_name: concat!(module_path!(), "::replace_tree"),
     id: "replace_tree",
@@ -65,6 +70,7 @@ static MANUAL: Operable = Operable {
     deprecated: true,
     security: Some("token"),
     parameters: PARAMETERS,
+    extractors: EXTRACTORS,
     responses: || {
         let mut responses = gotcha::response::response::<Envelope<Node>>(202, "application/json", "HTTP 202");
         gotcha::response::merge_responses(
@@ -103,7 +109,9 @@ fn descriptors_build_fresh_path_specific_documents() {
     );
     assert_eq!(
         operation["responses"].as_object().unwrap().keys().map(String::as_str).collect::<Vec<_>>(),
-        ["202", "409"]
+        // Path and Query reject with 400; Path also reports missing captures as 500; Json
+        // rejects with 400/413/415/422. Deployment rewrites each reference.
+        ["202", "400", "409", "413", "415", "422", "500"]
     );
     assert_eq!(operation["responses"]["409"]["description"], "Tree conflict");
     let schemas = &first["components"]["schemas"];

@@ -212,7 +212,7 @@ mod openapi {
     use gotcha_core::Schematic;
 
     use super::{Cookie, CookieParam, Header, HeaderParam};
-    use crate::{Either, ParameterProvider};
+    use crate::{Either, ExtractorKind, ParameterProvider};
 
     fn parameter<T: Schematic>(name: &'static str, _in: ParameterIn, required: bool, description: Option<&'static str>) -> Either<Vec<Parameter>, RequestBody> {
         let schema = T::generate_schema();
@@ -239,11 +239,19 @@ mod openapi {
         fn generate(_url: String) -> Either<Vec<Parameter>, RequestBody> {
             parameter::<T>(T::NAME, ParameterIn::Header, T::REQUIRED, T::DESCRIPTION)
         }
+
+        fn extractor_kinds() -> &'static [ExtractorKind] {
+            &[ExtractorKind::Header]
+        }
     }
 
     impl<T: CookieParam + Schematic> ParameterProvider for Cookie<T> {
         fn generate(_url: String) -> Either<Vec<Parameter>, RequestBody> {
             parameter::<T>(T::NAME, ParameterIn::Cookie, T::REQUIRED, T::DESCRIPTION)
+        }
+
+        fn extractor_kinds() -> &'static [ExtractorKind] {
+            &[ExtractorKind::Cookie]
         }
     }
 }

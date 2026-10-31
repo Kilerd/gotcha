@@ -344,6 +344,11 @@ where
     fn is_request_body() -> bool {
         true
     }
+
+    fn extractor_kinds() -> &'static [crate::ExtractorKind] {
+        // A malformed body is a `Json` rejection; only a decoded body can fail validation.
+        &[crate::ExtractorKind::Valid, crate::ExtractorKind::Json]
+    }
 }
 
 #[cfg(feature = "openapi")]
@@ -357,6 +362,11 @@ where
 
     fn is_request_body() -> bool {
         true
+    }
+
+    fn extractor_kinds() -> &'static [crate::ExtractorKind] {
+        // Axum's `Json` keeps its plain-text rejection, so only validation failures are Gotcha's.
+        &[crate::ExtractorKind::Valid]
     }
 }
 

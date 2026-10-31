@@ -108,19 +108,50 @@ async fn handlers_declare_their_own_errors_without_an_error_response_trait() {
     let responses = |path: &str| spec["paths"][path]["get"]["responses"].as_object().unwrap();
     assert_eq!(
         responses("/create/{id}").keys().map(String::as_str).collect::<Vec<_>>(),
-        ["201", "404", "409", "500"]
+        // `Path` rejection responses join the declared ones; the explicit `500` wins over the
+        // provider's automatic one.
+        ["201", "400", "404", "409", "500"]
     );
-    assert_eq!(responses("/lookup/{id}").keys().map(String::as_str).collect::<Vec<_>>(), ["200", "404"]);
+    assert_eq!(
+        responses("/lookup/{id}").keys().map(String::as_str).collect::<Vec<_>>(),
+        ["200", "400", "404", "500"]
+    );
     assert_eq!(responses("/dynamic").keys().map(String::as_str).collect::<Vec<_>>(), ["409", "default"]);
     assert_eq!(responses("/create/{id}")["409"]["description"], "Duplicate user");
     assert_eq!(responses("/dynamic")["409"]["description"], "Operation-specific conflict");
 
+    // The application's own `ErrorBody` collides with the framework body the automatic
+    // rejections reference, so the application type is the one the registry renames.
     for (path, operation, status, body, schema) in [
         ("/create/7", "/create/{id}", 201, json!({"id": 7}), "User"),
-        ("/create/1", "/create/{id}", 404, json!({"message": "user not found"}), "ErrorBody"),
-        ("/create/0", "/create/{id}", 409, json!({"message": "user already exists"}), "ErrorBody"),
-        ("/create/9", "/create/{id}", 500, json!({"message": "internal error"}), "ErrorBody"),
-        ("/lookup/1", "/lookup/{id}", 404, json!({"message": "user not found"}), "ErrorBody"),
+        (
+            "/create/1",
+            "/create/{id}",
+            404,
+            json!({"message": "user not found"}),
+            "ExplicitErrorResponsesErrorBody",
+        ),
+        (
+            "/create/0",
+            "/create/{id}",
+            409,
+            json!({"message": "user already exists"}),
+            "ExplicitErrorResponsesErrorBody",
+        ),
+        (
+            "/create/9",
+            "/create/{id}",
+            500,
+            json!({"message": "internal error"}),
+            "ExplicitErrorResponsesErrorBody",
+        ),
+        (
+            "/lookup/1",
+            "/lookup/{id}",
+            404,
+            json!({"message": "user not found"}),
+            "ExplicitErrorResponsesErrorBody",
+        ),
         ("/dynamic", "/dynamic", 202, json!({"id": 7}), "User"),
     ] {
         assert_eq!(request(&router, path).await, (status, body), "{path}");
@@ -133,8 +164,17 @@ async fn handlers_declare_their_own_errors_without_an_error_response_trait() {
         );
     }
     let schemas = spec["components"]["schemas"].as_object().unwrap();
-    assert_eq!(schemas.keys().map(String::as_str).collect::<Vec<_>>(), ["ErrorBody", "User"]);
-    assert_eq!(schemas["ErrorBody"]["properties"]["message"]["type"], "string");
+    assert_eq!(
+        schemas.keys().map(String::as_str).collect::<Vec<_>>(),
+        ["ErrorBody", "ExplicitErrorResponsesErrorBody", "User"]
+    );
+    assert_eq!(schemas["ExplicitErrorResponsesErrorBody"]["properties"]["message"]["type"], "string");
+    assert_eq!(schemas["ErrorBody"]["properties"]["error"]["type"], "string");
+    // The unclaimed automatic statuses reference the framework body.
+    assert_eq!(
+        responses("/lookup/{id}")["400"]["content"]["application/json"]["schema"]["$ref"],
+        "#/components/schemas/ErrorBody"
+    );
 }
 
 #[test]

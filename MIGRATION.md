@@ -1,5 +1,6 @@
 # Migration Guide
 
+- [Unreleased: extractor rejection responses in OpenAPI](#unreleased-extractor-rejection-responses-in-openapi)
 - [Unreleased: neutral OpenAPI info defaults](#unreleased-neutral-openapi-info-defaults)
 - [Unreleased: serde-driven field presence](#unreleased-serde-driven-field-presence)
 - [Unreleased: validation error bodies](#unreleased-validation-error-bodies)
@@ -25,6 +26,83 @@
 - [Unreleased: default configuration sources](#unreleased-default-configuration-sources)
 - [0.3 → 0.4](#03--04) — **every application must edit its route paths and configuration file**
 - [0.2 → 0.3: API simplification](#02--03-api-simplification)
+
+---
+
+# Unreleased: extractor rejection responses in OpenAPI
+
+**Operations now document the rejections of Gotcha's extractors by default.** An operation whose
+arguments use `Json`, `Form`, `Query`, `Path`, `Multipart`, `TypedHeader`, `Header`, `Cookie`, or
+`Valid` gains a response for every status that provider can reject with, so an existing document
+changes even when the handler code does not. The body is the type configured for that provider:
+`ErrorBody` by default, or the type passed to `XxxConfig::error_handler`.
+
+Default statuses, checked against Axum's rejection types:
+
+| Provider | Statuses |
+| --- | --- |
+| `Json` | `400`, `413`, `415`, `422` |
+| `Form` | `400`, `413`, `415`, `422` |
+| `Query` | `400` |
+| `Path` | `400`, `500` |
+| `Multipart` | `400` |
+| `TypedHeader`, `Header`, `Cookie` | `400` |
+| `Valid` | `422`, plus whatever its inner extractor declares |
+
+`413` is Axum's body-limit rejection, and `Form` also uses `400` when a `GET`/`HEAD` form fails
+to deserialize. `Path` returns `500` when Axum's path parameters are unavailable (for example
+when a handler extracts the whole request first). `Valid<Json<T>>` documents the JSON statuses
+and its own `422`; `Valid<axum::extract::Json<T>>` documents only `422`, because Axum's original
+`Json` keeps its plain-text rejection.
+
+- Several providers can share a status. When they use the same configured body, one response is
+  emitted; different bodies become `oneOf` references under `application/json`. Descriptions list
+  the causes in handler-argument order, such as
+  `Request rejected: invalid query string / invalid JSON body`.
+- A status declared in `#[api(errors(...))]` or `#[api(responses(...))]` wins over the automatic
+  one for that status. Inferred success responses also keep their status.
+- `skip_response` still replaces return-type inference only. Extractor rejection responses are
+  added, and explicit `responses(...)` entries still win. Its nonempty `responses(...)` list is
+  no longer the whole contract when the handler uses Gotcha extractors.
+- Axum's own extractors (`gotcha::axum::extract::*`, `gotcha::axum_extra::TypedHeader`) and
+  custom `ParameterProvider` implementations report no providers and are unchanged. `Option<T>`
+  forwards its inner extractor's rejections: an optional JSON body is still rejected when it is
+  present but malformed.
+- A body replaced with `#[api(request_body(...))]` keeps the rejections of the extractor that
+  actually runs.
+- `ErrorBody` now reserves the component name `ErrorBody` even when an application defines a type
+  with the same name; the application's type receives a module-prefixed name instead.
+- Static `Operable` descriptors gain an `extractors` field, one
+  `<T as ParameterProvider>::extractor_kinds` constructor per documented argument (an empty slice
+  is valid). `ParameterProvider::extractor_kinds` has a default returning an empty slice, so
+  custom implementations need no change. The doc-hidden
+  `generate_openapi_with_schemas{,_and_info}` helpers are replaced by
+  `generate_openapi_with_configs_and_info`.
+
+A custom `error_handler` can declare the statuses it actually returns. Without `.statuses(..)`
+the provider's defaults above are documented:
+
+```rust,no_run
+use gotcha::axum::http::StatusCode;
+use gotcha::{ErrorBody, Gotcha, JsonConfig};
+
+let app = Gotcha::new().extractor_config(
+    JsonConfig::default()
+        .error_handler(|rejection| (StatusCode::BAD_REQUEST, ErrorBody::new(rejection.body_text())))
+        .statuses([StatusCode::BAD_REQUEST, StatusCode::CONFLICT]),
+);
+```
+
+Opt out for the whole application with the builder, the trait hook, or the router. The setting
+applies to served and exported documents:
+
+```rust,no_run
+let app = gotcha::Gotcha::new().document_extractor_errors(false);
+// Or: return false from `GotchaApp::document_extractor_errors`.
+// Or: `GotchaRouter::default().document_extractor_errors(false)`.
+```
+
+Regenerate or republish checked-in documents and generated clients.
 
 ---
 
@@ -180,8 +258,9 @@ Override one provider on the builder with
 trait API by overriding `GotchaApp::extractor_configs` and calling
 `ExtractorConfigs::default().set(...)`. The handler receives a reference to that provider's
 concrete rejection type and returns `(StatusCode, E)`. `E` must be `Serialize`, and with
-`openapi` also `Schematic`; an overridden body is registered as an OpenAPI component (defaults
-add none, so existing documents are unchanged).
+`openapi` also `Schematic`; every configured body is registered as an OpenAPI component when it
+is referenced, and since the automatic rejection responses below document the default
+`ErrorBody`, documents that use a provider gain that component too.
 
 Configurations reach extractors through request extensions installed as the outermost layer,
 after routes, documentation, `finish_router`, and `app_layer` middleware. Extractors used without
@@ -818,8 +897,10 @@ the handler remains responsible for sending the declared status and content type
 schemas participate in the same component collection and reference rewriting as inferred bodies.
 
 When the return type cannot be inferred — WebSocket upgrades, SSE streams, or any opaque type
-such as `Sse<impl Stream<...>>` — add `skip_response`. The nonempty `responses(...)` list is then
-the complete contract and the return type is never placed in a trait path:
+such as `Sse<impl Stream<...>>` — add `skip_response`. The nonempty `responses(...)` list then
+describes the return-type part of the contract, and the return type is never placed in a trait
+path. Extractor rejection responses are still added; see
+[extractor rejection responses in OpenAPI](#unreleased-extractor-rejection-responses-in-openapi):
 
 ```rust,ignore
 #[derive(Schematic)]

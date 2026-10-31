@@ -15,6 +15,33 @@ use oas::{MediaType, Parameter, ParameterIn, RequestBody, Schema};
 
 use crate::Schematic;
 
+/// A Gotcha extractor whose rejections are rendered by a per-provider configuration.
+///
+/// [`ParameterProvider::extractor_kinds`] reports which of these an argument uses, so document
+/// assembly can add the rejection responses the application is configured to send. Axum's own
+/// extractors report none: their rejections keep Axum's plain-text response.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum ExtractorKind {
+    /// The JSON body provider. Rejections are configured with `JsonConfig`.
+    Json,
+    /// The URL-encoded form body provider. Rejections are configured with `FormConfig`.
+    Form,
+    /// The query-string provider. Rejections are configured with `QueryConfig`.
+    Query,
+    /// The path-parameter provider. Rejections are configured with `PathConfig`.
+    Path,
+    /// The multipart form provider. Rejections are configured with `MultipartConfig`.
+    Multipart,
+    /// The typed-header provider. Rejections are configured with `TypedHeaderConfig`.
+    TypedHeader,
+    /// Gotcha's typed header parameter. Rejections are configured with `HeaderConfig`.
+    Header,
+    /// Gotcha's typed cookie parameter. Rejections are configured with `CookieConfig`.
+    Cookie,
+    /// The `Valid` wrapper's validation failure. Configured with `ValidConfig`.
+    Valid,
+}
+
 /// ParameterProvider is a trait that defines the value which can be used as a parameter.
 pub trait ParameterProvider {
     /// What this extractor contributes to the operation, given the route path.
@@ -31,6 +58,16 @@ pub trait ParameterProvider {
     /// registered as a component.
     fn is_request_body() -> bool {
         false
+    }
+
+    /// The Gotcha providers whose rejection responses this extractor can produce.
+    ///
+    /// Document generation adds one response per status each provider rejects with, using the
+    /// application's configured error handler and body type. The default is empty, so Axum's own
+    /// extractors and user-defined implementations keep their own rejection contract and document
+    /// nothing automatically.
+    fn extractor_kinds() -> &'static [ExtractorKind] {
+        &[]
     }
 }
 
@@ -291,6 +328,10 @@ impl<T: ParameterProvider> ParameterProvider for Option<T> {
 
     fn is_request_body() -> bool {
         T::is_request_body()
+    }
+
+    fn extractor_kinds() -> &'static [ExtractorKind] {
+        T::extractor_kinds()
     }
 }
 

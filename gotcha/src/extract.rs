@@ -499,10 +499,11 @@ where
 #[cfg(feature = "openapi")]
 mod openapi {
     use super::{Form, Json, Multipart, Path, Query, TypedHeader};
-    use crate::{Either, ParameterProvider, Responsible, Schematic};
+    use crate::{Either, ExtractorKind, ParameterProvider, Responsible, Schematic};
 
     /// Documentation is produced by Axum's extractors, so documents do not change when a handler
-    /// switches between the two spellings.
+    /// switches between the two spellings. The Gotcha wrappers do add their rejection responses;
+    /// Axum's originals report no extractor kinds and stay undocumented there.
     impl<T> ParameterProvider for Json<T>
     where
         axum::Json<T>: ParameterProvider,
@@ -514,6 +515,10 @@ mod openapi {
         fn is_request_body() -> bool {
             <axum::Json<T> as ParameterProvider>::is_request_body()
         }
+
+        fn extractor_kinds() -> &'static [ExtractorKind] {
+            &[ExtractorKind::Json]
+        }
     }
 
     impl<T> ParameterProvider for Path<T>
@@ -523,6 +528,10 @@ mod openapi {
         fn generate(url: String) -> Either<Vec<oas::Parameter>, oas::RequestBody> {
             <axum::extract::Path<T> as ParameterProvider>::generate(url)
         }
+
+        fn extractor_kinds() -> &'static [ExtractorKind] {
+            &[ExtractorKind::Path]
+        }
     }
 
     impl<T> ParameterProvider for Query<T>
@@ -531,6 +540,10 @@ mod openapi {
     {
         fn generate(url: String) -> Either<Vec<oas::Parameter>, oas::RequestBody> {
             <axum::extract::Query<T> as ParameterProvider>::generate(url)
+        }
+
+        fn extractor_kinds() -> &'static [ExtractorKind] {
+            &[ExtractorKind::Query]
         }
     }
 
@@ -545,6 +558,10 @@ mod openapi {
         fn is_request_body() -> bool {
             <axum::extract::Form<T> as ParameterProvider>::is_request_body()
         }
+
+        fn extractor_kinds() -> &'static [ExtractorKind] {
+            &[ExtractorKind::Form]
+        }
     }
 
     impl ParameterProvider for Multipart {
@@ -555,6 +572,10 @@ mod openapi {
         fn is_request_body() -> bool {
             <axum::extract::Multipart as ParameterProvider>::is_request_body()
         }
+
+        fn extractor_kinds() -> &'static [ExtractorKind] {
+            &[ExtractorKind::Multipart]
+        }
     }
 
     impl<T> ParameterProvider for TypedHeader<T>
@@ -563,6 +584,10 @@ mod openapi {
     {
         fn generate(url: String) -> Either<Vec<oas::Parameter>, oas::RequestBody> {
             <axum_extra::TypedHeader<T> as ParameterProvider>::generate(url)
+        }
+
+        fn extractor_kinds() -> &'static [ExtractorKind] {
+            &[ExtractorKind::TypedHeader]
         }
     }
 

@@ -327,6 +327,7 @@ pub(crate) fn request_handler(args: TokenStream, input_stream: TokenStream) -> T
     };
 
     let mut params_token: Vec<proc_macro2::TokenStream> = Vec::new();
+    let mut extractor_tokens: Vec<proc_macro2::TokenStream> = Vec::new();
     for param in &input.sig.inputs {
         let FnArg::Typed(typed) = param else {
             continue;
@@ -344,11 +345,13 @@ pub(crate) fn request_handler(args: TokenStream, input_stream: TokenStream) -> T
         let ty = &typed.ty;
         if declared_request_body.is_some() {
             // The declared body replaces whatever a body extractor would infer, without
-            // registering the replaced type's schema.
+            // registering the replaced type's schema. The extractor still runs, so its rejection
+            // responses are still documented.
             params_token.push(quote! { ::gotcha::openapi::parameters_only::<#ty> });
         } else {
             params_token.push(quote! { <#ty as ::gotcha::ParameterProvider>::generate });
         }
+        extractor_tokens.push(quote! { <#ty as ::gotcha::ParameterProvider>::extractor_kinds });
     }
     let ret_type = match &input.sig.output {
         // A handler without an explicit return type returns `()`.
@@ -389,6 +392,7 @@ pub(crate) fn request_handler(args: TokenStream, input_stream: TokenStream) -> T
                 deprecated: #deprecated,
                 security: #security,
                 parameters: &[#(#params_token,)* #declared_request_body],
+                extractors: &[#(#extractor_tokens,)*],
                 responses: || {
                     let mut responses = #ret_responses;
                     // Declared Err alternatives join the inferred Ok contract, including shared statuses.

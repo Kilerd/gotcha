@@ -90,7 +90,8 @@ fn assembly_separates_types_and_rewrites_every_reference_deterministically() {
         assert_eq!(spec, assemble(reverse));
     }
     let schemas = &spec["components"]["schemas"];
-    assert_eq!(schemas.as_object().unwrap().len(), 5);
+    // Five response/body types plus `ErrorBody` from the `Json` rejections of `explicit`.
+    assert_eq!(schemas.as_object().unwrap().len(), 6);
     assert_eq!(schemas["ScreensSendResult"]["properties"]["screen_id"]["type"], "string");
     assert_eq!(schemas["TerminalsSendResult"]["properties"]["exit_code"]["type"], "integer");
     assert_eq!(
