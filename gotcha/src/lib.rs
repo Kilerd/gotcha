@@ -275,19 +275,27 @@ pub trait GotchaApp: Sized + Send + Sync {
         self.routes(GotchaRouter::default()).into_openapi()
     }
 
-    /// Apply application-wide middleware after business routes and documentation are mounted.
+    /// Apply application-wide middleware, or mount state-dependent services, after business
+    /// routes and documentation are mounted.
+    ///
+    /// The hook receives the assembled router and a clone of the application's [`GotchaContext`]:
+    /// the configuration is duplicated, and state that is itself shared (behind an `Arc`, say) is
+    /// the same value the routes see. A service that needs application state at construction time
+    /// — a reverse proxy closing over a registry, for example — can therefore be built from
+    /// `context` and mounted with `nest_service` or `fallback_service`.
     ///
     /// For example, return `router.layer(auth)` to protect every endpoint. This hook runs once
     /// in the default `build_router` implementation and is not called during document export.
     /// Routes added here use native Axum routing and are not included in OpenAPI metadata.
-    fn finish_router(&self, router: axum::Router) -> axum::Router {
+    fn finish_router(&self, router: axum::Router, _context: &GotchaContext<Self::State, Self::Config>) -> axum::Router {
         router
     }
 
     /// Assemble business routes, optional documentation, and then `finish_router`.
     ///
-    /// Prefer `finish_router` for whole-application middleware. Overriding this method takes
-    /// responsibility for the complete assembly, including documentation and final middleware.
+    /// Prefer `finish_router` for whole-application middleware or services that need the
+    /// application context. Overriding this method takes responsibility for the complete
+    /// assembly, including documentation and final middleware.
     fn build_router(&self, context: GotchaContext<Self::State, Self::Config>) -> impl std::future::Future<Output = GotchaResult<axum::Router>> + Send {
         async move {
             let router = GotchaRouter::<GotchaContext<Self::State, Self::Config>>::default();
@@ -297,7 +305,7 @@ pub trait GotchaApp: Sized + Send + Sync {
                 context,
                 #[cfg(feature = "openapi")]
                 self.openapi_endpoints(),
-                |router| self.finish_router(router),
+                |router, context| self.finish_router(router, context),
             )
         }
     }

@@ -233,6 +233,41 @@ impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
         }
     }
 
+    /// Apply a layer only to business routes already registered on this router.
+    ///
+    /// As in Axum, requests that match no route bypass the layer entirely, including the
+    /// fallback, and routes added afterwards are not covered. Documentation endpoints are not
+    /// covered either. Like [`axum::Router::route_layer`], this panics if the router has no routes.
+    ///
+    /// To scope middleware to a documented prefix, nest a child router and apply the layer to the
+    /// child: `nest` prefixes the child's documented paths, so `.nest("/api", api.layer(guard))`
+    /// guards exactly `/api/*` without rewriting the documented paths by hand.
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use gotcha::GotchaRouter;
+    ///
+    /// let router: GotchaRouter<()> = GotchaRouter::default()
+    ///     .route_raw("/health", gotcha::axum::routing::get(|| async { "ok" }))
+    ///     .route_layer(gotcha::axum::Extension(0u32));
+    /// ```
+    pub fn route_layer<L>(self, layer: L) -> Self
+    where
+        L: Layer<Route> + Clone + Send + Sync + 'static,
+        L::Service: Service<Request> + Clone + Send + Sync + 'static,
+        <L::Service as Service<Request>>::Response: Responder + 'static,
+        <L::Service as Service<Request>>::Error: Into<Infallible> + 'static,
+        <L::Service as Service<Request>>::Future: Send + 'static,
+    {
+        Self {
+            #[cfg(feature = "openapi")]
+            operations: self.operations,
+            #[cfg(feature = "openapi")]
+            openapi_transforms: self.openapi_transforms,
+            router: self.router.route_layer(layer),
+        }
+    }
+
     /// Handle requests that match no route.
     pub fn fallback<H, T>(self, handler: H) -> Self
     where
@@ -276,6 +311,46 @@ impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
             #[cfg(feature = "openapi")]
             openapi_transforms: self.openapi_transforms,
             router: self.router.fallback_service(service),
+        }
+    }
+
+    /// Mount a tower `Service` at `path`, handling every request below that prefix.
+    ///
+    /// The service receives requests with the nested prefix stripped; use
+    /// [`OriginalUri`](axum::extract::OriginalUri) to read the original path. As with
+    /// [`fallback_service`](Self::fallback_service), this is the way to serve something that is
+    /// already a tower service, such as a reverse proxy or a static file server.
+    ///
+    /// Nested services are opaque to OpenAPI: neither the prefix nor the service's responses are
+    /// added to the generated document. The service does not receive the application's state at
+    /// construction time either; build it from the context in
+    /// [`GotchaApp::finish_router`](crate::GotchaApp::finish_router) (or the builder's
+    /// `finish_router`) when it needs state.
+    ///
+    /// Like [`axum::Router::nest_service`], nesting at `/` panics; use
+    /// [`fallback_service`](Self::fallback_service) for the whole application.
+    ///
+    /// ```rust,ignore
+    /// use gotcha::GotchaRouter;
+    /// use gotcha::axum::{body::Body, extract::Request, response::Response};
+    ///
+    /// let router: GotchaRouter<()> = GotchaRouter::default()
+    ///     .nest_service("/assets", tower::service_fn(|_: Request| async {
+    ///         Ok::<_, std::convert::Infallible>(Response::new(Body::from("asset")))
+    ///     }));
+    /// ```
+    pub fn nest_service<T>(self, path: &str, service: T) -> Self
+    where
+        T: Service<Request, Error = Infallible> + Clone + Send + Sync + 'static,
+        T::Response: Responder,
+        T::Future: Send + 'static,
+    {
+        Self {
+            #[cfg(feature = "openapi")]
+            operations: self.operations,
+            #[cfg(feature = "openapi")]
+            openapi_transforms: self.openapi_transforms,
+            router: self.router.nest_service(path, service),
         }
     }
 

@@ -173,11 +173,15 @@ assembled, even when registered before them. Repeated calls wrap in Axum order: 
 application layer sees incoming requests first. `with_cors()` retains its existing `layer` scope;
 use `app_layer(CorsLayer::permissive())` when CORS should also cover documentation.
 
-The corresponding trait hook is `fn finish_router(&self, router: axum::Router) -> axum::Router`.
+The corresponding trait hook is
+`fn finish_router(&self, router: axum::Router, context: &GotchaContext<Self::State, Self::Config>) -> axum::Router`.
 Return `router.layer(auth_layer)` from it to cover the complete application. This hook runs after
 documentation is mounted, without requiring an override of `build_router`. An existing custom
 `build_router` still owns its whole assembly and must invoke any desired finalization itself.
-Routes added through this native Axum hook do not contribute OpenAPI metadata.
+The builder's `.finish_router(|router, context| ..)` is the equivalent hook; it receives a clone
+of the application context (configuration duplicated, state shared behind an `Arc` still the same
+value), and `app_layer` middleware remains outermost around whatever the hook mounts.
+Routes added through these native Axum hooks do not contribute OpenAPI metadata.
 
 ## Export without HTTP
 
