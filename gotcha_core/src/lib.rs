@@ -179,6 +179,11 @@ impl_primitive_type! { f64, "f64", "number"}
 /// `{"type": "string", "contentMediaType": "application/octet-stream"}`. The schema describes
 /// the wire format only; parsing the upload is still the handler's job with `Multipart`.
 ///
+/// `Binary` implements only `Schematic`: it has no serde implementation, so a documentation-only
+/// form cannot derive `Serialize`/`Deserialize` and use field attributes such as
+/// `skip_serializing_if`. In particular, an `Option<Binary>` field always documents as optional
+/// and nullable.
+///
 /// ```rust
 /// use gotcha_core::{Binary, Schematic};
 ///

@@ -64,7 +64,10 @@ pub(crate) mod utils;
 ///   cookie parameters are unaffected. Repeat the entry with distinct `content_type` values to
 ///   document several representations of one body; the entries must agree on `description` and
 ///   `required`. Body types must implement `Schematic` and are registered as components exactly
-///   like response bodies. Use `gotcha::openapi::Binary` for a file field in a multipart form.
+///   like response bodies. A custom body extractor that leaves
+///   `ParameterProvider::is_request_body()` at its default still has its replaced body type
+///   registered as a component; the declaration still wins. Use `gotcha::openapi::Binary` for a
+///   file field in a multipart form.
 /// - `errors(response(status = 404, body = "ErrorBody", description = "Not found"))` -
 ///   Fully describe the `Err` branch of `Result<T, E>` (including type aliases). Requires at
 ///   least one declaration and only infers `T: Responsible`; `E` does not need `Responsible`.

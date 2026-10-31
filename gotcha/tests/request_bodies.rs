@@ -170,7 +170,8 @@ fn handlers_without_a_declaration_keep_their_inferred_documents() {
         (("/empty".to_owned(), Method::POST), operable(no_body)),
     ]);
     // Captured from the implementation before request bodies could be declared. Any change to
-    // these handlers' documents fails this comparison byte for byte.
+    // these handlers' documents fails this comparison; the documents are compared semantically,
+    // as `serde_json::Value`s.
     let before: Value = serde_json::from_str(include_str!("fixtures/request_bodies_unchanged.json")).unwrap();
     assert_eq!(document(routes), before);
 }

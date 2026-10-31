@@ -36,8 +36,12 @@ pub fn request_body<T: Schematic>(content_type: &str, description: Option<&str>,
 /// Combine another declared media type into `body`.
 ///
 /// The declarations behind one request body must agree on the description and requiredness, so
-/// only the content map grows. Panics when the media type is already present.
+/// only the content map grows; the first body's values are kept if they disagree.
+/// `#[api(request_body(...))]` enforces the agreement at compile time, while hand-built
+/// descriptors hit a debug assertion. Panics when the media type is already present.
 pub fn merge_request_bodies(body: &mut RequestBody, other: RequestBody) {
+    debug_assert_eq!(body.description, other.description, "request bodies merged into one must agree on description");
+    debug_assert_eq!(body.required, other.required, "request bodies merged into one must agree on required");
     for (content_type, media_type) in other.content {
         if body.content.insert(content_type.clone(), media_type).is_some() {
             panic!("duplicate request body content_type: {content_type}");

@@ -26,7 +26,9 @@ pub trait ParameterProvider {
     ///
     /// `#[api(request_body(...))]` uses this to drop the body such an extractor would otherwise
     /// contribute, while keeping the path, query, header, and cookie parameters of the others.
-    /// Implement it as `true` for custom whole-body extractors; the default is `false`.
+    /// Implement it as `true` for custom whole-body extractors; the default is `false`. Leaving
+    /// the default still lets a declaration replace the body and win, but the replaced type stays
+    /// registered as a component.
     fn is_request_body() -> bool {
         false
     }
