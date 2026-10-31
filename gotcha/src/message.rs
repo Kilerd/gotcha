@@ -36,10 +36,10 @@
 //! }
 //!
 //! # async fn example() -> Result<(), tokio::task::JoinError> {
-//! let messager = Messager::new(GotchaContext {
-//!     state: AppState { greeting: "Hello".into() },
-//!     config: ConfigWrapper::<()>::default(),
-//! });
+//! let messager = Messager::new(GotchaContext::new(
+//!     AppState { greeting: "Hello".into() },
+//!     ConfigWrapper::<()>::default(),
+//! ));
 //! let task = messager.spawn(Greet { name: "world".into() });
 //! assert_eq!(task.await?, "Hello, world!");
 //! # Ok(())

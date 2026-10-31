@@ -69,13 +69,7 @@ async fn request(router: &gotcha::axum::Router, method: Method, path: &str, body
 
 #[tokio::test]
 async fn composed_routes_keep_http_handlers_and_documentation_together() {
-    let router = App
-        .build_router(Context {
-            state: (),
-            config: ConfigWrapper::default(),
-        })
-        .await
-        .unwrap();
+    let router = App.build_router(Context::new((), ConfigWrapper::default())).await.unwrap();
     for (path, label) in [
         ("/api/items/7", "composed"),
         ("/api/copies/7", "composed"),

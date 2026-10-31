@@ -187,18 +187,15 @@ async fn both_public_apis_share_http_and_task_shutdown_and_own_current_execution
                 let stop = controls.stop.clone();
                 let stopping = controls.stopping.clone();
                 tokio::spawn(
-                    Gotcha::from_context(GotchaContext {
-                        state: controls.clone(),
-                        config: config(),
-                    })
-                    .get("/hold", hold)
-                    .tasks(register)
-                    .shutdown_signal(async move {
-                        stop.notified().await;
-                        stopping.notify_one();
-                    })
-                    .task_shutdown_timeout(timeout)
-                    .run(),
+                    Gotcha::from_context(GotchaContext::new(controls.clone(), config()))
+                        .get("/hold", hold)
+                        .tasks(register)
+                        .shutdown_signal(async move {
+                            stop.notified().await;
+                            stopping.notify_one();
+                        })
+                        .task_shutdown_timeout(timeout)
+                        .run(),
                 )
             };
             let address = within(addresses.recv()).await.unwrap();
@@ -267,18 +264,15 @@ async fn failed_or_cancelled_registration_discards_tasks_and_releases_the_listen
 async fn builder_registration_panic_discards_previous_registrations() {
     let (controls, _addresses, _starts, mut drops) = controls();
     let dropped = Dropped(controls.dropped.clone());
-    let app = Gotcha::from_context(GotchaContext {
-        state: controls.clone(),
-        config: config(),
-    })
-    .tasks(move |scheduler| {
-        scheduler.interval("before-panic", Duration::from_millis(1), move |ctx| {
-            let _ = &dropped;
-            ctx.state.executions.fetch_add(1, Ordering::SeqCst);
-            async {}
-        });
-    })
-    .tasks(|_| panic!("registration panic"));
+    let app = Gotcha::from_context(GotchaContext::new(controls.clone(), config()))
+        .tasks(move |scheduler| {
+            scheduler.interval("before-panic", Duration::from_millis(1), move |ctx| {
+                let _ = &dropped;
+                ctx.state.executions.fetch_add(1, Ordering::SeqCst);
+                async {}
+            });
+        })
+        .tasks(|_| panic!("registration panic"));
     assert!(within(tokio::spawn(app.run())).await.unwrap_err().is_panic());
     assert_eq!(drops.try_recv(), Ok(()));
     assert_eq!(controls.executions.load(Ordering::SeqCst), 0);

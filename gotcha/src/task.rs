@@ -122,7 +122,7 @@ where
     /// use gotcha::{ConfigWrapper, GotchaContext, TaskScheduler};
     /// use std::time::Duration;
     /// # async fn example() {
-    /// let mut scheduler = TaskScheduler::new(GotchaContext { state: (), config: ConfigWrapper::<()>::default() });
+    /// let mut scheduler = TaskScheduler::new(GotchaContext::new((), ConfigWrapper::<()>::default()));
     /// scheduler.interval("cleanup", Duration::from_secs(60), |_| async {});
     /// let running = scheduler.start();
     /// running.shutdown(Duration::from_secs(10)).await;

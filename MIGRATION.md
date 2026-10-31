@@ -9,6 +9,7 @@
 - [Unreleased: owned scheduled tasks](#unreleased-owned-scheduled-tasks)
 - [Unreleased: shared startup](#unreleased-shared-startup)
 - [Unreleased: runtime type bounds](#unreleased-runtime-type-bounds)
+- [Unreleased: bound servers and shutdown lifecycle](#unreleased-bound-servers-and-shutdown-lifecycle)
 - [Unreleased: HTTP response contracts](#unreleased-http-response-contracts)
 - [Unreleased: application and route composition](#unreleased-application-and-route-composition)
 - [Unreleased: documented method routers](#unreleased-documented-method-routers)
@@ -326,13 +327,14 @@ That future may borrow the application. A custom signal replaces the default OS 
 
 Scheduled executions get a 30-second grace period by default. Configure it with the builder's
 `.task_shutdown_timeout(duration)` or the trait's `fn task_shutdown_timeout(&self) -> Duration`.
-The deadline starts when shutdown is requested, independently of HTTP draining. It does not limit
-HTTP request duration. A serve error also stops and drains the scheduled tasks; cancelling the
-serving future requests abortion of all scheduled work and signals HTTP shutdown.
+The deadline starts when shutdown is requested, independently of HTTP draining. HTTP draining is
+bounded separately by `http_shutdown_timeout`; see
+[bound servers and shutdown lifecycle](#unreleased-bound-servers-and-shutdown-lifecycle). A serve
+error also stops and drains the scheduled tasks; cancelling the serving future requests abortion of
+all scheduled work and signals HTTP shutdown.
 
 Cancellation requires async tasks to yield. Synchronous blocking work and tasks explicitly detached
-by application code (including `Messager::spawn`) remain outside this ownership. Public preparation,
-application cleanup hooks, and HTTP drain limits remain follow-up work in #82.
+by application code (including `Messager::spawn`) remain outside this ownership.
 
 Single-execution panics are logged and the schedule continues, including a panic while constructing
 the execution future. Interval tasks retain their existing immediate first tick and non-overlapping
@@ -415,7 +417,7 @@ Initialized values no longer have to implement loading or default-construction t
 be stored in a context, extracted by handlers, or used by messages and scheduled tasks.
 
 - Use `Gotcha::from_state(value)` for state without `Default` and automatic empty configuration.
-- Use `Gotcha::from_context(GotchaContext { state, config })` when both values are already ready.
+- Use `Gotcha::from_context(GotchaContext::new(state, config))` when both values are already ready.
   State and application configuration only need `Clone + Send + Sync + 'static` for runtime use.
 - `with_state::<S>()`, `with_config::<C>()`, and `with_types::<S, C>()` retain automatic initialization.
   Default state construction requires `S: Default`; configuration loading requires `Deserialize`.
@@ -442,6 +444,68 @@ Explicit configuration still wins over registered sources. See [shared startup](
 for the unified strict loading policy, explicit fallback, and listener address precedence.
 
 See the [initialized-values example](README.md#initialized-state-and-configuration).
+
+---
+
+# Unreleased: bound servers and shutdown lifecycle
+
+## Bind before serving
+
+`Gotcha::bind()` / `Gotcha::bind_on(addr)` and `GotchaApp::bind()` initialize the application
+(configuration, state, routes, tasks) and bind the listener, then return a public `BoundServer`
+instead of serving. `BoundServer::local_addr()` reports the effective address, including the port
+selected for port `0`, and `BoundServer::serve()` runs the server. `run()`, `listen()`, and
+`listen_on()` keep their signatures and are now thin wrappers over `bind*().serve()`.
+
+`GotchaApp::bind()` requires `Self: 'static` because the signal and cleanup driver runs in its own
+task. Applications that borrow external data can keep using `run()`.
+
+## Context shutdown token
+
+`GotchaContext` now carries a shutdown token, available through `context.shutdown()`. It is
+cancelled when the shutdown signal resolves and before HTTP draining starts, so handlers can select
+on it to close WebSockets, server-sent events, and other long-lived responses at the moment the
+listener stops accepting. Cancelling the token also requests shutdown.
+
+`GotchaContext` can no longer be constructed with struct literal syntax. Replace:
+
+```rust,ignore
+GotchaContext { state, config }
+```
+
+with:
+
+```rust,ignore
+GotchaContext::new(state, config)
+```
+
+The token created by `new` is never cancelled by the framework; contexts created by a running
+application receive the server's token.
+
+## Bounded HTTP draining
+
+HTTP draining was previously unbounded. `http_shutdown_timeout` now defaults to 30 seconds
+(builder `.http_shutdown_timeout(duration)` or trait `http_shutdown_timeout(&self)`). At the
+deadline, remaining connections are closed and shutdown continues. Scheduled tasks keep their
+independently configured `task_shutdown_timeout` and drain concurrently with HTTP.
+
+## Cleanup hooks
+
+Register ordered cleanup with builder `.on_shutdown(|context| async move { ... })` (called in
+registration order) or override `GotchaApp::on_shutdown(&self, context)`. Hooks receive the
+application context and run after serving stops. Errors are not returned; log inside the hook.
+
+The complete order is:
+
+1. the shutdown signal resolves and the context token is cancelled,
+2. the listener stops accepting,
+3. in-flight HTTP connections drain (bounded by `http_shutdown_timeout`),
+4. scheduled tasks stop starting and drain (bounded by `task_shutdown_timeout`,
+   concurrently with HTTP draining),
+5. cleanup hooks run in order, and only then do `run()` / `serve()` return.
+
+A failed bind or initialization runs no hooks. Dropping a `BoundServer` without serving it, or
+cancelling the serving future, releases the listener and skips cleanup.
 
 ---
 

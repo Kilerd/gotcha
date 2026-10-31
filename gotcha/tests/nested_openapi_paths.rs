@@ -42,13 +42,7 @@ async fn request(router: &gotcha::axum::Router, path: &str) -> (StatusCode, Vec<
 
 #[tokio::test]
 async fn multi_level_nesting_preserves_path_parameter_names_and_order() {
-    let router = NestedApp
-        .build_router(Context {
-            state: (),
-            config: ConfigWrapper::default(),
-        })
-        .await
-        .unwrap();
+    let router = NestedApp.build_router(Context::new((), ConfigWrapper::default())).await.unwrap();
     let (status, bytes) = request(&router, "/openapi.json").await;
     assert_eq!(status, StatusCode::OK);
     let spec: Value = serde_json::from_slice(&bytes).unwrap();

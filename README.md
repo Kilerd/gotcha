@@ -65,13 +65,13 @@ struct AppState { started_at: std::time::Instant }
 #[derive(Clone)]
 struct AppConfig { deployment: String }
 
-let app = Gotcha::from_context(GotchaContext {
-    state: AppState { started_at: std::time::Instant::now() },
-    config: ConfigWrapper {
+let app = Gotcha::from_context(GotchaContext::new(
+    AppState { started_at: std::time::Instant::now() },
+    ConfigWrapper {
         server: ServerConfig::default(),
         app: AppConfig { deployment: "production".into() },
     },
-})
+))
 .get("/deployment", |State(config): State<AppConfig>| async move { config.deployment });
 ```
 
@@ -106,11 +106,19 @@ Fallback applies only to startup configuration loading; eager `build_config()` a
 `GotchaApp::config()` calls still return errors. See the [migration guide](MIGRATION.md#unreleased-shared-startup)
 for behavior changes and the trait example.
 
-### Shutdown
+### Shutdown and lifecycle
 
-Both application APIs stop gracefully on Ctrl-C or Unix SIGTERM. HTTP stops accepting connections,
-existing requests drain, and scheduled tasks stop starting new executions. To provide your own
-shutdown signal:
+Both application APIs stop gracefully on Ctrl-C or Unix SIGTERM. When the signal resolves, gotcha:
+
+1. cancels the shutdown token in `GotchaContext` and stops accepting connections,
+2. drains in-flight HTTP connections, bounded by `http_shutdown_timeout` (30 seconds by default),
+3. waits for running scheduled executions, bounded by `task_shutdown_timeout` (30 seconds by
+   default with the `task` feature; this deadline runs concurrently with HTTP draining),
+4. runs cleanup hooks in registration order.
+
+At the HTTP drain deadline, remaining connections are closed and shutdown continues. A server that
+is dropped or cancelled before the deadline skips draining and cleanup, as before. To provide your
+own shutdown signal:
 
 ```rust,no_run
 use gotcha::Gotcha;
@@ -121,10 +129,56 @@ let app = Gotcha::new()
 // Send through `stop` to request shutdown; await `app.run()` to wait for it to finish.
 ```
 
-The trait API offers the same `shutdown_signal(&self)` hook. With the `task` feature, in-flight
-scheduled executions get 30 seconds to finish before being aborted and joined. Override that period
-with builder `.task_shutdown_timeout(duration)` or trait `task_shutdown_timeout(&self)`. This timeout
-applies to scheduled tasks; HTTP requests drain independently. See the [migration guide](MIGRATION.md#unreleased-owned-scheduled-tasks).
+Handlers and tasks can observe the same moment through the context, which is cancelled before
+HTTP draining starts. Long-lived responses such as WebSockets and server-sent events can select on
+it instead of waiting to be reaped:
+
+```rust,no_run
+use gotcha::{GotchaContext, State};
+
+async fn events(State(context): State<GotchaContext<(), ()>>) -> &'static str {
+    let shutdown = context.shutdown();
+    tokio::select! {
+        _ = shutdown.cancelled() => "closing",
+        _ = std::future::pending::<()>() => "still running",
+    }
+}
+```
+
+Cleanup hooks run after serving stops. Register them on the builder (in order) or override
+`on_shutdown(&self, context)` on the trait API:
+
+```rust,no_run
+use gotcha::Gotcha;
+
+let app = Gotcha::new()
+    .on_shutdown(|context| async move {
+        tracing::info!(port = context.config.server.port, "application stopped");
+    })
+    .on_shutdown(|_| async { /* tear down later resources */ });
+```
+
+Binding without serving exposes the effective address first, so port `0` works for integration
+tests and in-process tools. `run()` and `listen()` are thin wrappers over `bind()`/`bind_on()` and
+`serve()`:
+
+```rust,no_run
+use gotcha::Gotcha;
+
+# async fn example() -> gotcha::GotchaResult<()> {
+let server = Gotcha::new().port(0).bind().await?;
+println!("listening on http://{}", server.local_addr());
+server.serve().await?;
+# Ok(()) }
+```
+
+`BoundServer::serve_with_shutdown(future)` replaces the application signal for one server. The
+trait API offers `bind()`, `http_shutdown_timeout()`, and `on_shutdown(&context)` as well.
+
+Override the HTTP drain period with builder `.http_shutdown_timeout(duration)` or trait
+`http_shutdown_timeout(&self)`; see the [migration guide](MIGRATION.md#unreleased-bound-servers-and-shutdown-lifecycle).
+Scheduled executions keep their independent grace period (builder `.task_shutdown_timeout(duration)`
+or trait `task_shutdown_timeout(&self)`); see the [task migration notes](MIGRATION.md#unreleased-owned-scheduled-tasks).
 
 ### Advanced Trait API (For complex applications)
 

@@ -1,13 +1,26 @@
-//! Shared application startup. API adapters provide the application-specific hooks.
+//! Shared application startup, binding, and shutdown. API adapters provide the application-specific hooks.
 
+use std::collections::HashMap;
 use std::future::{Future, IntoFuture};
-use std::net::{IpAddr, SocketAddr};
+use std::io;
+use std::net::{IpAddr, Shutdown, SocketAddr};
+use std::pin::Pin;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
+use std::task::{Context, Poll};
+use std::time::Duration;
 
+use axum::serve::Listener;
 use axum::Router;
-use tokio::net::TcpListener;
+use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
 
 use crate::{ConfigErrorPolicy, ConfigWrapper, GotchaApp, GotchaContext, GotchaError, GotchaResult, ServerConfig};
+
+/// How long HTTP connections may drain before their sockets are closed.
+pub(crate) const DEFAULT_HTTP_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Default)]
 pub(crate) struct ListenOptions {
@@ -38,6 +51,14 @@ pub(crate) trait Application: Send {
     }
     fn config_error_policy(&mut self) -> ConfigErrorPolicy<Self::Config>;
     fn shutdown_signal(&mut self) -> impl Future<Output = ()> + Send;
+    /// How long in-flight HTTP connections may drain after shutdown is requested.
+    fn http_shutdown_timeout(&self) -> Duration {
+        DEFAULT_HTTP_SHUTDOWN_TIMEOUT
+    }
+    /// Run application cleanup after HTTP and task draining. The default does nothing.
+    fn on_shutdown(&mut self, _context: &GotchaContext<Self::State, Self::Config>) -> impl Future<Output = ()> + Send {
+        async {}
+    }
     #[cfg(feature = "task")]
     fn task_shutdown_timeout(&self) -> std::time::Duration;
     fn config(&mut self) -> impl Future<Output = GotchaResult<ConfigWrapper<Self::Config>>> + Send;
@@ -47,17 +68,105 @@ pub(crate) trait Application: Send {
     fn tasks(&mut self, scheduler: &mut crate::TaskScheduler<Self::State, Self::Config>) -> impl Future<Output = GotchaResult<()>> + Send;
 }
 
+/// A bound application listener with its state, routes, and tasks initialized.
 pub(crate) struct PreparedServer {
     listener: TcpListener,
+    local_addr: SocketAddr,
     pub(crate) router: Router,
     shutdown: CancellationToken,
     #[cfg(feature = "task")]
     tasks: Vec<crate::task::ScheduledTask>,
     #[cfg(feature = "task")]
     task_shutdown_timeout: std::time::Duration,
+    http_shutdown_timeout: Duration,
 }
 
+impl PreparedServer {
+    pub(crate) fn local_addr(&self) -> SocketAddr {
+        self.local_addr
+    }
+
+    /// Serve until `signal`, `extra_shutdown`, or the shared shutdown token resolves, then drain
+    /// HTTP up to `http_shutdown_timeout` and scheduled tasks up to their own timeout. Both
+    /// deadlines run concurrently. Remaining connections are closed at the HTTP deadline.
+    pub(crate) async fn serve(self, signal: impl Future<Output = ()> + Send, extra_shutdown: impl Future<Output = ()> + Send) -> GotchaResult<()> {
+        let shutdown = self.shutdown.clone();
+        let local_addr = self.local_addr;
+        let http_shutdown_timeout = self.http_shutdown_timeout;
+        tracing::info!("Server listening on http://{local_addr}");
+        // If the serving future is dropped, stop HTTP acceptance and abort owned scheduled tasks.
+        let _shutdown_on_drop = shutdown.clone().drop_guard();
+        #[cfg(feature = "task")]
+        let tasks = crate::RunningTasks::start(self.tasks, shutdown.clone());
+        #[cfg(feature = "task")]
+        let task_shutdown_timeout = self.task_shutdown_timeout;
+        let tracker = ConnectionTracker::default();
+        let listener = TrackingListener::new(self.listener, tracker.clone());
+        let server = axum::serve(listener, self.router)
+            .with_graceful_shutdown(shutdown.clone().cancelled_owned())
+            .into_future();
+        tokio::pin!(server);
+        let serving = async {
+            let result = tokio::select! {
+                biased;
+                // A handler or task that holds the context token can also request shutdown.
+                _ = shutdown.cancelled() => {
+                    drain_http(&mut server, http_shutdown_timeout, &tracker).await
+                }
+                _ = signal => {
+                    // Cancel before draining so handlers observe shutdown at the same moment the
+                    // listener stops accepting, and before any request has to finish.
+                    shutdown.cancel();
+                    drain_http(&mut server, http_shutdown_timeout, &tracker).await
+                }
+                _ = extra_shutdown => {
+                    shutdown.cancel();
+                    drain_http(&mut server, http_shutdown_timeout, &tracker).await
+                }
+                result = &mut server => result,
+            };
+            shutdown.cancel();
+            result.map_err(GotchaError::Io)
+        };
+        #[cfg(feature = "task")]
+        {
+            let drain_tasks = async {
+                shutdown.cancelled().await;
+                tasks.shutdown(task_shutdown_timeout).await;
+            };
+            // Start the task deadline when shutdown is requested, independently of HTTP draining.
+            let (result, ()) = tokio::join!(serving, drain_tasks);
+            result
+        }
+        #[cfg(not(feature = "task"))]
+        serving.await
+    }
+}
+
+async fn drain_http<F>(server: &mut Pin<&mut F>, timeout: Duration, tracker: &ConnectionTracker) -> io::Result<()>
+where
+    F: Future<Output = io::Result<()>>,
+{
+    match tokio::time::timeout(timeout, server).await {
+        Ok(result) => result,
+        Err(_) => {
+            tracing::warn!("HTTP connections did not drain within {timeout:?}; closing remaining connections");
+            tracker.close_all();
+            Ok(())
+        }
+    }
+}
+
+/// Run the startup pipeline and discard the context. Used by crate tests that only need the bound
+/// server; serving paths use [`prepare_with_context`] because cleanup hooks need the context.
+#[cfg(test)]
 pub(crate) async fn prepare<A: Application>(app: &mut A, explicit: Option<SocketAddr>) -> GotchaResult<PreparedServer> {
+    Ok(prepare_with_context(app, explicit).await?.0)
+}
+
+pub(crate) async fn prepare_with_context<A: Application>(
+    app: &mut A, explicit: Option<SocketAddr>,
+) -> GotchaResult<(PreparedServer, GotchaContext<A::State, A::Config>)> {
     app.logger()?;
     let policy = app.config_error_policy();
     let mut config = policy.apply(app.config().await)?;
@@ -72,67 +181,152 @@ pub(crate) async fn prepare<A: Application>(app: &mut A, explicit: Option<Socket
         host: bound.ip().to_string(),
         port: bound.port(),
     };
-    let state = app.state(&config).await?;
-    let context = GotchaContext { config, state };
-    let router = app.router(context.clone()).await?;
     let shutdown = CancellationToken::new();
+    let state = app.state(&config).await?;
+    let context = GotchaContext {
+        config,
+        state,
+        shutdown: shutdown.clone(),
+    };
+    let router = app.router(context.clone()).await?;
     #[cfg(feature = "task")]
     let tasks = {
-        let mut scheduler = crate::TaskScheduler::with_shutdown(context, shutdown.clone());
+        let mut scheduler = crate::TaskScheduler::with_shutdown(context.clone(), shutdown.clone());
         app.tasks(&mut scheduler).await?;
         scheduler.into_tasks()
     };
-    Ok(PreparedServer {
+    let server = PreparedServer {
         listener,
+        local_addr: bound,
         router,
         shutdown,
         #[cfg(feature = "task")]
         tasks,
         #[cfg(feature = "task")]
         task_shutdown_timeout: app.task_shutdown_timeout(),
-    })
+        http_shutdown_timeout: app.http_shutdown_timeout(),
+    };
+    Ok((server, context))
 }
 
 pub(crate) async fn run<A: Application>(mut app: A, explicit: Option<SocketAddr>) -> GotchaResult<()> {
-    let prepared = prepare(&mut app, explicit).await?;
-    prepared.serve(app.shutdown_signal()).await
+    let (server, context) = prepare_with_context(&mut app, explicit).await?;
+    let signal = app.shutdown_signal();
+    let result = server.serve(signal, std::future::pending()).await;
+    // Cleanup runs after HTTP draining and task shutdown, whether serving succeeded or not.
+    app.on_shutdown(&context).await;
+    result
 }
 
-impl PreparedServer {
-    async fn serve(self, signal: impl Future<Output = ()> + Send) -> GotchaResult<()> {
-        tracing::info!("Server listening on http://{}", self.listener.local_addr().map_err(GotchaError::Io)?);
-        // If the serving future is dropped, stop HTTP acceptance and abort owned scheduled tasks.
-        let _shutdown_on_drop = self.shutdown.clone().drop_guard();
-        #[cfg(feature = "task")]
-        let tasks = crate::RunningTasks::start(self.tasks, self.shutdown.clone());
-        let server = axum::serve(self.listener, self.router)
-            .with_graceful_shutdown(self.shutdown.clone().cancelled_owned())
-            .into_future();
-        tokio::pin!(server);
-        let serving = async {
-            let result = tokio::select! {
-                biased;
-                _ = signal => {
-                    self.shutdown.cancel();
-                    server.await
-                },
-                result = &mut server => result,
-            };
-            self.shutdown.cancel();
-            result.map_err(GotchaError::Io)
-        };
-        #[cfg(feature = "task")]
-        {
-            let drain_tasks = async {
-                self.shutdown.cancelled().await;
-                tasks.shutdown(self.task_shutdown_timeout).await;
-            };
-            // Start the task deadline when shutdown is requested, independently of HTTP draining.
-            let (result, ()) = tokio::join!(serving, drain_tasks);
-            result
+/// Bind, then spawn the signal and cleanup driver. `BoundServer` waits for it after draining.
+pub(crate) async fn bind<A>(mut app: A, explicit: Option<SocketAddr>) -> GotchaResult<BoundServer>
+where
+    A: Application + 'static,
+{
+    let (server, context) = prepare_with_context(&mut app, explicit).await?;
+    let shutdown = server.shutdown.clone();
+    let (finish, finish_rx) = oneshot::channel();
+    let abort = CancellationToken::new();
+    let lifecycle_abort = abort.clone();
+    // The task owns the application. It resolves the shutdown signal, cancels the shared token,
+    // waits until serving has drained, and only then runs application cleanup.
+    let lifecycle = tokio::spawn(async move {
+        tokio::select! {
+            biased;
+            _ = lifecycle_abort.cancelled() => {}
+            _ = app.shutdown_signal() => {}
         }
-        #[cfg(not(feature = "task"))]
-        serving.await
+        shutdown.cancel();
+        let _ = finish_rx.await;
+        app.on_shutdown(&context).await;
+    });
+    Ok(BoundServer {
+        server,
+        lifecycle: LifecycleTask(Some(lifecycle)),
+        finish: Some(finish),
+        abort,
+    })
+}
+
+/// An application whose listener is bound, with the effective local address available before
+/// serving starts. Binding can use port 0; [`Self::local_addr`] then reports the assigned port.
+///
+/// Shutdown order: the signal resolves, the context shutdown token is cancelled and the listener
+/// stops accepting, in-flight HTTP connections drain (bounded by
+/// [`GotchaApp::http_shutdown_timeout`] or the builder's `.http_shutdown_timeout()`), scheduled
+/// tasks drain (bounded by the task shutdown timeout), and finally cleanup hooks run.
+///
+/// Dropping a `BoundServer` without serving it aborts its signal driver and runs no cleanup.
+#[must_use = "a bound server holds a listener; call `serve` to run it"]
+pub struct BoundServer {
+    server: PreparedServer,
+    lifecycle: LifecycleTask,
+    finish: Option<oneshot::Sender<()>>,
+    abort: CancellationToken,
+}
+
+impl BoundServer {
+    /// The address the listener is actually bound to.
+    pub fn local_addr(&self) -> SocketAddr {
+        self.server.local_addr()
+    }
+
+    /// Serve until the application's shutdown signal resolves, then drain and clean up.
+    pub async fn serve(self) -> GotchaResult<()> {
+        self.serve_inner(std::future::pending()).await
+    }
+
+    /// Serve until `signal` resolves instead of the application's configured shutdown signal.
+    /// The application cleanup hooks still run after draining.
+    pub async fn serve_with_shutdown<S>(self, signal: S) -> GotchaResult<()>
+    where
+        S: Future<Output = ()> + Send,
+    {
+        self.serve_inner(signal).await
+    }
+
+    async fn serve_inner<S>(self, signal: S) -> GotchaResult<()>
+    where
+        S: Future<Output = ()> + Send,
+    {
+        let Self {
+            server,
+            lifecycle,
+            finish,
+            abort,
+        } = self;
+        let result = server.serve(std::future::pending(), signal).await;
+        abort.cancel();
+
+        if let Some(finish) = finish {
+            let _ = finish.send(());
+        }
+        lifecycle.wait().await;
+        result
+    }
+}
+
+/// Owns the spawned signal/cleanup driver, aborting it if the server is dropped before serving.
+struct LifecycleTask(Option<tokio::task::JoinHandle<()>>);
+
+impl LifecycleTask {
+    async fn wait(mut self) {
+        let Some(handle) = self.0.take() else {
+            return;
+        };
+        match handle.await {
+            Ok(()) => {}
+            Err(error) if error.is_cancelled() => {}
+            Err(error) => tracing::error!("application cleanup task failed: {error}"),
+        }
+    }
+}
+
+impl Drop for LifecycleTask {
+    fn drop(&mut self) {
+        if let Some(handle) = self.0.take() {
+            handle.abort();
+        }
     }
 }
 
@@ -152,6 +346,123 @@ pub(crate) async fn shutdown_signal() {
     if let Err(error) = result {
         tracing::error!("failed to install shutdown signal handler: {error}; shutting down");
     }
+}
+
+/// Tracks accepted sockets so the HTTP drain deadline can close them.
+#[derive(Clone, Default)]
+struct ConnectionTracker {
+    state: Arc<TrackerState>,
+}
+
+#[derive(Default)]
+struct TrackerState {
+    connections: Mutex<HashMap<u64, std::net::TcpStream>>,
+    next_id: AtomicU64,
+    closed: AtomicBool,
+}
+
+impl ConnectionTracker {
+    fn track(&self, stream: TcpStream) -> Option<TrackedStream> {
+        let std_stream = stream.into_std().ok()?;
+        let clone = std_stream.try_clone().ok()?;
+        let stream = TcpStream::from_std(std_stream).ok()?;
+        let id = self.state.next_id.fetch_add(1, Ordering::Relaxed);
+        let mut connections = self.state.connections.lock().unwrap();
+        if self.state.closed.load(Ordering::SeqCst) {
+            let _ = clone.shutdown(Shutdown::Both);
+        } else {
+            connections.insert(id, clone);
+        }
+        Some(TrackedStream {
+            stream,
+            id,
+            state: self.state.clone(),
+        })
+    }
+
+    fn close_all(&self) {
+        self.state.closed.store(true, Ordering::SeqCst);
+        let connections = self.state.connections.lock().unwrap();
+        for stream in connections.values() {
+            let _ = stream.shutdown(Shutdown::Both);
+        }
+    }
+}
+
+/// Accepts TCP connections and records them until the connection future is dropped.
+struct TrackingListener {
+    listener: TcpListener,
+    tracker: ConnectionTracker,
+}
+
+impl TrackingListener {
+    fn new(listener: TcpListener, tracker: ConnectionTracker) -> Self {
+        Self { listener, tracker }
+    }
+}
+
+impl Listener for TrackingListener {
+    type Io = TrackedStream;
+    type Addr = SocketAddr;
+
+    async fn accept(&mut self) -> (Self::Io, Self::Addr) {
+        loop {
+            match self.listener.accept().await {
+                Ok((stream, addr)) => match self.tracker.track(stream) {
+                    Some(stream) => return (stream, addr),
+                    None => continue,
+                },
+                Err(error) if is_connection_error(&error) => continue,
+                Err(error) => {
+                    tracing::error!("accept error: {error}");
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                }
+            }
+        }
+    }
+
+    fn local_addr(&self) -> io::Result<Self::Addr> {
+        self.listener.local_addr()
+    }
+}
+
+struct TrackedStream {
+    stream: TcpStream,
+    id: u64,
+    state: Arc<TrackerState>,
+}
+
+impl Drop for TrackedStream {
+    fn drop(&mut self) {
+        self.state.connections.lock().unwrap().remove(&self.id);
+    }
+}
+
+impl AsyncRead for TrackedStream {
+    fn poll_read(mut self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &mut ReadBuf<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.stream).poll_read(cx, buf)
+    }
+}
+
+impl AsyncWrite for TrackedStream {
+    fn poll_write(mut self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<io::Result<usize>> {
+        Pin::new(&mut self.stream).poll_write(cx, buf)
+    }
+
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.stream).poll_flush(cx)
+    }
+
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.stream).poll_shutdown(cx)
+    }
+}
+
+fn is_connection_error(error: &io::Error) -> bool {
+    matches!(
+        error.kind(),
+        io::ErrorKind::ConnectionRefused | io::ErrorKind::ConnectionAborted | io::ErrorKind::ConnectionReset
+    )
 }
 
 #[cfg(test)]
@@ -177,6 +488,14 @@ where
         A::shutdown_signal(self).await;
     }
 
+    fn http_shutdown_timeout(&self) -> Duration {
+        A::http_shutdown_timeout(self)
+    }
+
+    async fn on_shutdown(&mut self, context: &GotchaContext<A::State, A::Config>) {
+        A::on_shutdown(self, context).await;
+    }
+
     #[cfg(feature = "task")]
     fn task_shutdown_timeout(&self) -> std::time::Duration {
         A::task_shutdown_timeout(self)
@@ -197,5 +516,59 @@ where
     #[cfg(feature = "task")]
     async fn tasks(&mut self, scheduler: &mut crate::TaskScheduler<Self::State, Self::Config>) -> GotchaResult<()> {
         A::tasks(self, scheduler).await
+    }
+}
+
+/// Owned adapter used by [`GotchaApp::bind`], which must move the application into its signal task.
+pub(crate) struct OwnedApp<A>(pub(crate) A);
+
+impl<A> Application for OwnedApp<A>
+where
+    A: GotchaApp + 'static,
+    A::Config: serde::de::DeserializeOwned,
+{
+    type State = A::State;
+    type Config = A::Config;
+
+    fn logger(&mut self) -> GotchaResult<()> {
+        A::logger(&self.0)
+    }
+
+    fn config_error_policy(&mut self) -> ConfigErrorPolicy<Self::Config> {
+        A::config_error_policy(&self.0)
+    }
+
+    async fn shutdown_signal(&mut self) {
+        A::shutdown_signal(&self.0).await;
+    }
+
+    fn http_shutdown_timeout(&self) -> Duration {
+        A::http_shutdown_timeout(&self.0)
+    }
+
+    async fn on_shutdown(&mut self, context: &GotchaContext<A::State, A::Config>) {
+        A::on_shutdown(&self.0, context).await;
+    }
+
+    #[cfg(feature = "task")]
+    fn task_shutdown_timeout(&self) -> std::time::Duration {
+        A::task_shutdown_timeout(&self.0)
+    }
+
+    async fn config(&mut self) -> GotchaResult<ConfigWrapper<Self::Config>> {
+        A::config(&self.0).await
+    }
+
+    async fn state(&mut self, config: &ConfigWrapper<Self::Config>) -> GotchaResult<Self::State> {
+        A::state(&self.0, config).await
+    }
+
+    async fn router(&mut self, context: GotchaContext<Self::State, Self::Config>) -> GotchaResult<Router> {
+        A::build_router(&self.0, context).await
+    }
+
+    #[cfg(feature = "task")]
+    async fn tasks(&mut self, scheduler: &mut crate::TaskScheduler<Self::State, Self::Config>) -> GotchaResult<()> {
+        A::tasks(&self.0, scheduler).await
     }
 }

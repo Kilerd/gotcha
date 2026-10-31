@@ -127,13 +127,7 @@ async fn request(router: &gotcha::axum::Router, path: &str) -> (u16, String, Vec
 
 #[tokio::test]
 async fn response_contracts_match_http_and_collect_explicit_components() {
-    let router = App
-        .build_router(GotchaContext {
-            state: (),
-            config: ConfigWrapper::default(),
-        })
-        .await
-        .unwrap();
+    let router = App.build_router(GotchaContext::new((), ConfigWrapper::default())).await.unwrap();
     let (_, _, body) = request(&router, "/openapi.json").await;
     let spec: Value = serde_json::from_slice(&body).unwrap();
     for (path, documented_path, expected_status, expected_media, expected_body) in [
