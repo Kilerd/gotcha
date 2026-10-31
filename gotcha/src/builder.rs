@@ -30,7 +30,7 @@ use serde::{Deserialize, Serialize};
 use tower_layer::Layer;
 use tower_service::Service;
 
-use crate::config::{Config, ConfigBuilder, ConfigErrorPolicy, ConfigWrapper, GotchaConfigLoader};
+use crate::config::{ConfigBuilder, ConfigErrorPolicy, ConfigWrapper, GotchaConfigLoader};
 use crate::error::{GotchaError, GotchaResult};
 use crate::router::{GotchaRouter, Responder};
 use crate::routing::MethodRouter;
@@ -316,6 +316,9 @@ where
     ///
     /// This replaces any existing configuration sources with the result of the builder function.
     /// Use the individual methods (with_env_config, with_file_config, etc.) for cumulative configuration.
+    /// The builder function starts above the framework's typed server defaults, so it can add
+    /// application defaults with [`ConfigBuilder::defaults`](crate::config::ConfigBuilder::defaults)
+    /// and still let files and environment variables override them.
     ///
     /// # Example
     /// ```no_run
@@ -330,7 +333,7 @@ where
         F: FnOnce(ConfigBuilder) -> ConfigBuilder,
         C: DeserializeOwned,
     {
-        let builder = Config::builder();
+        let builder = ConfigBuilder::framework_defaults();
         let configured_builder = builder_fn(builder);
         let config: ConfigWrapper<C> = configured_builder.build()?;
         self.config = Configuration::Provided(config);
@@ -342,6 +345,8 @@ where
     /// This adds to any existing configuration sources rather than replacing them.
     /// Equivalent to calling `.with_default_files().with_default_env()`
     /// Errors from these explicitly selected sources are returned when the server starts.
+    /// The framework's typed server defaults always sit beneath these sources, so an
+    /// environment-only `APP_SERVER__PORT` is coerced without a configuration file.
     ///
     /// # Example
     /// ```no_run
@@ -370,7 +375,7 @@ where
     /// ```
     pub fn with_env_config<P: AsRef<str>>(mut self, prefix: P) -> Self {
         self.config
-            .update_sources(|builder| builder.unwrap_or_else(|| ConfigBuilder::new().enable_vars()).env(prefix.as_ref()));
+            .update_sources(|builder| builder.unwrap_or_else(ConfigBuilder::framework_defaults).enable_vars().env(prefix.as_ref()));
         self
     }
 
@@ -390,7 +395,7 @@ where
     /// ```
     pub fn with_file_config<P: AsRef<std::path::Path>>(mut self, path: P) -> Self {
         self.config
-            .update_sources(|builder| builder.unwrap_or_else(|| ConfigBuilder::new().enable_vars()).file(path));
+            .update_sources(|builder| builder.unwrap_or_else(ConfigBuilder::framework_defaults).enable_vars().file(path));
         self
     }
 
@@ -410,7 +415,7 @@ where
     /// ```
     pub fn with_optional_config<P: AsRef<std::path::Path>>(mut self, path: P) -> Self {
         self.config
-            .update_sources(|builder| builder.unwrap_or_else(|| ConfigBuilder::new().enable_vars()).file_optional(path));
+            .update_sources(|builder| builder.unwrap_or_else(ConfigBuilder::framework_defaults).enable_vars().file_optional(path));
         self
     }
 
@@ -428,7 +433,9 @@ where
     /// ```
     pub fn with_default_files(mut self) -> Self {
         self.config.update_sources(|builder| {
-            let mut builder = builder.unwrap_or_default().file_optional("configurations/application.toml");
+            let mut builder = builder
+                .unwrap_or_else(ConfigBuilder::framework_defaults)
+                .file_optional("configurations/application.toml");
             if let Ok(profile) = std::env::var("GOTCHA_ACTIVE_PROFILE") {
                 builder = builder.file_optional(format!("configurations/application_{}.toml", profile));
             }
@@ -449,7 +456,8 @@ where
     ///     .with_default_env();
     /// ```
     pub fn with_default_env(mut self) -> Self {
-        self.config.update_sources(|builder| builder.unwrap_or_default().env("APP"));
+        self.config
+            .update_sources(|builder| builder.unwrap_or_else(ConfigBuilder::framework_defaults).env("APP"));
         self
     }
 
@@ -466,7 +474,8 @@ where
     ///     .enable_variable_substitution();
     /// ```
     pub fn enable_variable_substitution(mut self) -> Self {
-        self.config.update_sources(|builder| builder.unwrap_or_default().enable_vars());
+        self.config
+            .update_sources(|builder| builder.unwrap_or_else(ConfigBuilder::framework_defaults).enable_vars());
         self
     }
 
@@ -1129,5 +1138,62 @@ mod tests {
         std::fs::write("configurations/application.toml", "value = [").unwrap();
         assert!(matches!(app().with_default_config().config.resolve(), Err(GotchaError::Config(_))));
         assert!(matches!(app().config.resolve(), Err(GotchaError::Config(_))));
+    }
+
+    /// `with_default_config` starts from the framework's typed server defaults, so an
+    /// environment-only `APP_SERVER__PORT` coerces even without a configuration file.
+    #[test]
+    fn default_sources_install_typed_server_defaults() {
+        const CHILD: &str = "GOTCHA_BUILDER_ENV_ONLY_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            let dir = tempfile::tempdir().unwrap();
+            let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+            for (key, _) in std::env::vars_os().filter(|(key, _)| key.to_string_lossy().starts_with("APP_")) {
+                command.env_remove(key);
+            }
+            let output = command
+                .args(["--exact", "builder::tests::default_sources_install_typed_server_defaults", "--nocapture"])
+                .current_dir(dir.path())
+                .env(CHILD, "1")
+                .env("APP_SERVER__PORT", "9000")
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "child failed:\n{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        }
+
+        // No configuration file exists in the child's working directory.
+        let app = Gotcha::with_config::<EmptyConfig>().with_default_config();
+        let config = app.config.resolve().expect("environment-only configuration loads");
+        assert_eq!(config.server.port, 9000);
+        assert_eq!(config.server.host, ServerConfig::default().host);
+    }
+
+    #[test]
+    fn build_config_accepts_application_defaults_above_framework_defaults() {
+        #[derive(Serialize)]
+        struct Defaults {
+            server: ServerConfig,
+        }
+        let app = Gotcha::with_config::<EmptyConfig>()
+            .build_config(|builder| {
+                builder
+                    .defaults(Defaults {
+                        server: ServerConfig {
+                            host: "0.0.0.0".into(),
+                            port: 8700,
+                        },
+                    })
+                    .expect("defaults serialize")
+            })
+            .unwrap();
+        let config = app.config.resolve().unwrap();
+        assert_eq!(config.server.port, 8700);
+        assert_eq!(config.server.host, "0.0.0.0");
     }
 }

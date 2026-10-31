@@ -2,6 +2,8 @@
 
 use std::path::{Path, PathBuf};
 
+/// TOML values held by [`ConfigSource::Defaults`], re-exported from mofa.
+pub use mofa::toml;
 use mofa::{ConfigLoader, EnvironmentSource, FileSource, Source};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -120,12 +122,21 @@ pub enum ConfigSource {
         /// Prefix understood by mofa's environment source, such as `APP`.
         prefix: String,
     },
+    /// Typed default values, merged beneath every file and environment source.
+    ///
+    /// Keeping real TOML types here lets mofa coerce environment strings against them, so
+    /// `APP_SERVER__PORT=9000` reaches a `u16` even when no file supplies `server.port`.
+    Defaults {
+        /// The default values.
+        value: mofa::toml::Value,
+    },
 }
 
 impl Source for ConfigSource {
     fn load(&self) -> Result<mofa::toml::Value, Box<dyn std::error::Error>> {
         match self {
             Self::Env { prefix } => EnvironmentSource::new(prefix).load(),
+            Self::Defaults { value } => Ok(value.clone()),
             Self::File { path, required } => match FileSource::new(path.clone()).load() {
                 Ok(value) => Ok(value),
                 Err(error)
@@ -148,10 +159,11 @@ impl Source for ConfigSource {
 /// A reusable configuration description, not a snapshot of loaded values.
 ///
 /// Sources are read in insertion order; later sources override earlier values. Cloning or
-/// restoring this state preserves that order, file requirements, and variable substitution.
+/// restoring this state preserves that order, file requirements, variable substitution, and
+/// typed defaults. Defaults always stay beneath files and environment variables.
 #[derive(Clone, Debug, Default)]
 pub struct ConfigState {
-    /// File and environment sources, in the order they were added.
+    /// Configuration sources, in the order they were added.
     pub sources: Vec<ConfigSource>,
     /// Whether `${VAR}` substitution is enabled.
     pub enable_vars: bool,
@@ -202,6 +214,74 @@ impl ConfigBuilder {
         self
     }
 
+    /// Add typed default values beneath every registered source.
+    ///
+    /// Defaults are merged first, in the order they are added, so files and environment
+    /// variables override them. Registering real types (for example a port stored as an
+    /// integer) also lets environment variables override typed fields without a
+    /// configuration file: `APP_SERVER__PORT=9000` coerces against the default `u16`.
+    ///
+    /// Returns an error when `value` cannot be represented as TOML.
+    ///
+    /// ```rust
+    /// use gotcha::config::{ConfigBuilder, ServerConfig};
+    /// use serde::Serialize;
+    ///
+    /// #[derive(Serialize)]
+    /// struct Defaults {
+    ///     database_url: String,
+    ///     server: ServerConfig,
+    /// }
+    ///
+    /// let builder = ConfigBuilder::new()
+    ///     .defaults(Defaults {
+    ///         database_url: "postgres://localhost/app".into(),
+    ///         server: ServerConfig { host: "0.0.0.0".into(), port: 8700 },
+    ///     })
+    ///     .expect("defaults serialize")
+    ///     .env("APP");
+    /// ```
+    pub fn defaults<V: Serialize>(mut self, value: V) -> ConfigResult<Self> {
+        let value = mofa::toml::Value::try_from(value).map_err(|error| ConfigError::Error(format!("could not serialize configuration defaults: {error}")))?;
+        self.push_defaults(value);
+        Ok(self)
+    }
+
+    /// Insert a defaults source above earlier defaults and below every other source.
+    fn push_defaults(&mut self, value: mofa::toml::Value) {
+        let index = self
+            .state
+            .sources
+            .iter()
+            .position(|source| !matches!(source, ConfigSource::Defaults { .. }))
+            .unwrap_or(self.state.sources.len());
+        self.state.sources.insert(index, ConfigSource::Defaults { value });
+    }
+
+    /// Create a builder with the framework's typed server defaults beneath every other source.
+    ///
+    /// Framework-managed loading starts here, so files and environment variables always have
+    /// typed `server.host` and `server.port` values to override and coerce against. A manually
+    /// assembled loader, such as a custom [`GotchaApp::config`](crate::GotchaApp::config)
+    /// implementation, should also start here: without a typed base, mofa cannot coerce
+    /// `APP_SERVER__PORT` to a port number when no file supplies `server.port`.
+    ///
+    /// ```rust,no_run
+    /// use gotcha::config::{ConfigBuilder, ConfigWrapper};
+    ///
+    /// let config: ConfigWrapper<gotcha::EmptyConfig> = ConfigBuilder::framework_defaults()
+    ///     .file_optional("configurations/application.toml")
+    ///     .env("APP")
+    ///     .enable_vars()
+    ///     .build()
+    ///     .expect("configuration loads");
+    /// ```
+    pub fn framework_defaults() -> Self {
+        let mut builder = Self::new();
+        builder.push_defaults(framework_default_values());
+        builder
+    }
+
     /// Read and merge sources in insertion order, then resolve variables and deserialize.
     ///
     /// Later sources override earlier matching values. File existence is checked here, so
@@ -236,18 +316,35 @@ impl Default for ConfigBuilder {
     }
 }
 
+/// The framework's own settings as typed TOML values.
+fn framework_default_values() -> mofa::toml::Value {
+    #[derive(Serialize)]
+    struct FrameworkDefaults {
+        server: ServerConfig,
+    }
+    mofa::toml::Value::try_from(FrameworkDefaults {
+        server: ServerConfig::default(),
+    })
+    .expect("server defaults contain only a string and an integer")
+}
+
 /// Simple config loader
 pub struct Config;
 
 impl Config {
     /// Create new builder
+    ///
+    /// This does not install the framework's typed server defaults. Use
+    /// [`ConfigBuilder::framework_defaults`] for a loader that also coerces environment-only
+    /// server settings.
     pub fn builder() -> ConfigBuilder {
         ConfigBuilder::new()
     }
 
-    /// Load with defaults
+    /// Load `configurations/application.toml` and the `APP` environment prefix, with variable
+    /// substitution, above the framework's typed server defaults.
     pub fn load_default<T: for<'de> Deserialize<'de> + Default>() -> T {
-        Self::builder()
+        ConfigBuilder::framework_defaults()
             .file_optional("configurations/application.toml")
             .env("APP")
             .enable_vars()
@@ -264,8 +361,11 @@ impl GotchaConfigLoader {
     /// profile-specific `configurations/application_{profile}.toml` (if a profile
     /// is given), then the `APP` environment prefix. Returns an error instead of
     /// panicking on failure.
+    ///
+    /// The framework's typed server defaults sit beneath these sources, so environment-only
+    /// configuration such as `APP_SERVER__PORT` is coerced to the field's type.
     pub fn load<T: for<'de> Deserialize<'de>>(profile: Option<String>) -> ConfigResult<T> {
-        let mut builder = Config::builder().file_optional("configurations/application.toml");
+        let mut builder = ConfigBuilder::framework_defaults().file_optional("configurations/application.toml");
         if let Some(profile) = profile {
             builder = builder.file_optional(format!("configurations/application_{profile}.toml"));
         }
@@ -293,9 +393,152 @@ mod tests {
     }
 
     #[derive(Serialize, Deserialize, Default, Debug, Clone)]
+    #[serde(default)]
     struct TestConfig {
         name: String,
         value: i32,
+    }
+
+    /// Run `name` in a child process whose working directory is an empty temporary directory
+    /// and whose `APP_*` environment is removed. Returns `true` in the child. This keeps
+    /// default file paths and environment sources isolated from tests running in parallel.
+    fn in_isolated_child(name: &str, variables: &[(&str, &str)]) -> bool {
+        const CHILD: &str = "GOTCHA_CONFIG_TESTS_CHILD";
+        if std::env::var_os(CHILD).is_some() {
+            return true;
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+        for (key, _) in std::env::vars_os().filter(|(key, _)| key.to_string_lossy().starts_with("APP_")) {
+            command.env_remove(key);
+        }
+        let output = command
+            .args(["--exact", name, "--nocapture"])
+            .current_dir(dir.path())
+            .env(CHILD, "1")
+            .envs(variables.iter().copied())
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "child failed:\n{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        false
+    }
+
+    /// Both the trait's default `config()` and builder automatic loading go through this loader.
+    #[test]
+    fn environment_only_server_settings_load_without_a_configuration_file() {
+        if !in_isolated_child(
+            "config::tests::environment_only_server_settings_load_without_a_configuration_file",
+            &[("APP_SERVER__PORT", "9000")],
+        ) {
+            return;
+        }
+
+        // No `configurations/application.toml` exists in the child's working directory.
+        let config: ConfigWrapper<TestConfig> = GotchaConfigLoader::load(None).expect("environment-only configuration loads");
+
+        assert_eq!(config.server.port, 9000, "the typed default lets the environment value coerce");
+        assert_eq!(config.server.host, ServerConfig::default().host, "unset fields keep their defaults");
+    }
+
+    #[test]
+    fn files_and_environment_keep_precedence_over_framework_defaults() {
+        if !in_isolated_child(
+            "config::tests::files_and_environment_keep_precedence_over_framework_defaults",
+            &[("APP_SERVER__PORT", "9000")],
+        ) {
+            return;
+        }
+
+        std::fs::create_dir_all("configurations").unwrap();
+        std::fs::write(
+            "configurations/application.toml",
+            "name = \"file\"\n\n[server]\nhost = \"0.0.0.0\"\nport = 18080\n",
+        )
+        .unwrap();
+
+        let config: ConfigWrapper<TestConfig> = GotchaConfigLoader::load(None).expect("loads");
+
+        assert_eq!(config.server.port, 9000, "the environment still wins over the file");
+        assert_eq!(config.server.host, "0.0.0.0", "the file still wins over the framework default");
+        assert_eq!(config.name, "file");
+    }
+
+    #[test]
+    fn application_defaults_override_framework_defaults_and_yield_to_files() {
+        #[derive(Serialize)]
+        struct Defaults {
+            name: String,
+            value: i32,
+            server: ServerConfig,
+        }
+        let defaults = || Defaults {
+            name: "default".into(),
+            value: 7,
+            server: ServerConfig {
+                host: "0.0.0.0".into(),
+                port: 8700,
+            },
+        };
+
+        let builder = ConfigBuilder::framework_defaults().defaults(defaults()).expect("defaults serialize");
+        let config: ConfigWrapper<TestConfig> = builder.clone().build().expect("loads");
+        assert_eq!(config.server.port, 8700, "application defaults win over framework defaults");
+        assert_eq!(config.name, "default");
+
+        // Defaults are part of the source description, so restored builders behave the same.
+        let config: ConfigWrapper<TestConfig> = ConfigBuilder::from_state(builder.state()).build().expect("loads");
+        assert_eq!(config.server.port, 8700);
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("application.toml");
+        std::fs::write(&path, "name = \"file\"\nvalue = 1\n\n[server]\nhost = \"10.0.0.1\"\nport = 18080\n").unwrap();
+        let config: ConfigWrapper<TestConfig> = builder.file(&path).build().expect("loads");
+        assert_eq!(config.server.port, 18080, "a file wins over application defaults");
+        assert_eq!(config.server.host, "10.0.0.1");
+        assert_eq!(config.name, "file");
+    }
+
+    #[test]
+    fn environment_overrides_application_defaults() {
+        if !in_isolated_child("config::tests::environment_overrides_application_defaults", &[("APP_SERVER__PORT", "9000")]) {
+            return;
+        }
+
+        #[derive(Serialize)]
+        struct Defaults {
+            name: String,
+            value: i32,
+            server: ServerConfig,
+        }
+        let config: ConfigWrapper<TestConfig> = ConfigBuilder::framework_defaults()
+            .defaults(Defaults {
+                name: "default".into(),
+                value: 7,
+                server: ServerConfig {
+                    host: "0.0.0.0".into(),
+                    port: 8700,
+                },
+            })
+            .expect("defaults serialize")
+            .env("APP")
+            .build()
+            .expect("loads");
+
+        assert_eq!(config.server.port, 9000, "the environment wins over application defaults");
+        assert_eq!(config.server.host, "0.0.0.0", "application defaults still beat framework defaults");
+    }
+
+    #[test]
+    fn defaults_that_cannot_be_represented_as_toml_fail_registration() {
+        // TOML table keys are strings; integer keys cannot be represented.
+        let unsupported = std::collections::HashMap::from([(1u32, 2u8)]);
+        assert!(ConfigBuilder::new().defaults(unsupported).is_err());
     }
 
     #[test]
