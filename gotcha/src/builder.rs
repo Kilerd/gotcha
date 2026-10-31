@@ -146,6 +146,8 @@ where
     finish_routers: Vec<FinishRouter<S, C>>,
     #[cfg(feature = "openapi")]
     openapi_endpoints: Option<crate::OpenApiEndpoints>,
+    #[cfg(feature = "prometheus")]
+    metrics_endpoint: Option<crate::MetricsEndpoint>,
     listen_options: ListenOptions,
     config_error_policy: ConfigErrorPolicy<C>,
     shutdown_signal: Option<std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>>,
@@ -310,6 +312,8 @@ where
             finish_routers: Vec::new(),
             #[cfg(feature = "openapi")]
             openapi_endpoints: None,
+            #[cfg(feature = "prometheus")]
+            metrics_endpoint: None,
             listen_options: ListenOptions::default(),
             config_error_policy: ConfigErrorPolicy::Strict,
             shutdown_signal: None,
@@ -1027,6 +1031,33 @@ where
         self
     }
 
+    /// Enable the Prometheus metrics endpoint and record HTTP metrics for business routes.
+    ///
+    /// [`MetricsEndpoint::default`](crate::MetricsEndpoint::default) serves the Prometheus text
+    /// format at `/metrics`; set [`MetricsEndpoint::path`](crate::MetricsEndpoint::path) to serve
+    /// it elsewhere. Without this call, the `prometheus` feature only exposes the `metrics`
+    /// re-exports and records nothing.
+    ///
+    /// The layer covers the routes registered through this builder, including [`nest`](Self::nest)
+    /// and [`merge`](Self::merge), but not documentation endpoints, the metrics endpoint itself,
+    /// or routes and services mounted by [`finish_router`](Self::finish_router). Middleware added
+    /// with [`app_layer`](Self::app_layer) runs outside the layer. See
+    /// [`GotchaApp::metrics_endpoint`](crate::GotchaApp::metrics_endpoint) for the trait API and
+    /// the process-wide recorder semantics.
+    ///
+    /// ```rust,no_run
+    /// use gotcha::{Gotcha, MetricsEndpoint};
+    ///
+    /// let app = Gotcha::new()
+    ///     .metrics(MetricsEndpoint::default())
+    ///     .get("/health", || async { "ok" });
+    /// ```
+    #[cfg(feature = "prometheus")]
+    pub fn metrics(mut self, endpoint: crate::MetricsEndpoint) -> Self {
+        self.metrics_endpoint = Some(endpoint);
+        self
+    }
+
     /// Consume the application builder and export its complete OpenAPI document without HTTP.
     ///
     /// Uses the same generation and transform pipeline as documentation endpoints. Does not
@@ -1176,6 +1207,8 @@ where
             context,
             #[cfg(feature = "openapi")]
             self.openapi_endpoints.take(),
+            #[cfg(feature = "prometheus")]
+            self.metrics_endpoint.take(),
             |router, context| {
                 let router = finish_routers.into_iter().fold(router, |router, finish| finish(router, context));
                 // Application layers stay outermost so they cover services mounted by the hooks.

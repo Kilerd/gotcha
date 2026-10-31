@@ -60,6 +60,9 @@ pub type Result<T, E = Box<dyn std::error::Error + Send + Sync>> = std::result::
 #[cfg(feature = "openapi")]
 pub use crate::{api, OpenApiEndpoints, Responsible, Schematic};
 
+#[cfg(feature = "prometheus")]
+pub use crate::MetricsEndpoint;
+
 #[cfg(feature = "cors")]
 pub use crate::layers::CorsLayer;
 

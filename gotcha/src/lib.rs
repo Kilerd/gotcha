@@ -108,6 +108,8 @@ pub use validator::Validate;
 mod assembly;
 pub mod builder;
 pub mod config;
+#[cfg(any(feature = "openapi", feature = "prometheus"))]
+mod endpoint;
 pub mod error;
 pub mod extract;
 #[cfg(feature = "openapi")]
@@ -134,10 +136,11 @@ pub mod validation;
 
 #[cfg(feature = "prometheus")]
 #[cfg_attr(docsrs, doc(cfg(feature = "prometheus")))]
-/// Prometheus metrics, re-exported from `axum-prometheus`.
-pub mod prometheus {
-    pub use axum_prometheus::metrics::*;
-}
+pub mod prometheus;
+#[cfg(feature = "prometheus")]
+#[cfg_attr(docsrs, doc(cfg(feature = "prometheus")))]
+/// Configuration for the opt-in Prometheus metrics endpoint; see [`prometheus`].
+pub use prometheus::MetricsEndpoint;
 
 /// Middleware layers re-exported from `tower-http`.
 pub mod layers {
@@ -380,6 +383,22 @@ pub trait GotchaApp: Sized + Send + Sync {
         crate::openapi::default_info()
     }
 
+    /// Select the application's Prometheus metrics endpoint. Defaults to `None` (disabled).
+    /// Return `Some(MetricsEndpoint::default())` to record HTTP metrics for the business routes
+    /// and serve them at `/metrics`; [`Gotcha::metrics`] is the builder equivalent.
+    ///
+    /// The metric layer covers the routes registered by [`Self::routes`], including nested
+    /// routers. Documentation endpoints, the metrics endpoint itself, and routes, services, or
+    /// middleware added by [`Self::finish_router`] are not measured; the extractor-config layer
+    /// stays outermost.
+    ///
+    /// The `metrics` recorder is process-wide: it is installed once and shared by every
+    /// application in the process that enables metrics. See [`prometheus`] for the implications.
+    #[cfg(feature = "prometheus")]
+    fn metrics_endpoint(&self) -> Option<MetricsEndpoint> {
+        None
+    }
+
     /// Rejection responses for the extractors this application uses.
     ///
     /// The default is every provider's default handler. Override it and use
@@ -444,9 +463,9 @@ pub trait GotchaApp: Sized + Send + Sync {
     ///
     /// Prefer `finish_router` for whole-application middleware or services that need the
     /// application context. Overriding this method takes responsibility for the complete
-    /// assembly, including documentation and final middleware. It must also apply
-    /// `self.extractor_configs().layer(router)` after every route and middleware; without that
-    /// layer, extractors fall back to the default rejection handlers.
+    /// assembly, including documentation, the metrics endpoint, and final middleware. It must
+    /// also apply `self.extractor_configs().layer(router)` after every route and middleware;
+    /// without that layer, extractors fall back to the default rejection handlers.
     fn build_router(&self, context: GotchaContext<Self::State, Self::Config>) -> impl std::future::Future<Output = GotchaResult<axum::Router>> + Send {
         async move {
             let router = GotchaRouter::<GotchaContext<Self::State, Self::Config>>::default();
@@ -458,6 +477,8 @@ pub trait GotchaApp: Sized + Send + Sync {
                 context,
                 #[cfg(feature = "openapi")]
                 self.openapi_endpoints(),
+                #[cfg(feature = "prometheus")]
+                self.metrics_endpoint(),
                 |router, context| self.finish_router(router, context),
             )
         }

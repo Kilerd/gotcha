@@ -6,10 +6,23 @@ use crate::{GotchaResult, GotchaRouter};
 
 pub(crate) fn assemble<State: Clone + Send + Sync + 'static>(
     mut router: GotchaRouter<State>, state: State, #[cfg(feature = "openapi")] endpoints: Option<crate::OpenApiEndpoints>,
-    finish: impl FnOnce(Router, &State) -> Router,
+    #[cfg(feature = "prometheus")] metrics: Option<crate::MetricsEndpoint>, finish: impl FnOnce(Router, &State) -> Router,
 ) -> GotchaResult<Router> {
     // `with_state` consumes the state, so keep the context the finish hook should observe.
     let context = state.clone();
+    // The metrics layer covers the business routes assembled here, nested routers included.
+    // Documentation endpoints and the metrics route are mounted below, after the layer, so
+    // neither is measured; `finish_router` routes and application layers wrap the layer and are
+    // not measured either.
+    #[cfg(feature = "prometheus")]
+    let metrics = match metrics {
+        Some(endpoint) => Some(endpoint.install()?),
+        None => None,
+    };
+    #[cfg(feature = "prometheus")]
+    if let Some(metrics) = &metrics {
+        router = router.layer(metrics.layer.clone());
+    }
     #[cfg(feature = "openapi")]
     let (router, extractor_configs) = if let Some(endpoints) = endpoints {
         endpoints.validate()?;
@@ -23,6 +36,11 @@ pub(crate) fn assemble<State: Clone + Send + Sync + 'static>(
     let (router, extractor_configs) = {
         let configs = std::mem::take(&mut router.extractor_configs);
         (router.into_axum_router(state), configs)
+    };
+    #[cfg(feature = "prometheus")]
+    let router = match metrics {
+        Some(metrics) => metrics.mount(router),
+        None => router,
     };
     let router = finish(router, &context);
     // Outermost: routes added by `finish_router`, and `app_layer` middleware, must also see the
