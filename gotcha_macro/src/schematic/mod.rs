@@ -13,7 +13,7 @@ pub mod simple_enum;
 pub mod tagged_enum;
 pub mod untagged_enum;
 
-use crate::utils::{has_serde_default, parse_serde_rename_all, AttributesExt, RenameAll};
+use crate::utils::{has_serde_default, parse_serde_rename_all, parse_serde_rename_all_deserialize, AttributesExt, RenameAll};
 
 #[derive(Debug, PartialEq, Eq)]
 enum SerdeTagKind {
@@ -29,6 +29,8 @@ enum SerdeTagKind {
 struct ParameterExtraField {
     tag_kind: Option<SerdeTagKind>,
     rename_all: Option<RenameAll>,
+    /// The deserialize direction of `rename_all`, used only for validation wire names.
+    rename_all_deserialize: Option<RenameAll>,
     /// `#[serde(default)]` on a struct container makes every field optional.
     container_default: bool,
 }
@@ -39,6 +41,7 @@ impl ParameterExtraField {
         let mut content_name: Option<String> = None;
         let mut is_untagged = false;
         let rename_all = parse_serde_rename_all(attrs);
+        let rename_all_deserialize = parse_serde_rename_all_deserialize(attrs);
 
         for attr in attrs {
             if attr.path.is_ident("serde") {
@@ -81,6 +84,7 @@ impl ParameterExtraField {
         ParameterExtraField {
             tag_kind,
             rename_all,
+            rename_all_deserialize,
             container_default: has_serde_default(attrs),
         }
     }
@@ -146,6 +150,10 @@ pub(crate) struct ParameterStructFieldOpt {
     example: Option<SchemaValue>,
     default: Option<SchemaValue>,
     format: Option<String>,
+    /// `#[schematic(as = "Type")]`: describe the field as `Type` without changing the Rust
+    /// field type. `Type` supplies the schema, requiredness/nullability, and wire-name mapping.
+    #[darling(rename = "as")]
+    as_type: Option<syn::Type>,
 }
 
 /// The subset of `#[validate(...)]` (validator crate) rules that map cleanly to JSON-Schema
@@ -276,6 +284,13 @@ fn is_collection(ty: &syn::Type) -> bool {
 }
 
 impl ParameterStructFieldOpt {
+    /// The type whose `Schematic` describes this field: the `#[schematic(as = "...")]` type when
+    /// present, otherwise the declared field type. The original type is then never required to
+    /// implement `Schematic`.
+    pub(crate) fn schema_type(&self) -> &syn::Type {
+        self.as_type.as_ref().unwrap_or(&self.ty)
+    }
+
     /// Builds the `description` token and the list of `#[schematic(...)]` customization
     /// statements for this field. Each statement mutates a local `field_schema` binding
     /// (its `.schema.format` / `.schema.extras`). An explicit `#[schematic(description = "...")]`
@@ -310,7 +325,7 @@ impl ParameterStructFieldOpt {
             let key = if validated.exclusive_maximum { "exclusiveMaximum" } else { "maximum" };
             customizations.push(extra(core, key, quote! { #max }));
         }
-        let (len_min, len_max) = if is_collection(&self.ty) {
+        let (len_min, len_max) = if is_collection(self.schema_type()) {
             ("minItems", "maxItems")
         } else {
             ("minLength", "maxLength")
@@ -451,7 +466,15 @@ pub(crate) fn handler(input: TokenStream2) -> Result<TokenStream2, (Span, &'stat
                     "#[derive(Schematic)] does not support multi-field tuple structs; use a named struct",
                 ));
             } else {
-                named_struct::handler(&core, schema_name.clone(), doc, fields, extra_field.rename_all, extra_field.container_default)?
+                named_struct::handler(
+                    &core,
+                    schema_name.clone(),
+                    doc,
+                    fields,
+                    extra_field.rename_all,
+                    extra_field.rename_all_deserialize,
+                    extra_field.container_default,
+                )?
             }
         }
     };

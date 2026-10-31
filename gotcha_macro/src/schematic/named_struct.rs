@@ -2,21 +2,22 @@ use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::quote;
 
 use crate::schematic::ParameterStructFieldOpt;
-use crate::utils::{get_serde_name, has_serde_flatten, has_serde_skip, parse_serde_rename, serde_field_presence, RenameAll};
+use crate::utils::{get_serde_name, has_serde_flatten, has_serde_skip, parse_serde_rename, parse_serde_rename_deserialize, serde_field_presence, RenameAll};
 
 pub(crate) fn handler(
     core: &TokenStream2, ident_string: String, doc: TokenStream2, fields: darling::ast::Fields<ParameterStructFieldOpt>, rename_all: Option<RenameAll>,
-    container_default: bool,
+    rename_all_deserialize: Option<RenameAll>, container_default: bool,
 ) -> Result<TokenStream2, (Span, &'static str)> {
     let mut normal_fields_stream: Vec<TokenStream2> = Vec::new();
     let mut flatten_fields_stream: Vec<TokenStream2> = Vec::new();
     let mut flatten_schema_stream: Vec<TokenStream2> = Vec::new();
+    let mut wire_fields_stream: Vec<TokenStream2> = Vec::new();
 
     for field in fields.fields.into_iter() {
-        let field_ty = field.ty.clone();
+        let field_ty = field.schema_type().clone();
 
         // `#[serde(skip)]` / `skip_serializing` / `skip_deserializing` fields are not part of
-        // the serialized payload, so they must not appear in the schema.
+        // the serialized payload, so they must not appear in the schema or the wire-name table.
         if has_serde_skip(&field.attrs) {
             continue;
         }
@@ -32,11 +33,35 @@ pub(crate) fn handler(
                     flatten_schemas.push(flatten_val);
                 }
             });
+            // The flattened type's fields appear at this level, so the entry carries the inner
+            // mapping and `flatten: true` tells the remapper to drop this field's own segment.
+            let ident_str = field.ident.as_ref().unwrap().to_string();
+            wire_fields_stream.push(quote! {
+                #core::WireField {
+                    rust: #ident_str,
+                    wire: #ident_str,
+                    flatten: true,
+                    nested: Some(<#field_ty as #core::Schematic>::wire_fields),
+                }
+            });
         } else {
             // Normal field: static field entry
             let ident_str = field.ident.as_ref().unwrap().to_string();
             let rename = parse_serde_rename(&field.attrs);
             let field_name = get_serde_name(&ident_str, rename.as_deref(), rename_all);
+            // Validation errors use the names serde accepts on input, which differ from the
+            // schema-side name when only `rename(deserialize = ..)` / `rename_all(deserialize = ..)`
+            // is given.
+            let rename_deserialize = parse_serde_rename_deserialize(&field.attrs);
+            let wire_name = get_serde_name(&ident_str, rename_deserialize.as_deref(), rename_all_deserialize);
+            wire_fields_stream.push(quote! {
+                #core::WireField {
+                    rust: #ident_str,
+                    wire: #wire_name,
+                    flatten: false,
+                    nested: Some(<#field_ty as #core::Schematic>::wire_fields),
+                }
+            });
             // Presence and nullability come from the serde attributes already on the field, so
             // the schema matches what deserialization requires and serialization writes.
             let presence = serde_field_presence(&field_ty, &field.attrs, container_default);
@@ -180,6 +205,14 @@ pub(crate) fn handler(
                 #flatten_fields_stream
             )*
             result
+        }
+
+        fn wire_fields() -> &'static [#core::WireField] {
+            &[
+                #(
+                    #wire_fields_stream ,
+                )*
+            ]
         }
 
         #flatten_schema_impl

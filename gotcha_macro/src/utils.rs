@@ -158,6 +158,44 @@ pub fn parse_serde_rename(attrs: &[Attribute]) -> Option<String> {
     None
 }
 
+/// The name serde *deserializes* a field/variant from: `#[serde(rename = "..")]` applies to both
+/// directions, while `#[serde(rename(deserialize = ".."))]` overrides only this one.
+///
+/// The schema generator intentionally keeps using [`parse_serde_rename`]; this reader exists so
+/// validation errors can be reported under the key a client actually sent.
+pub fn parse_serde_rename_deserialize(attrs: &[Attribute]) -> Option<String> {
+    for attr in attrs {
+        if attr.path.is_ident("serde") {
+            if let Ok(nested) =
+                attr.parse_args_with(|input: syn::parse::ParseStream| syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated(input))
+            {
+                for meta in nested {
+                    match meta {
+                        syn::Meta::NameValue(name_value) if name_value.path.is_ident("rename") => {
+                            if let syn::Lit::Str(lit_str) = name_value.lit {
+                                return Some(lit_str.value());
+                            }
+                        }
+                        syn::Meta::List(list) if list.path.is_ident("rename") => {
+                            for nested in list.nested {
+                                if let syn::NestedMeta::Meta(syn::Meta::NameValue(name_value)) = nested {
+                                    if name_value.path.is_ident("deserialize") {
+                                        if let syn::Lit::Str(lit_str) = name_value.lit {
+                                            return Some(lit_str.value());
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
 /// Check if field has serde(flatten) attribute
 pub fn has_serde_flatten(attrs: &[Attribute]) -> bool {
     for attr in attrs {
@@ -350,6 +388,44 @@ pub fn parse_serde_rename_all(attrs: &[Attribute]) -> Option<RenameAll> {
     None
 }
 
+/// The case convention serde *deserializes* with: `#[serde(rename_all = "..")]` applies to both
+/// directions, while `#[serde(rename_all(deserialize = ".."))]` overrides only this one.
+///
+/// The schema generator keeps using [`parse_serde_rename_all`]; this reader exists so validation
+/// errors can be reported under the keys a client actually sent.
+pub fn parse_serde_rename_all_deserialize(attrs: &[Attribute]) -> Option<RenameAll> {
+    for attr in attrs {
+        if attr.path.is_ident("serde") {
+            if let Ok(nested) =
+                attr.parse_args_with(|input: syn::parse::ParseStream| syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated(input))
+            {
+                for meta in nested {
+                    match meta {
+                        syn::Meta::NameValue(name_value) if name_value.path.is_ident("rename_all") => {
+                            if let syn::Lit::Str(lit_str) = name_value.lit {
+                                return RenameAll::from_str(&lit_str.value());
+                            }
+                        }
+                        syn::Meta::List(list) if list.path.is_ident("rename_all") => {
+                            for nested in list.nested {
+                                if let syn::NestedMeta::Meta(syn::Meta::NameValue(name_value)) = nested {
+                                    if name_value.path.is_ident("deserialize") {
+                                        if let syn::Lit::Str(lit_str) = name_value.lit {
+                                            return RenameAll::from_str(&lit_str.value());
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
 /// Get the effective serialized name for a field/variant
 pub fn get_serde_name(ident: &str, rename: Option<&str>, rename_all: Option<RenameAll>) -> String {
     if let Some(renamed) = rename {
@@ -414,6 +490,55 @@ mod tests {
         assert_eq!(get_serde_name("InProgress", None, Some(RenameAll::KebabCase)), "in-progress");
         // original name when neither
         assert_eq!(get_serde_name("InProgress", None, None), "InProgress");
+    }
+
+    #[test]
+    fn deserialize_rename_reads_the_deserialize_direction() {
+        let item: syn::DeriveInput = syn::parse_quote! {
+            struct Example {
+                #[serde(rename(serialize = "wire-out", deserialize = "wire-in"))]
+                directed: String,
+                #[serde(rename = "both")]
+                both: String,
+                #[serde(rename(serialize = "wire-out"))]
+                serialize_only: String,
+            }
+        };
+        let syn::Data::Struct(data) = &item.data else { unreachable!() };
+        let attrs: Vec<&[syn::Attribute]> = data.fields.iter().map(|field| field.attrs.as_slice()).collect();
+
+        assert_eq!(parse_serde_rename_deserialize(attrs[0]).as_deref(), Some("wire-in"));
+        // A plain `rename` applies to both directions.
+        assert_eq!(parse_serde_rename_deserialize(attrs[1]).as_deref(), Some("both"));
+        // A serialize-only rename leaves deserialization on the Rust name.
+        assert_eq!(parse_serde_rename_deserialize(attrs[2]), None);
+    }
+
+    #[test]
+    fn deserialize_rename_all_reads_the_deserialize_direction() {
+        let item: syn::DeriveInput = syn::parse_quote! {
+            #[serde(rename_all(deserialize = "camelCase"))]
+            struct Example {
+                value: String,
+            }
+        };
+        assert_eq!(parse_serde_rename_all_deserialize(&item.attrs), Some(RenameAll::CamelCase));
+
+        let item: syn::DeriveInput = syn::parse_quote! {
+            #[serde(rename_all = "kebab-case")]
+            struct Example {
+                value: String,
+            }
+        };
+        assert_eq!(parse_serde_rename_all_deserialize(&item.attrs), Some(RenameAll::KebabCase));
+
+        let item: syn::DeriveInput = syn::parse_quote! {
+            #[serde(rename_all(serialize = "camelCase"))]
+            struct Example {
+                value: String,
+            }
+        };
+        assert_eq!(parse_serde_rename_all_deserialize(&item.attrs), None);
     }
 }
 

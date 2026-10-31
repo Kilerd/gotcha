@@ -23,6 +23,14 @@
 //! [`flatten_errors`] exposes the same flattening to custom [`ValidConfig`](crate::ValidConfig)
 //! handlers.
 //!
+//! Field segments use the names serde reads (`#[serde(rename = "..")]` and
+//! `#[serde(rename_all = "..")]`), not the Rust identifiers: a `first_name` field sent as
+//! `firstName` is reported as `firstName`. [`Valid`] rewrites the keys through
+//! [`Schematic::wire_fields`] before rendering, so custom handlers and
+//! [`Rejected<ValidRejection>`](ValidRejection) see them too; [`remap_to_wire_names`] applies the
+//! same mapping to errors you obtained from `validate()` yourself. Types validated through
+//! [`Valid`] therefore implement [`Schematic`].
+//!
 //! `Valid<axum::Json<T>>` (using the original Axum extractor) is accepted as well and keeps
 //! Axum's original JSON rejection response, so choosing that extractor opts out of the
 //! framework's JSON error body.
@@ -56,7 +64,8 @@
 //! path (for example `#[validate(crate = "web::validator")]`).
 
 use std::borrow::Cow;
-use std::collections::BTreeMap;
+use std::collections::hash_map::Entry;
+use std::collections::{BTreeMap, HashMap};
 
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{FromRequest, Request};
@@ -65,7 +74,7 @@ use axum::response::{IntoResponse, Response};
 use serde::de::DeserializeOwned;
 use validator::{Validate, ValidationError, ValidationErrors, ValidationErrorsKind};
 
-use crate::{Json, Rejected};
+use crate::{Json, Rejected, Schematic, WireField};
 
 /// Extractor that validates another extractor's decoded value with [`validator::Validate`].
 ///
@@ -108,11 +117,12 @@ impl<E> std::ops::DerefMut for Valid<E> {
 /// with `#[validate(nested)]`) are indexed by map iteration order without their key, so that
 /// index can vary between requests and the original key cannot be recovered.
 ///
-/// Field segments are **Rust field names**: validator keys its errors by the Rust identifier and
-/// ignores `#[serde(rename = "..")]` / `#[serde(rename_all = "..")]`. A `first_name` field
-/// serialized as `firstName` is reported as `first_name`. Until a follow-up maps wire names, a
-/// [`ValidConfig::error_handler`](crate::ValidConfig::error_handler) can remap the keys if
-/// clients need the JSON names.
+/// Field segments are **serde wire names**, not Rust field names: `validator` keys its errors by
+/// the identifier, but [`Valid`] rewrites them through [`Schematic::wire_fields`] before any
+/// rendering, so a `first_name` field serialized as `firstName` is reported as `firstName`. A
+/// [`ValidConfig::error_handler`](crate::ValidConfig::error_handler) receives the rewritten
+/// errors; code that calls `validate()` itself can apply the same mapping with
+/// [`remap_to_wire_names`].
 ///
 /// The default `Valid` rejection body is this map in [`ErrorBody::fields`](crate::ErrorBody).
 /// Custom [`ValidConfig::error_handler`](crate::ValidConfig::error_handler) handlers receive the
@@ -175,6 +185,134 @@ fn flatten_into(errors: &ValidationErrors, prefix: &str, fields: &mut BTreeMap<S
                 }
             }
         }
+    }
+}
+
+/// Rewrite validator's Rust field names into the names serde reads, using `T`'s
+/// [`Schematic::wire_fields`] table.
+///
+/// [`Valid`] calls this as soon as validation fails, before the configured rejection handler
+/// renders anything. The default body, a custom
+/// [`ValidConfig::error_handler`](crate::ValidConfig::error_handler), and
+/// [`ValidRejection::Invalid`] therefore all see the names a client sent. Call it yourself if you
+/// run `validate()` directly and want the same paths.
+///
+/// - A field known to the table is renamed (`first_name` -> `firstName`), using serde's
+///   *deserialize* name when it differs from the serialized one.
+/// - A `#[serde(flatten)]` struct field contributes no segment: its fields appear at the parent
+///   level, so its children are hoisted. A non-struct value under a flattened field keeps its
+///   Rust name because serde merges it into the parent object in a way validator cannot express.
+/// - Names the table does not know are left unchanged: validator's `__all__` (whole-object)
+///   validations and the fields of a type without a `Schematic` table.
+/// - A top-level collection keeps validator's internal `_tmp_validator` key; [`flatten_errors`]
+///   drops it, so `Valid<Json<Vec<T>>>` still reports `[0].name`.
+///
+/// ```
+/// use gotcha::validation::remap_to_wire_names;
+/// use gotcha::validator::{ValidationError, ValidationErrors};
+/// use gotcha::Schematic;
+/// use serde::{Deserialize, Serialize};
+///
+/// #[derive(Schematic, Serialize, Deserialize)]
+/// #[serde(rename_all = "camelCase")]
+/// struct Payload {
+///     first_name: String,
+/// }
+///
+/// let mut errors = ValidationErrors::new();
+/// errors.add("first_name", ValidationError::new("length"));
+/// remap_to_wire_names::<Payload>(&mut errors);
+///
+/// assert!(errors.errors().contains_key("firstName"));
+/// assert!(!errors.errors().contains_key("first_name"));
+/// ```
+pub fn remap_to_wire_names<T: Schematic>(errors: &mut ValidationErrors) {
+    remap_with_table(errors, T::wire_fields());
+}
+
+/// The mapping a field's own type contributes, or the empty table.
+fn nested_table(field: &WireField) -> &'static [WireField] {
+    field.nested.map(|nested| nested()).unwrap_or(&[])
+}
+
+/// Rename the keys of one struct level, recursing into nested structs and list elements.
+fn remap_with_table(errors: &mut ValidationErrors, table: &'static [WireField]) {
+    let original = std::mem::take(errors.errors_mut());
+    let remapped = errors.errors_mut();
+    for (key, kind) in original {
+        // The validated value itself is a collection: the key names no field and the elements
+        // are the table's type. `flatten_errors` drops the segment later.
+        if key.as_ref() == "_tmp_validator" {
+            remapped.insert(key, remap_kind(kind, table));
+            continue;
+        }
+        match table.iter().find(|field| field.rust == key.as_ref()) {
+            None => {
+                // `__all__` and fields of unmapped types keep validator's name.
+                remapped.insert(key, kind);
+            }
+            Some(field) if field.flatten => match kind {
+                // A flattened struct's fields are the parent's fields; hoist them so the
+                // flatten field's own segment disappears from the path.
+                ValidationErrorsKind::Struct(mut nested) => {
+                    remap_with_table(&mut nested, nested_table(field));
+                    for (child_key, child_kind) in std::mem::take(nested.errors_mut()) {
+                        merge_kind(remapped, child_key, child_kind);
+                    }
+                }
+                other => {
+                    remapped.insert(key, remap_kind(other, nested_table(field)));
+                }
+            },
+            Some(field) => {
+                let wire = Cow::Borrowed(field.wire);
+                merge_kind(remapped, wire, remap_kind(kind, nested_table(field)));
+            }
+        }
+    }
+}
+
+/// Rename the errors nested one level below a field: a `Struct`'s fields or each `List` element.
+fn remap_kind(kind: ValidationErrorsKind, table: &'static [WireField]) -> ValidationErrorsKind {
+    match kind {
+        ValidationErrorsKind::Struct(mut nested) => {
+            remap_with_table(&mut nested, table);
+            ValidationErrorsKind::Struct(nested)
+        }
+        ValidationErrorsKind::List(mut items) => {
+            for nested in items.values_mut() {
+                remap_with_table(nested, table);
+            }
+            ValidationErrorsKind::List(items)
+        }
+        ValidationErrorsKind::Field(errors) => ValidationErrorsKind::Field(errors),
+    }
+}
+
+/// Insert `kind` at `key`, combining same-shaped entries.
+///
+/// A flattened field can produce a name that the parent (or another flattened field) already
+/// produced. Field-level messages are appended and nested structs are merged. Two different
+/// shapes under one name can only come from a payload serde itself treats ambiguously; the first
+/// entry is kept.
+fn merge_kind(target: &mut HashMap<Cow<'static, str>, ValidationErrorsKind>, key: Cow<'static, str>, kind: ValidationErrorsKind) {
+    match target.entry(key) {
+        Entry::Vacant(entry) => {
+            entry.insert(kind);
+        }
+        Entry::Occupied(mut entry) => match (entry.get_mut(), kind) {
+            (ValidationErrorsKind::Field(existing), ValidationErrorsKind::Field(added)) => existing.extend(added),
+            (ValidationErrorsKind::Struct(existing), ValidationErrorsKind::Struct(added)) => {
+                merge_errors(existing.errors_mut(), (*added).into_errors());
+            }
+            _ => {}
+        },
+    }
+}
+
+fn merge_errors(target: &mut HashMap<Cow<'static, str>, ValidationErrorsKind>, source: HashMap<Cow<'static, str>, ValidationErrorsKind>) {
+    for (key, kind) in source {
+        merge_kind(target, key, kind);
     }
 }
 
@@ -283,7 +421,7 @@ fn render_param(value: &serde_json::Value) -> String {
 
 impl<S, T> FromRequest<S> for Valid<Json<T>>
 where
-    T: DeserializeOwned + Validate,
+    T: DeserializeOwned + Validate + Schematic,
     S: Send + Sync,
 {
     type Rejection = Rejected<ValidRejection>;
@@ -296,8 +434,10 @@ where
             let (rejection, response) = rejected.into_parts();
             Rejected::new(ValidRejection::Json(rejection), response)
         })?;
-        // Only a body that deserialized and failed validation reaches `ValidConfig`.
-        value.validate().map_err(|errors| {
+        // Only a body that deserialized and failed validation reaches `ValidConfig`. Rewrite the
+        // keys first so the handler, the rendered body, and `Rejected` all see wire names.
+        value.validate().map_err(|mut errors| {
+            remap_to_wire_names::<T>(&mut errors);
             let response = config.valid.render(&errors);
             Rejected::new(ValidRejection::Invalid(errors), response)
         })?;
@@ -307,7 +447,7 @@ where
 
 impl<S, T> FromRequest<S> for Valid<axum::extract::Json<T>>
 where
-    T: DeserializeOwned + Validate,
+    T: DeserializeOwned + Validate + Schematic,
     S: Send + Sync,
 {
     type Rejection = Rejected<ValidRejection>;
@@ -323,7 +463,8 @@ where
                 let response = (rejection.status(), rejection.body_text()).into_response();
                 Rejected::new(ValidRejection::Json(rejection), response)
             })?;
-        value.validate().map_err(|errors| {
+        value.validate().map_err(|mut errors| {
+            remap_to_wire_names::<T>(&mut errors);
             let response = config.valid.render(&errors);
             Rejected::new(ValidRejection::Invalid(errors), response)
         })?;
@@ -377,31 +518,31 @@ mod tests {
 
     use super::*;
 
-    #[derive(Deserialize, Validate)]
+    #[derive(Deserialize, Schematic, Validate)]
     struct Payload {
         #[validate(range(min = 0, max = 150))]
         age: u8,
     }
 
-    #[derive(Deserialize, Validate)]
+    #[derive(Deserialize, Schematic, Validate)]
     struct Annotated {
         #[validate(length(min = 3, message = "name is too short"))]
         name: String,
     }
 
-    #[derive(Deserialize, Validate)]
+    #[derive(Deserialize, Schematic, Validate)]
     struct Address {
         #[validate(length(min = 1, max = 64))]
         city: String,
     }
 
-    #[derive(Deserialize, Validate)]
+    #[derive(Deserialize, Schematic, Validate)]
     struct LineItem {
         #[validate(length(min = 1))]
         name: String,
     }
 
-    #[derive(Deserialize, Validate)]
+    #[derive(Deserialize, Schematic, Validate)]
     #[validate(schema(function = "at_least_one_item"))]
     struct Order {
         #[validate(nested)]
@@ -418,7 +559,7 @@ mod tests {
         }
     }
 
-    #[derive(Deserialize, Validate)]
+    #[derive(Deserialize, Schematic, Validate)]
     #[validate(schema(function = "nested_schema_fails"))]
     struct NestedSchema {
         #[allow(dead_code)]
@@ -429,13 +570,13 @@ mod tests {
         Err(ValidationError::new("some_custom_rule"))
     }
 
-    #[derive(Deserialize, Validate)]
+    #[derive(Deserialize, Schematic, Validate)]
     struct Parent {
         #[validate(nested)]
         child: NestedSchema,
     }
 
-    #[derive(Deserialize, Validate)]
+    #[derive(Deserialize, Schematic, Validate)]
     struct MapHolder {
         #[validate(nested)]
         entries: std::collections::HashMap<String, LineItem>,

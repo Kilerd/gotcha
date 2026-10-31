@@ -13,11 +13,11 @@ help: the trait `Schematic` is not implemented for `NoSchema`
             &T
             &str
             ()
+            Arc<T>
             BTreeMap<K, V>
-            ErrorBody
-            HashMap<K, V>
-            HashSet<T>
-            HttpError
+            BTreeSet<T>
+            Box<T>
+            Cow<'_, T>
           and $N others
   = note: required for `gotcha::Json<NoSchema>` to implement `Responsible`
   = note: required for `Result<gotcha::Json<NoSchema>, StatusCode>` to implement `gotcha::gotcha_core::responsible::ResultResponse`

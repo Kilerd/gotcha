@@ -269,7 +269,7 @@ gotcha = { version = "0.4", features = ["openapi", "prometheus", "cors", "static
 ```
 
 Available features:
-- `openapi` - Automatic OpenAPI/Swagger documentation
+- `openapi` - OpenAPI document generation: `#[api]`, request/response components, and the documentation endpoints. `Schematic`, `#[derive(Schematic)]`, and `Valid`'s wire-name mapping work without it.
 - `prometheus` - Opt-in Prometheus metrics endpoint (`/metrics` by default) and `metrics` re-exports
 - `cors` - Cross-Origin Resource Sharing support
 - `static_files` - Static file serving capabilities
@@ -359,9 +359,31 @@ mount. `finish_router` is not called during document export.
 
 `Schematic` lives in `gotcha_core`, so a library can implement or derive it without depending on
 the web framework. Applications can use `#[derive(gotcha::Schematic)]` with just the `gotcha`
-dependency and its `openapi` feature; a separate `gotcha_core` dependency and trait import are
-unnecessary. The derive recognizes Cargo dependency renames. A custom facade can supply
-`#[schematic(crate = "path::to::gotcha_core")]` to select its core re-export.
+dependency; the trait and derive are available in every build, not only with `openapi`, because
+`Valid` uses their field mapping to name validation errors. A separate `gotcha_core` dependency
+and trait import are unnecessary. The derive recognizes Cargo dependency renames. A custom facade
+can supply `#[schematic(crate = "path::to::gotcha_core")]` to select its core re-export.
+
+A field whose Rust type has no `Schematic` implementation can borrow another type's schema with
+`#[schematic(as = "Type")]`. `Type` also supplies requiredness, nullability, and nested
+validation wire names, and serde presence rules still apply on top:
+
+```rust
+# mod as_example {
+use gotcha::Schematic;
+
+struct MyUrl(String); // no Schematic implementation
+
+#[derive(Schematic)]
+struct Link {
+    #[schematic(as = "String")]
+    url: MyUrl,
+    // Use `as = "Option<String>"` to keep the field optional and nullable.
+    #[schematic(as = "Option<String>")]
+    title: MyUrl,
+}
+# }
+```
 
 With the `openapi` feature enabled, use the `#[api]` macro for automatic documentation:
 
@@ -679,11 +701,18 @@ A `Valid` failure keeps `422 Unprocessable Entity` and also renders as `ErrorBod
 Nested struct fields use dotted paths (`address.city`), list elements are indexed
 (`items[0].name`), and struct-level validations keep validator's `__all__` key. A directly
 validated collection has no field name (`[0].name`). Values of a nested map are indexed by
-validator's iteration order and lose their key. Field segments are Rust field names:
-`#[serde(rename)]` / `#[serde(rename_all)]` are not applied (`first_name`, not `firstName`);
-remap them in a `ValidConfig` handler if clients need the JSON names. Messages are the declared
-ones or readable defaults. A `ValidConfig` handler still receives the original
-`validator::ValidationErrors`; `gotcha::validation::flatten_errors` builds the same field map.
+validator's iteration order and lose their key.
+
+Field segments are the names serde reads, not the Rust identifiers: `#[serde(rename = "e-mail")]`
+and `#[serde(rename_all = "camelCase")]` (including their `deserialize = ..` forms) are applied to
+every path segment, so a `first_name` field sent as `firstName` is reported as `firstName`. A
+`#[serde(flatten)]` struct field contributes no segment: its children appear at the parent level.
+`Valid` rewrites the errors before anything renders, so the default body, a
+`ValidConfig::error_handler`, and `Rejected<ValidRejection>` all see wire names; types validated
+through `Valid` implement `Schematic`. Messages are the declared ones or readable defaults.
+`gotcha::validation::flatten_errors` builds the field map, and
+`gotcha::validation::remap_to_wire_names::<T>` applies the same mapping to errors from a manual
+`validate()` call.
 
 Extractor rejections are `Rejected<R>`: they carry both the original rejection and the rendered
 response, so Axum's per-handler pattern still works:

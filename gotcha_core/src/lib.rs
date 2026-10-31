@@ -65,6 +65,26 @@ pub struct EnhancedSchema {
     pub required: bool,
 }
 
+/// One field in a type's [`Schematic::wire_fields`] table.
+///
+/// The table translates the Rust field names that `validator` reports into the names serde
+/// reads from the wire, and carries the mapping of the field's own type so nesting composes.
+/// [`Schematic`]'s derive emits it from the same `#[serde(..)]` attributes the schema uses;
+/// types without named fields keep the empty default.
+#[derive(Debug, Clone, Copy)]
+pub struct WireField {
+    /// The Rust field name, which is the key `validator` uses.
+    pub rust: &'static str,
+    /// The name serde accepts for this field.
+    pub wire: &'static str,
+    /// Whether the field is `#[serde(flatten)]`. A flattened field contributes no path segment:
+    /// its own type's fields appear at the parent level.
+    pub flatten: bool,
+    /// The field type's own mapping. Container types delegate to the type they contain, so this
+    /// is the mapping of the innermost named struct.
+    pub nested: Option<fn() -> &'static [WireField]>,
+}
+
 /// Admit JSON null as an alternative to a schema, preserving all of its constraints.
 ///
 /// `anyOf` also works for references, enums, and composed schemas, whose constraints
@@ -140,6 +160,21 @@ pub trait Schematic {
     fn flatten_schema() -> Option<serde_json::Value> {
         None
     }
+
+    /// The Rust-name to serde-wire-name mapping for this type's fields.
+    ///
+    /// `validator` keys its errors by Rust field name, while clients read and write the names
+    /// in `#[serde(rename = "..")]` / `#[serde(rename_all = "..")]`. gotcha's `Valid` extractor
+    /// walks this table after validation to report failures under the names the client can act
+    /// on; see `gotcha::validation::remap_to_wire_names`.
+    ///
+    /// The derive emits it for named structs. Container types (`Option`, `Vec`, maps, `Box`,
+    /// `Arc`, arrays, ...) delegate to the type they contain, so a field's entry composes
+    /// through any nesting. Types without named fields return the empty default, and a name
+    /// that is not in the table is left alone.
+    fn wire_fields() -> &'static [WireField] {
+        &[]
+    }
 }
 
 macro_rules! impl_primitive_type {
@@ -172,6 +207,140 @@ impl_primitive_type! { String, "string", "string"}
 impl_primitive_type! { bool, "bool", "boolean"}
 impl_primitive_type! { f32, "f32", "number"}
 impl_primitive_type! { f64, "f64", "number"}
+impl_primitive_type! { i128, "i128", "integer"}
+impl_primitive_type! { u128, "u128", "integer"}
+impl_primitive_type! { char, "char", "string"}
+
+impl Schematic for str {
+    fn name() -> &'static str {
+        "string"
+    }
+
+    fn required() -> bool {
+        true
+    }
+
+    fn type_() -> &'static str {
+        "string"
+    }
+}
+
+/// A non-zero integer narrows `integer` to exclude zero. Unsigned types have `minimum: 1`;
+/// signed types carry no bound because their valid range starts at their type minimum.
+macro_rules! impl_nonzero_unsigned_type {
+    ($t:ty, $name:expr) => {
+        impl Schematic for $t {
+            fn name() -> &'static str {
+                $name
+            }
+
+            fn required() -> bool {
+                true
+            }
+
+            fn type_() -> &'static str {
+                "integer"
+            }
+
+            fn generate_schema() -> EnhancedSchema {
+                let mut schema = EnhancedSchema {
+                    schema: Schema {
+                        _type: Some(Self::type_().into()),
+                        format: None,
+                        nullable: None,
+                        description: Self::doc(),
+                        extras: Default::default(),
+                        ..Schema::default()
+                    },
+                    required: Self::required(),
+                };
+                schema.schema.extras.insert("minimum".to_string(), serde_json::json!(1));
+                schema
+            }
+        }
+    };
+}
+
+macro_rules! impl_nonzero_signed_type {
+    ($t:ty, $name:expr) => {
+        impl Schematic for $t {
+            fn name() -> &'static str {
+                $name
+            }
+
+            fn required() -> bool {
+                true
+            }
+
+            fn type_() -> &'static str {
+                "integer"
+            }
+        }
+    };
+}
+
+impl_nonzero_unsigned_type! { std::num::NonZeroU8, "NonZeroU8" }
+impl_nonzero_unsigned_type! { std::num::NonZeroU16, "NonZeroU16" }
+impl_nonzero_unsigned_type! { std::num::NonZeroU32, "NonZeroU32" }
+impl_nonzero_unsigned_type! { std::num::NonZeroU64, "NonZeroU64" }
+impl_nonzero_unsigned_type! { std::num::NonZeroU128, "NonZeroU128" }
+impl_nonzero_unsigned_type! { std::num::NonZeroUsize, "NonZeroUsize" }
+impl_nonzero_signed_type! { std::num::NonZeroI8, "NonZeroI8" }
+impl_nonzero_signed_type! { std::num::NonZeroI16, "NonZeroI16" }
+impl_nonzero_signed_type! { std::num::NonZeroI32, "NonZeroI32" }
+impl_nonzero_signed_type! { std::num::NonZeroI64, "NonZeroI64" }
+impl_nonzero_signed_type! { std::num::NonZeroI128, "NonZeroI128" }
+impl_nonzero_signed_type! { std::num::NonZeroIsize, "NonZeroIsize" }
+
+impl Schematic for std::net::IpAddr {
+    fn name() -> &'static str {
+        "ip"
+    }
+
+    fn required() -> bool {
+        true
+    }
+
+    fn type_() -> &'static str {
+        "string"
+    }
+}
+
+impl Schematic for std::net::Ipv4Addr {
+    fn name() -> &'static str {
+        "ipv4"
+    }
+
+    fn required() -> bool {
+        true
+    }
+
+    fn type_() -> &'static str {
+        "string"
+    }
+
+    fn format() -> Option<String> {
+        Some("ipv4".to_string())
+    }
+}
+
+impl Schematic for std::net::Ipv6Addr {
+    fn name() -> &'static str {
+        "ipv6"
+    }
+
+    fn required() -> bool {
+        true
+    }
+
+    fn type_() -> &'static str {
+        "string"
+    }
+
+    fn format() -> Option<String> {
+        Some("ipv6".to_string())
+    }
+}
 
 /// A binary payload, such as a file field in a `multipart/form-data` form.
 ///
@@ -379,6 +548,9 @@ impl<T: Schematic> Schematic for Option<T> {
             required: Self::required(),
         }
     }
+    fn wire_fields() -> &'static [WireField] {
+        T::wire_fields()
+    }
 }
 
 impl<T: Schematic> Schematic for &T {
@@ -398,6 +570,117 @@ impl<T: Schematic> Schematic for &T {
     }
     fn generate_schema() -> EnhancedSchema {
         T::generate_schema()
+    }
+    fn wire_fields() -> &'static [WireField] {
+        T::wire_fields()
+    }
+}
+
+/// Owned pointers and `Cow` are transparent: serde serializes the pointee, so the schema is the
+/// pointee's schema.
+macro_rules! impl_transparent_pointer {
+    ($t:ty) => {
+        impl<T> Schematic for $t
+        where
+            T: Schematic + ?Sized,
+        {
+            fn name() -> &'static str {
+                T::name()
+            }
+
+            fn schema_name() -> Option<&'static str> {
+                T::schema_name()
+            }
+
+            fn required() -> bool {
+                T::required()
+            }
+
+            fn nullable() -> Option<bool> {
+                T::nullable()
+            }
+
+            fn type_() -> &'static str {
+                T::type_()
+            }
+
+            fn doc() -> Option<String> {
+                T::doc()
+            }
+
+            fn format() -> Option<String> {
+                T::format()
+            }
+
+            fn fields() -> Vec<(&'static str, EnhancedSchema)> {
+                T::fields()
+            }
+
+            fn generate_schema() -> EnhancedSchema {
+                T::generate_schema()
+            }
+
+            fn flatten_schema() -> Option<serde_json::Value> {
+                T::flatten_schema()
+            }
+
+            fn wire_fields() -> &'static [WireField] {
+                T::wire_fields()
+            }
+        }
+    };
+}
+
+impl_transparent_pointer! { Box<T> }
+impl_transparent_pointer! { std::sync::Arc<T> }
+impl_transparent_pointer! { std::rc::Rc<T> }
+
+impl<T> Schematic for std::borrow::Cow<'_, T>
+where
+    T: Schematic + ToOwned + ?Sized,
+{
+    fn name() -> &'static str {
+        T::name()
+    }
+
+    fn schema_name() -> Option<&'static str> {
+        T::schema_name()
+    }
+
+    fn required() -> bool {
+        T::required()
+    }
+
+    fn nullable() -> Option<bool> {
+        T::nullable()
+    }
+
+    fn type_() -> &'static str {
+        T::type_()
+    }
+
+    fn doc() -> Option<String> {
+        T::doc()
+    }
+
+    fn format() -> Option<String> {
+        T::format()
+    }
+
+    fn fields() -> Vec<(&'static str, EnhancedSchema)> {
+        T::fields()
+    }
+
+    fn generate_schema() -> EnhancedSchema {
+        T::generate_schema()
+    }
+
+    fn flatten_schema() -> Option<serde_json::Value> {
+        T::flatten_schema()
+    }
+
+    fn wire_fields() -> &'static [WireField] {
+        T::wire_fields()
     }
 }
 
@@ -431,6 +714,80 @@ impl<T: Schematic> Schematic for Vec<T> {
         };
         schema.schema.extras.insert("items".to_string(), T::generate_schema().schema.to_value());
         schema
+    }
+    fn wire_fields() -> &'static [WireField] {
+        T::wire_fields()
+    }
+}
+
+impl<T: Schematic> Schematic for std::collections::VecDeque<T> {
+    fn name() -> &'static str {
+        T::name()
+    }
+
+    fn required() -> bool {
+        true
+    }
+
+    fn type_() -> &'static str {
+        "array"
+    }
+
+    fn generate_schema() -> EnhancedSchema {
+        let mut schema = EnhancedSchema {
+            schema: Schema {
+                _type: Some(Self::type_().into()),
+                format: None,
+                nullable: None,
+                description: Self::doc(),
+                extras: Default::default(),
+                ..Schema::default()
+            },
+            required: Self::required(),
+        };
+        schema.schema.extras.insert("items".to_string(), T::generate_schema().schema.to_value());
+        schema
+    }
+
+    fn wire_fields() -> &'static [WireField] {
+        T::wire_fields()
+    }
+}
+
+impl<T: Schematic, const N: usize> Schematic for [T; N] {
+    fn name() -> &'static str {
+        T::name()
+    }
+
+    fn required() -> bool {
+        true
+    }
+
+    fn type_() -> &'static str {
+        "array"
+    }
+
+    fn generate_schema() -> EnhancedSchema {
+        let mut schema = EnhancedSchema {
+            schema: Schema {
+                _type: Some(Self::type_().into()),
+                format: None,
+                nullable: None,
+                description: Self::doc(),
+                extras: Default::default(),
+                ..Schema::default()
+            },
+            required: Self::required(),
+        };
+        schema.schema.extras.insert("items".to_string(), T::generate_schema().schema.to_value());
+        // A fixed-size array always has exactly N elements.
+        schema.schema.extras.insert("minItems".to_string(), serde_json::json!(N));
+        schema.schema.extras.insert("maxItems".to_string(), serde_json::json!(N));
+        schema
+    }
+
+    fn wire_fields() -> &'static [WireField] {
+        T::wire_fields()
     }
 }
 
@@ -494,6 +851,43 @@ impl<T: Schematic> Schematic for HashSet<T> {
         schema.schema.extras.insert("items".to_string(), T::generate_schema().schema.to_value());
         schema
     }
+    fn wire_fields() -> &'static [WireField] {
+        T::wire_fields()
+    }
+}
+
+impl<T: Schematic> Schematic for std::collections::BTreeSet<T> {
+    fn name() -> &'static str {
+        T::name()
+    }
+
+    fn required() -> bool {
+        true
+    }
+
+    fn type_() -> &'static str {
+        "array"
+    }
+
+    fn generate_schema() -> EnhancedSchema {
+        let mut schema = EnhancedSchema {
+            schema: Schema {
+                _type: Some(Self::type_().into()),
+                format: None,
+                nullable: None,
+                description: Self::doc(),
+                extras: Default::default(),
+                ..Schema::default()
+            },
+            required: Self::required(),
+        };
+        schema.schema.extras.insert("items".to_string(), T::generate_schema().schema.to_value());
+        schema
+    }
+
+    fn wire_fields() -> &'static [WireField] {
+        T::wire_fields()
+    }
 }
 
 impl<K: ToString, V: Schematic> Schematic for HashMap<K, V> {
@@ -526,6 +920,9 @@ impl<K: ToString, V: Schematic> Schematic for HashMap<K, V> {
             .extras
             .insert("additionalProperties".to_string(), V::generate_schema().schema.to_value());
         schema
+    }
+    fn wire_fields() -> &'static [WireField] {
+        V::wire_fields()
     }
 }
 
@@ -561,6 +958,9 @@ impl<K: ToString, V: Schematic> Schematic for BTreeMap<K, V> {
             .insert("additionalProperties".to_string(), V::generate_schema().schema.to_value());
         schema
     }
+    fn wire_fields() -> &'static [WireField] {
+        V::wire_fields()
+    }
 }
 
 impl Schematic for DateTime<Utc> {
@@ -578,6 +978,60 @@ impl Schematic for DateTime<Utc> {
 
     fn format() -> Option<String> {
         Some("date-time".to_string())
+    }
+}
+
+impl Schematic for DateTime<chrono::FixedOffset> {
+    fn name() -> &'static str {
+        "datetime"
+    }
+
+    fn required() -> bool {
+        true
+    }
+
+    fn type_() -> &'static str {
+        "string"
+    }
+
+    fn format() -> Option<String> {
+        Some("date-time".to_string())
+    }
+}
+
+impl Schematic for DateTime<chrono::Local> {
+    fn name() -> &'static str {
+        "datetime"
+    }
+
+    fn required() -> bool {
+        true
+    }
+
+    fn type_() -> &'static str {
+        "string"
+    }
+
+    fn format() -> Option<String> {
+        Some("date-time".to_string())
+    }
+}
+
+impl Schematic for chrono::NaiveTime {
+    fn name() -> &'static str {
+        "time"
+    }
+
+    fn required() -> bool {
+        true
+    }
+
+    fn type_() -> &'static str {
+        "string"
+    }
+
+    fn format() -> Option<String> {
+        Some("time".to_string())
     }
 }
 
@@ -656,5 +1110,129 @@ mod tests {
         let value = serde_json::to_value(&schema.schema).unwrap();
         assert!(value.get("type").is_none(), "Value must not be typed: {value}");
         assert!(value.get("format").is_none(), "Value must not have a format: {value}");
+    }
+
+    #[derive(Clone, Schematic, serde::Deserialize, serde::Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Inner {
+        #[allow(dead_code)]
+        first_name: String,
+    }
+
+    #[test]
+    fn pointers_and_cow_are_transparent() {
+        let integer = serde_json::json!({"type": "integer"});
+        assert_eq!(<Box<String> as Schematic>::name(), "string");
+        assert_eq!(
+            <Box<str> as Schematic>::generate_schema().schema.to_value(),
+            serde_json::json!({"type": "string"})
+        );
+        assert_eq!(<Box<u32> as Schematic>::generate_schema().schema.to_value(), integer);
+        assert_eq!(<std::sync::Arc<u32> as Schematic>::generate_schema().schema.to_value(), integer);
+        assert_eq!(<std::rc::Rc<u32> as Schematic>::generate_schema().schema.to_value(), integer);
+        assert_eq!(<std::borrow::Cow<'_, str> as Schematic>::name(), "string");
+        assert_eq!(<std::borrow::Cow<'_, Inner> as Schematic>::type_(), "object");
+        assert_eq!(
+            <std::borrow::Cow<'_, Inner> as Schematic>::generate_schema().schema.to_value()["properties"]["firstName"]["type"],
+            "string"
+        );
+    }
+
+    #[test]
+    fn container_wire_fields_delegate_to_the_inner_struct() {
+        fn wires<T: Schematic>() -> Vec<&'static str> {
+            T::wire_fields().iter().map(|field| field.wire).collect()
+        }
+
+        assert_eq!(wires::<Inner>(), ["firstName"]);
+        for wires_of in [
+            wires::<Option<Inner>>,
+            wires::<Vec<Inner>>,
+            wires::<Box<Inner>>,
+            wires::<std::sync::Arc<Inner>>,
+            wires::<std::rc::Rc<Inner>>,
+            wires::<std::borrow::Cow<'_, Inner>>,
+            wires::<std::collections::BTreeSet<Inner>>,
+            wires::<std::collections::VecDeque<Inner>>,
+            wires::<std::collections::HashSet<Inner>>,
+            wires::<[Inner; 2]>,
+            wires::<std::collections::HashMap<String, Inner>>,
+            wires::<BTreeMap<String, Inner>>,
+        ] {
+            assert_eq!(wires_of(), ["firstName"]);
+        }
+    }
+
+    #[test]
+    fn ip_types_document_as_strings_with_their_formats() {
+        assert_eq!(
+            <std::net::IpAddr as Schematic>::generate_schema().schema.to_value(),
+            serde_json::json!({"type": "string"})
+        );
+        assert_eq!(
+            <std::net::Ipv4Addr as Schematic>::generate_schema().schema.to_value(),
+            serde_json::json!({"type": "string", "format": "ipv4"})
+        );
+        assert_eq!(
+            <std::net::Ipv6Addr as Schematic>::generate_schema().schema.to_value(),
+            serde_json::json!({"type": "string", "format": "ipv6"})
+        );
+    }
+
+    #[test]
+    fn nonzero_integers_exclude_zero() {
+        assert_eq!(
+            <std::num::NonZeroU32 as Schematic>::generate_schema().schema.to_value(),
+            serde_json::json!({"type": "integer", "minimum": 1})
+        );
+        assert_eq!(
+            <std::num::NonZeroUsize as Schematic>::generate_schema().schema.to_value(),
+            serde_json::json!({"type": "integer", "minimum": 1})
+        );
+        assert_eq!(
+            <std::num::NonZeroI32 as Schematic>::generate_schema().schema.to_value(),
+            serde_json::json!({"type": "integer"})
+        );
+    }
+
+    #[test]
+    fn chrono_time_types_document_their_formats() {
+        assert_eq!(
+            <DateTime<chrono::FixedOffset> as Schematic>::generate_schema().schema.to_value(),
+            serde_json::json!({"type": "string", "format": "date-time"})
+        );
+        assert_eq!(
+            <DateTime<chrono::Local> as Schematic>::generate_schema().schema.to_value(),
+            serde_json::json!({"type": "string", "format": "date-time"})
+        );
+        assert_eq!(
+            <chrono::NaiveTime as Schematic>::generate_schema().schema.to_value(),
+            serde_json::json!({"type": "string", "format": "time"})
+        );
+    }
+
+    #[test]
+    fn sequences_and_arrays_document_their_items() {
+        assert_eq!(
+            <std::collections::BTreeSet<u8> as Schematic>::generate_schema().schema.to_value(),
+            serde_json::json!({"type": "array", "items": {"type": "integer"}})
+        );
+        assert_eq!(
+            <std::collections::VecDeque<u8> as Schematic>::generate_schema().schema.to_value(),
+            serde_json::json!({"type": "array", "items": {"type": "integer"}})
+        );
+        // A fixed-size array always has exactly N elements.
+        assert_eq!(
+            <[u8; 3] as Schematic>::generate_schema().schema.to_value(),
+            serde_json::json!({"type": "array", "items": {"type": "integer"}, "minItems": 3, "maxItems": 3})
+        );
+    }
+
+    #[test]
+    fn wide_and_character_primitives_are_typed() {
+        assert_eq!(<char as Schematic>::type_(), "string");
+        assert_eq!(<i128 as Schematic>::type_(), "integer");
+        assert_eq!(<u128 as Schematic>::type_(), "integer");
+        assert_eq!(<str as Schematic>::type_(), "string");
     }
 }

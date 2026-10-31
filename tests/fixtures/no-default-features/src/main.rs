@@ -1,4 +1,18 @@
-use gotcha::{ConfigWrapper, EmptyConfig, Gotcha, GotchaApp, GotchaContext, GotchaResult, GotchaRouter};
+use gotcha::{ConfigWrapper, EmptyConfig, Gotcha, GotchaApp, GotchaContext, GotchaResult, GotchaRouter, Json, Schematic, Valid, Validate};
+use serde::Deserialize;
+
+/// `Schematic` and `Valid`'s wire-name mapping are available without the `openapi` feature.
+#[derive(Debug, Deserialize, Schematic, Validate)]
+#[validate(crate = "gotcha::validator")]
+#[serde(rename_all = "camelCase")]
+struct Payload {
+    #[validate(length(min = 1))]
+    first_name: String,
+}
+
+async fn create(Valid(Json(payload)): Valid<Json<Payload>>) -> String {
+    payload.first_name
+}
 
 struct App;
 
@@ -11,7 +25,7 @@ impl GotchaApp for App {
     }
 
     fn routes(&self, router: GotchaRouter<GotchaContext<(), EmptyConfig>>) -> GotchaRouter<GotchaContext<(), EmptyConfig>> {
-        router
+        router.post("/", create)
     }
 }
 

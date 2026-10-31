@@ -11,3 +11,4 @@ openapi = ["gotcha/openapi"]
 
 [dependencies]
 gotcha = { path = "../../../gotcha", default-features = false }
+serde = { version = "1", features = ["derive"] }
