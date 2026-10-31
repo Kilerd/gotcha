@@ -85,6 +85,24 @@ struct DeserializeOnly {
     email: String,
 }
 
+/// `#[serde(skip_serializing)]` only affects output: the field is still read from the request,
+/// so its errors must use the input name. Its type is never referenced by the derive, so the
+/// type does not need `Schematic`.
+#[derive(Debug, Deserialize, Serialize)]
+struct Token(String);
+
+#[derive(Debug, Deserialize, Serialize, Schematic, Validate)]
+#[validate(crate = "gotcha::validator")]
+#[serde(rename_all = "camelCase")]
+struct UpdateAccount {
+    #[validate(length(min = 8))]
+    #[serde(skip_serializing)]
+    new_password: String,
+    #[serde(skip_serializing)]
+    #[allow(dead_code)]
+    legacy: Token,
+}
+
 fn reject_everything(_: &Whole) -> Result<(), gotcha::validator::ValidationError> {
     Err(gotcha::validator::ValidationError::new("some_custom_rule"))
 }
@@ -107,6 +125,10 @@ async fn whole(Valid(Json(whole)): Valid<Json<Whole>>) -> String {
 
 async fn deserialize_only(Valid(Json(payload)): Valid<Json<DeserializeOnly>>) -> String {
     payload.first_name
+}
+
+async fn update_account(Valid(Json(account)): Valid<Json<UpdateAccount>>) -> String {
+    account.new_password
 }
 
 async fn create_users(Valid(Json(users)): Valid<Json<Vec<User>>>) -> String {
@@ -150,6 +172,7 @@ impl GotchaApp for App {
             .post("/flatten", flatten)
             .post("/whole", whole)
             .post("/deserialize-only", deserialize_only)
+            .post("/account", update_account)
             .post("/users-list", create_users)
             .post("/rejected", rejected)
     }
@@ -274,6 +297,22 @@ async fn deserialize_only_renames_are_used() {
                 "firstName": ["length must be at least 1"],
                 "e-mail": ["length must be at least 1"]
             }
+        })
+    );
+}
+
+#[tokio::test]
+async fn skip_serializing_fields_still_use_their_input_name() {
+    // `skip_serializing` keeps the field in deserialization, so `newPassword` is accepted on the
+    // wire and reported back under that name. The `Token` field proves the derive does not
+    // require `Schematic` on a field it skips when serializing.
+    let (status, body) = send(&app().await, "/account", r#"{"newPassword":"","legacy":"abc"}"#).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(
+        body,
+        json!({
+            "error": "validation failed",
+            "fields": {"newPassword": ["length must be at least 8"]}
         })
     );
 }

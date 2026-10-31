@@ -378,9 +378,9 @@ struct MyUrl(String); // no Schematic implementation
 struct Link {
     #[schematic(as = "String")]
     url: MyUrl,
-    // Use `as = "Option<String>"` to keep the field optional and nullable.
+    // Keep an optional field nullable with `as = "Option<String>"`.
     #[schematic(as = "Option<String>")]
-    title: MyUrl,
+    title: Option<MyUrl>,
 }
 # }
 ```

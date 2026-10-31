@@ -249,8 +249,16 @@ names serde reads.**
   too, so the derive's generated paths resolve without `openapi`.
 - `Valid<Json<T>>` and `Valid<axum::extract::Json<T>>` require `T: Schematic` (container types
   such as `Vec<T>` implement it by delegating). Add `#[derive(Schematic)]` to the validated type
-  if it only derived `Validate` before. A hand-written `Schematic` implementation keeps compiling
-  and only needs the new `wire_fields` method when its fields are renamed on the wire.
+  if it only derived `Validate` before. A hand-written `Schematic` implementation keeps
+  compiling; add `wire_fields` when its fields are renamed on the wire. A hand-written wrapper
+  must forward to its inner type (`T::wire_fields()`): the default returns no mapping, so a
+  generic wrapper such as `Paged<T>` that forgets to delegate hides every renamed field below it.
+- The new blanket `impl<T: Schematic> Schematic for Box<T>` conflicts with a downstream
+  `impl Schematic for Box<LocalType>` when `LocalType` also implements `Schematic`. `Box` is
+  `#[fundamental]`, so the orphan rules already allowed that manual implementation and the
+  compiler now reports E0119. Delete it: `Box<T>` delegates to `T` automatically. The other new
+  container implementations (`Arc`, `Rc`, `Cow`, sets, `VecDeque`, arrays) are not fundamental,
+  so a downstream implementation for them was never allowed and cannot conflict.
 - Validation error paths now use serde's *deserialize* names at every segment:
   `#[serde(rename = "..")]`, `#[serde(rename_all = "..")]`, and the
   `rename(deserialize = "..")` / `rename_all(deserialize = "..")` forms. A `first_name` field
@@ -264,8 +272,8 @@ names serde reads.**
   `gotcha::validation::remap_to_wire_names::<T>(&mut errors)`.
 - `#[schematic(as = "Type")]` describes a field as another type for the schema, requiredness,
   nullability, and nested wire mapping; the declared type no longer needs `Schematic`. Serde
-  presence rules still apply on top, and `as = "Option<String>"` is how a non-option field keeps
-  nullability.
+  presence rules still apply on top; an `Option<MyUrl>` field with `as = "Option<String>"`
+  keeps its nullable schema.
 - New `Schematic` implementations: `Box<T>`, `Arc<T>`, `Rc<T>`, `Cow<'_, T>`, `str`, `char`,
   `i128`/`u128`, the `NonZero*` integers (`minimum: 1` for unsigned), `IpAddr`/`Ipv4Addr`/
   `Ipv6Addr`, `DateTime<FixedOffset>`, `DateTime<Local>`, `NaiveTime`, `BTreeSet<T>`,

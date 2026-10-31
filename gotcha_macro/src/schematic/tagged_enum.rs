@@ -24,7 +24,8 @@ pub(crate) fn handler(
 
                     if let Some(ident) = field.ident.as_ref() {
                         // named variant
-                        let presence = serde_field_presence(&field.ty, &field.attrs, false);
+                        let field_ty = field.schema_type().clone();
+                        let presence = serde_field_presence(&field_ty, &field.attrs, false);
                         let schema_ty = presence.schema_type;
                         let required_override = match presence.required {
                             Some(required) => quote! { field_schema.required = #required; },
@@ -45,7 +46,7 @@ pub(crate) fn handler(
                         }
                     } else {
                         // unnamed variant
-                        let field_ty = field.ty.clone();
+                        let field_ty = field.schema_type().clone();
                         quote! {
                             let inner_fields = <#field_ty as #core::Schematic>::fields();
                             for (field_name, field_schema) in inner_fields {

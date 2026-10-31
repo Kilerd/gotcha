@@ -204,8 +204,9 @@ pub fn api(args: TokenStream, input_stream: TokenStream) -> TokenStream {
 /// `#[schematic(as = "Type")]` describes the field as `Type` without changing its Rust type.
 /// `Type` supplies the schema and the requiredness/nullability, and it is also the source of
 /// nested validation wire names, so the original field type need not implement `Schematic`.
-/// The serde presence rules below still apply on top: write `as = "Option<String>"` when the
-/// field should stay nullable, for example for a custom URL type that serializes to a string:
+/// The serde presence rules below still apply on top: an optional field keeps its nullable
+/// schema by describing it as an optional type, for example a custom URL type that serializes
+/// to a string:
 ///
 /// ```rust,ignore
 /// struct MyUrl(String); // no `Schematic` implementation
@@ -214,6 +215,8 @@ pub fn api(args: TokenStream, input_stream: TokenStream) -> TokenStream {
 /// struct Link {
 ///     #[schematic(as = "String")]
 ///     url: MyUrl,
+///     #[schematic(as = "Option<String>")]
+///     title: Option<MyUrl>,
 /// }
 /// ```
 ///

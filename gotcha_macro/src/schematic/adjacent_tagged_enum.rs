@@ -26,7 +26,7 @@ pub(crate) fn handler(
             if is_newtype {
                 // Newtype variant: Variant(InnerType)
                 // The content is the inner type's schema
-                let inner_ty = &fields.fields[0].ty;
+                let inner_ty = fields.fields[0].schema_type();
                 quote! {
                     {
                         // Tag enum schema
@@ -82,7 +82,8 @@ pub(crate) fn handler(
                         let field_rename = parse_serde_rename(&field.attrs);
                         let field_name = get_serde_name(&field_ident_str, field_rename.as_deref(), None);
                         let (field_description, customizations) = field.schema_customizations(core);
-                        let presence = serde_field_presence(&field.ty, &field.attrs, false);
+                        let field_ty = field.schema_type().clone();
+                        let presence = serde_field_presence(&field_ty, &field.attrs, false);
                         let schema_ty = presence.schema_type;
                         let required_override = match presence.required {
                             Some(required) => quote! { field_schema.required = #required; },

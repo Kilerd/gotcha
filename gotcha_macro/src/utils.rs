@@ -138,24 +138,7 @@ fn words_to_kebab_case(words: &[String]) -> String {
 
 /// Parse serde rename attribute from field/variant attributes
 pub fn parse_serde_rename(attrs: &[Attribute]) -> Option<String> {
-    for attr in attrs {
-        if attr.path.is_ident("serde") {
-            if let Ok(nested) =
-                attr.parse_args_with(|input: syn::parse::ParseStream| syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated(input))
-            {
-                for meta in nested {
-                    if let syn::Meta::NameValue(name_value) = meta {
-                        if name_value.path.is_ident("rename") {
-                            if let syn::Lit::Str(lit_str) = name_value.lit {
-                                return Some(lit_str.value());
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-    None
+    serde_name_value(attrs, "rename")
 }
 
 /// The name serde *deserializes* a field/variant from: `#[serde(rename = "..")]` applies to both
@@ -164,36 +147,27 @@ pub fn parse_serde_rename(attrs: &[Attribute]) -> Option<String> {
 /// The schema generator intentionally keeps using [`parse_serde_rename`]; this reader exists so
 /// validation errors can be reported under the key a client actually sent.
 pub fn parse_serde_rename_deserialize(attrs: &[Attribute]) -> Option<String> {
-    for attr in attrs {
-        if attr.path.is_ident("serde") {
-            if let Ok(nested) =
-                attr.parse_args_with(|input: syn::parse::ParseStream| syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated(input))
-            {
-                for meta in nested {
-                    match meta {
-                        syn::Meta::NameValue(name_value) if name_value.path.is_ident("rename") => {
-                            if let syn::Lit::Str(lit_str) = name_value.lit {
-                                return Some(lit_str.value());
-                            }
-                        }
-                        syn::Meta::List(list) if list.path.is_ident("rename") => {
-                            for nested in list.nested {
-                                if let syn::NestedMeta::Meta(syn::Meta::NameValue(name_value)) = nested {
-                                    if name_value.path.is_ident("deserialize") {
-                                        if let syn::Lit::Str(lit_str) = name_value.lit {
-                                            return Some(lit_str.value());
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-            }
-        }
-    }
-    None
+    parse_serde_rename(attrs).or_else(|| serde_list_deserialize(attrs, "rename"))
+}
+
+/// The `deserialize = ".."` value inside a `#[serde(<key>(..))]` list, such as
+/// `rename(serialize = "out", deserialize = "in")`.
+fn serde_list_deserialize(attrs: &[Attribute], key: &str) -> Option<String> {
+    attrs.iter().filter(|attr| attr.path.is_ident("serde")).find_map(|attr| {
+        let nested = attr
+            .parse_args_with(|input: syn::parse::ParseStream| syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated(input))
+            .ok()?;
+        nested.into_iter().find_map(|meta| match meta {
+            syn::Meta::List(list) if list.path.is_ident(key) => list.nested.into_iter().find_map(|nested| match nested {
+                syn::NestedMeta::Meta(syn::Meta::NameValue(name_value)) if name_value.path.is_ident("deserialize") => match name_value.lit {
+                    syn::Lit::Str(lit_str) => Some(lit_str.value()),
+                    _ => None,
+                },
+                _ => None,
+            }),
+            _ => None,
+        })
+    })
 }
 
 /// Check if field has serde(flatten) attribute
@@ -238,6 +212,15 @@ pub fn has_serde_skip(attrs: &[Attribute]) -> bool {
     serde_nested_any(
         attrs,
         |meta| matches!(meta, syn::Meta::Path(path) if path.is_ident("skip") || path.is_ident("skip_serializing") || path.is_ident("skip_deserializing")),
+    )
+}
+
+/// Whether serde drops the field on *input* (`skip` or `skip_deserializing`). A field skipped
+/// only for serialization is still read from the request, so it keeps a wire-name entry.
+pub fn has_serde_skip_deserializing(attrs: &[Attribute]) -> bool {
+    serde_nested_any(
+        attrs,
+        |meta| matches!(meta, syn::Meta::Path(path) if path.is_ident("skip") || path.is_ident("skip_deserializing")),
     )
 }
 
@@ -368,24 +351,7 @@ pub(crate) fn serde_field_presence(ty: &syn::Type, attrs: &[Attribute], containe
 
 /// Parse serde rename_all attribute from container attributes
 pub fn parse_serde_rename_all(attrs: &[Attribute]) -> Option<RenameAll> {
-    for attr in attrs {
-        if attr.path.is_ident("serde") {
-            if let Ok(nested) =
-                attr.parse_args_with(|input: syn::parse::ParseStream| syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated(input))
-            {
-                for meta in nested {
-                    if let syn::Meta::NameValue(name_value) = meta {
-                        if name_value.path.is_ident("rename_all") {
-                            if let syn::Lit::Str(lit_str) = name_value.lit {
-                                return RenameAll::from_str(&lit_str.value());
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-    None
+    serde_name_value(attrs, "rename_all").and_then(|case| RenameAll::from_str(&case))
 }
 
 /// The case convention serde *deserializes* with: `#[serde(rename_all = "..")]` applies to both
@@ -394,36 +360,7 @@ pub fn parse_serde_rename_all(attrs: &[Attribute]) -> Option<RenameAll> {
 /// The schema generator keeps using [`parse_serde_rename_all`]; this reader exists so validation
 /// errors can be reported under the keys a client actually sent.
 pub fn parse_serde_rename_all_deserialize(attrs: &[Attribute]) -> Option<RenameAll> {
-    for attr in attrs {
-        if attr.path.is_ident("serde") {
-            if let Ok(nested) =
-                attr.parse_args_with(|input: syn::parse::ParseStream| syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated(input))
-            {
-                for meta in nested {
-                    match meta {
-                        syn::Meta::NameValue(name_value) if name_value.path.is_ident("rename_all") => {
-                            if let syn::Lit::Str(lit_str) = name_value.lit {
-                                return RenameAll::from_str(&lit_str.value());
-                            }
-                        }
-                        syn::Meta::List(list) if list.path.is_ident("rename_all") => {
-                            for nested in list.nested {
-                                if let syn::NestedMeta::Meta(syn::Meta::NameValue(name_value)) = nested {
-                                    if name_value.path.is_ident("deserialize") {
-                                        if let syn::Lit::Str(lit_str) = name_value.lit {
-                                            return RenameAll::from_str(&lit_str.value());
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-            }
-        }
-    }
-    None
+    parse_serde_rename_all(attrs).or_else(|| serde_list_deserialize(attrs, "rename_all").and_then(|case| RenameAll::from_str(&case)))
 }
 
 /// Get the effective serialized name for a field/variant

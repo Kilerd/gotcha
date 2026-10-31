@@ -8,7 +8,8 @@ use crate::schematic::ParameterStructFieldOpt;
 /// therefore transparent in the generated schema — `UserId` looks exactly like
 /// `Uuid`, matching how serde serializes such wrappers.
 pub(crate) fn handler(core: &TokenStream2, fields: Vec<ParameterStructFieldOpt>, name: Option<&str>) -> TokenStream2 {
-    let inner_ty = &fields[0].ty;
+    // `#[schematic(as = "Type")]` on the inner field replaces the type the newtype is transparent to.
+    let inner_ty = fields[0].schema_type();
 
     let name_impl = match name {
         Some(name) => quote! { #name },
