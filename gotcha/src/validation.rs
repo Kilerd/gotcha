@@ -204,6 +204,8 @@ fn flatten_into(errors: &ValidationErrors, prefix: &str, fields: &mut BTreeMap<S
 ///   Rust name because serde merges it into the parent object in a way validator cannot express.
 /// - Names the table does not know are left unchanged: validator's `__all__` (whole-object)
 ///   validations and the fields of a type without a `Schematic` table.
+/// - A `#[serde(skip_serializing)]` field is renamed, but the fields below it keep their Rust
+///   names: its type is not required to implement `Schematic`, so it has no table to follow.
 /// - A top-level collection keeps validator's internal `_tmp_validator` key; [`flatten_errors`]
 ///   drops it, so `Valid<Json<Vec<T>>>` still reports `[0].name`.
 ///

@@ -263,7 +263,9 @@ names serde reads.**
   `#[serde(rename = "..")]`, `#[serde(rename_all = "..")]`, and the
   `rename(deserialize = "..")` / `rename_all(deserialize = "..")` forms. A `first_name` field
   sent as `firstName` is reported as `firstName`. `__all__` and the fields of a type without a
-  `Schematic` table keep their names, and nested maps keep their index-only paths.
+  `Schematic` table keep their names, and nested maps keep their index-only paths. A
+  `#[serde(skip_serializing)]` field is renamed, but the fields below it keep their Rust names,
+  because its type is not required to implement `Schematic`.
 - A `#[serde(flatten)]` struct field contributes no path segment: its fields are reported at the
   parent level, matching the payload shape.
 - The rewrite happens before rendering, so the default `ErrorBody`, a custom
