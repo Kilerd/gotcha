@@ -103,13 +103,7 @@ async fn request(router: &gotcha::axum::Router, path: &str) -> (u16, Value) {
 
 #[tokio::test]
 async fn handlers_declare_their_own_errors_without_an_error_response_trait() {
-    let router = App
-        .build_router(GotchaContext {
-            state: (),
-            config: ConfigWrapper::default(),
-        })
-        .await
-        .unwrap();
+    let router = App.build_router(GotchaContext::new((), ConfigWrapper::default())).await.unwrap();
     let (_, spec) = request(&router, "/openapi.json").await;
     let responses = |path: &str| spec["paths"][path]["get"]["responses"].as_object().unwrap();
     assert_eq!(

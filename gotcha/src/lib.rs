@@ -104,6 +104,11 @@ pub mod prelude;
 pub mod response;
 mod startup;
 pub use response::WithStatus;
+/// A bound but not yet serving application; [`GotchaApp::bind`] and [`Gotcha::bind`] return it.
+pub use startup::BoundServer;
+/// Cancellation token carried by [`GotchaContext::shutdown`]. Cancelled when shutdown starts,
+/// before HTTP connections drain.
+pub use tokio_util::sync::CancellationToken;
 /// The router that tracks OpenAPI operations alongside axum routes.
 pub mod router;
 pub mod routing;
@@ -145,11 +150,41 @@ pub use tower_http::services::{ServeDir, ServeFile};
 /// `State<AppConfig>` extractable instead.
 /// This container imposes no loading or initialization bounds; runtime APIs require
 /// `Clone + Send + Sync + 'static` when sharing its values between handlers or tasks.
+///
+/// A context created by a running application also carries a [`CancellationToken`] cancelled
+/// when shutdown starts, before HTTP connections begin draining. Long-lived handlers (WebSockets,
+/// server-sent events, other streaming responses) can select on [`Self::shutdown`] to stop at the
+/// same moment the listener stops accepting. Use [`Self::new`] to build a context directly for
+/// tests or manual router assembly; that token is never cancelled by the framework.
 pub struct GotchaContext<State, Config> {
     /// The loaded configuration.
     pub config: ConfigWrapper<Config>,
     /// The application state.
     pub state: State,
+    pub(crate) shutdown: CancellationToken,
+}
+
+impl<State, Config> GotchaContext<State, Config> {
+    /// Build a context from initialized values. The shutdown token starts uncancelled and no
+    /// server owns it; applications served through [`GotchaApp::run`], [`GotchaApp::bind`],
+    /// [`Gotcha::run`], or [`Gotcha::bind`] receive the server's token instead.
+    pub fn new(state: State, config: ConfigWrapper<Config>) -> Self {
+        Self {
+            config,
+            state,
+            shutdown: CancellationToken::new(),
+        }
+    }
+
+    /// The cancellation token for this application's shutdown.
+    ///
+    /// It is cancelled when the shutdown signal resolves, before HTTP draining begins, so
+    /// handlers and tasks can observe shutdown at the moment the listener stops accepting.
+    /// Cancelling the returned token also requests shutdown. Cloning returns a handle to the same
+    /// token.
+    pub fn shutdown(&self) -> CancellationToken {
+        self.shutdown.clone()
+    }
 }
 
 impl<State, Config> FromRef<GotchaContext<State, Config>> for ConfigWrapper<Config>
@@ -215,15 +250,42 @@ pub trait GotchaApp: Sized + Send + Sync {
     }
 
     /// Resolve to stop accepting HTTP connections and scheduling new task executions.
-    /// The default waits for Ctrl-C or, on Unix, SIGTERM. Existing HTTP requests drain;
-    /// scheduled executions wait for at most `task_shutdown_timeout()` (with the `task` feature).
+    /// The default waits for Ctrl-C or, on Unix, SIGTERM.
+    ///
+    /// When this resolves, the [`GotchaContext`] shutdown token is cancelled and the listener
+    /// stops accepting. Then HTTP connections drain, scheduled executions stop starting, and
+    /// [`Self::on_shutdown`] runs after both have finished. See [`Self::bind`] for serving a
+    /// pre-bound listener.
     fn shutdown_signal(&self) -> impl std::future::Future<Output = ()> + Send {
         crate::startup::shutdown_signal()
     }
 
+    /// How long to let in-flight HTTP connections drain after shutdown is requested.
+    /// Defaults to 30 seconds. This includes upgraded connections (WebSockets), which axum does
+    /// not track after the upgrade. At the deadline, remaining sockets are shut down at the OS
+    /// level, handlers get up to one second to observe the closure, and then shutdown continues.
+    /// This is independent of, and runs concurrently with, `task_shutdown_timeout()`.
+    fn http_shutdown_timeout(&self) -> std::time::Duration {
+        crate::startup::DEFAULT_HTTP_SHUTDOWN_TIMEOUT
+    }
+
+    /// Run application cleanup after serving stops: after HTTP draining and task shutdown.
+    ///
+    /// Use this for ordered teardown of resources that outlive requests (feeds, terminals,
+    /// child processes, watchers). The default does nothing. Hooks run inside the shutdown
+    /// future, so `run()` and `BoundServer::serve()` return only after cleanup finishes.
+    /// Returning errors is not supported; log inside the hook.
+    ///
+    /// A panicking hook is re-raised to the caller of `run()` / `serve()` after the remaining
+    /// cleanup hooks have run. A hook that never resolves blocks shutdown; there is no timeout
+    /// around application cleanup. Cancelling the serving future aborts a running hook.
+    fn on_shutdown(&self, _context: &GotchaContext<Self::State, Self::Config>) -> impl std::future::Future<Output = ()> + Send {
+        async {}
+    }
+
     /// How long to wait for in-flight scheduled executions after shutdown is requested.
     /// Defaults to 30 seconds. At the deadline, remaining scheduled tasks are aborted and joined.
-    /// This does not limit HTTP request draining.
+    /// This runs concurrently with HTTP request draining.
     #[cfg(feature = "task")]
     fn task_shutdown_timeout(&self) -> std::time::Duration {
         crate::task::DEFAULT_SHUTDOWN_TIMEOUT
@@ -320,6 +382,22 @@ pub trait GotchaApp: Sized + Send + Sync {
         Self::Config: for<'de> Deserialize<'de>,
     {
         async move { startup::run(&self, None).await }
+    }
+
+    /// Load configuration, bind its address, build state and routes, and register tasks, but do
+    /// not serve yet. The returned [`BoundServer`] exposes the effective address before serving,
+    /// so port 0 works for integration tests and in-process tools.
+    ///
+    /// Binding failure happens before state initialization or task registration and runs no
+    /// cleanup hooks. Dropping the result without serving releases the port without running
+    /// cleanup. Requires `Self: 'static` because the signal and cleanup driver is moved into its
+    /// own task; use [`Self::run`] for applications that borrow external data.
+    fn bind(self) -> impl std::future::Future<Output = GotchaResult<BoundServer>> + Send
+    where
+        Self: 'static,
+        Self::Config: for<'de> Deserialize<'de>,
+    {
+        async move { startup::bind(startup::OwnedApp(self), None).await }
     }
 }
 

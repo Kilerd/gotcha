@@ -27,13 +27,13 @@ impl Message<AppState, EmptyConfig> for Greet {
 
 #[test]
 fn send_dispatches_and_reads_state() {
-    let context = GotchaContext {
-        config: ConfigWrapper {
+    let context = GotchaContext::new(
+        AppState { greeting: "Hello".to_string() },
+        ConfigWrapper {
             server: Default::default(),
             app: EmptyConfig::default(),
         },
-        state: AppState { greeting: "Hello".to_string() },
-    };
+    );
     let messager = Messager::new(context);
 
     let output = tokio::runtime::Builder::new_current_thread()
@@ -45,10 +45,7 @@ fn send_dispatches_and_reads_state() {
 }
 
 fn messager() -> Messager<(), ()> {
-    Messager::new(GotchaContext {
-        config: ConfigWrapper::default(),
-        state: (),
-    })
+    Messager::new(GotchaContext::new((), ConfigWrapper::default()))
 }
 
 struct Outcome(Result<u32, &'static str>);

@@ -8,10 +8,7 @@ use std::sync::{
 use tokio::sync::{mpsc, Notify};
 
 fn scheduler() -> TaskScheduler<(), ()> {
-    TaskScheduler::new(GotchaContext {
-        state: (),
-        config: ConfigWrapper::default(),
-    })
+    TaskScheduler::new(GotchaContext::new((), ConfigWrapper::default()))
 }
 
 struct Dropped(mpsc::UnboundedSender<()>);

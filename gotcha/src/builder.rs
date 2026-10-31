@@ -105,6 +105,28 @@ fn load_config<C: DeserializeOwned>(sources: Option<&ConfigBuilder>) -> GotchaRe
     Ok(GotchaConfigLoader::load::<ConfigWrapper<C>>(std::env::var("GOTCHA_ACTIVE_PROFILE").ok())?)
 }
 
+/// Cleanup registered with [`Gotcha::on_shutdown`]. Owns a context clone so the returned future
+/// can outlive the borrow.
+type ShutdownHook<S, C> = Box<dyn FnOnce(GotchaContext<S, C>) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> + Send>;
+
+/// Aborts a running cleanup hook if the shutdown driver is dropped before the hook finishes.
+struct CleanupTask(Option<tokio::task::JoinHandle<()>>);
+
+impl CleanupTask {
+    async fn join(mut self) -> Result<(), tokio::task::JoinError> {
+        let handle = self.0.take().expect("cleanup task handle was already taken");
+        handle.await
+    }
+}
+
+impl Drop for CleanupTask {
+    fn drop(&mut self) {
+        if let Some(handle) = self.0.take() {
+            handle.abort();
+        }
+    }
+}
+
 /// Default empty configuration for simple applications
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct EmptyConfig {}
@@ -127,6 +149,8 @@ where
     listen_options: ListenOptions,
     config_error_policy: ConfigErrorPolicy<C>,
     shutdown_signal: Option<std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>>,
+    shutdown_hooks: Vec<ShutdownHook<S, C>>,
+    http_shutdown_timeout: std::time::Duration,
     state: StateSource<S>,
     config: Configuration<C>,
     #[cfg(feature = "task")]
@@ -260,6 +284,11 @@ impl Gotcha {
     /// Create an application from initialized state and configuration, without loading files.
     /// Neither type needs `Default`; the configuration does not need serde traits.
     /// `run()` uses the supplied server settings unless `host`/`port` or `listen` override them.
+    ///
+    /// **The supplied context's shutdown token is discarded.** The application receives the
+    /// server-owned token when it starts, so handlers and `on_shutdown` hooks see the live one.
+    /// A context built with [`GotchaContext::new`] only carries a token for direct router
+    /// assembly, where no server owns it.
     pub fn from_context<S, C>(context: GotchaContext<S, C>) -> Gotcha<S, C>
     where
         S: Clone + Send + Sync + 'static,
@@ -284,6 +313,8 @@ where
             listen_options: ListenOptions::default(),
             config_error_policy: ConfigErrorPolicy::Strict,
             shutdown_signal: None,
+            shutdown_hooks: Vec::new(),
+            http_shutdown_timeout: startup::DEFAULT_HTTP_SHUTDOWN_TIMEOUT,
             state,
             config,
             #[cfg(feature = "task")]
@@ -865,8 +896,9 @@ where
         self
     }
 
-    /// Replace the default Ctrl-C / Unix SIGTERM signal. When this future resolves, HTTP
-    /// stops accepting connections and scheduled tasks stop starting new executions.
+    /// Replace the default Ctrl-C / Unix SIGTERM signal. When this future resolves, the context
+    /// shutdown token is cancelled, HTTP stops accepting connections, and scheduled tasks stop
+    /// starting new executions.
     pub fn shutdown_signal<F>(mut self, signal: F) -> Self
     where
         F: std::future::Future<Output = ()> + Send + 'static,
@@ -875,8 +907,49 @@ where
         self
     }
 
+    /// Set the grace period for in-flight HTTP connections (default: 30 seconds).
+    ///
+    /// At the deadline, remaining connections (including WebSocket upgrades, which axum does not
+    /// track after the upgrade) are shut down at the OS socket level; handlers get up to one
+    /// second to observe the closure before cleanup runs. This deadline runs concurrently with,
+    /// and independently of, `task_shutdown_timeout`.
+    pub fn http_shutdown_timeout(mut self, timeout: std::time::Duration) -> Self {
+        self.http_shutdown_timeout = timeout;
+        self
+    }
+
+    /// Register application cleanup to run after serving stops: after HTTP draining and task
+    /// shutdown. Hooks run in registration order and may be registered more than once.
+    ///
+    /// Use this to tear down resources in a defined order (feeds, terminals, child processes,
+    /// watchers). The hook receives a clone of the application context, so it can read `state`,
+    /// `config`, and the [`GotchaContext::shutdown`] token. [`listen`](Self::listen),
+    /// [`run`](Self::run), and [`BoundServer::serve`](crate::BoundServer::serve) return only
+    /// after every hook completes. Return `()`; log inside the hook instead of returning errors.
+    /// A panicking hook does not stop later hooks; the first panic is re-raised after all hooks
+    /// have run. A hook that never resolves blocks shutdown; there is no cleanup timeout.
+    /// Cancelling the serving future while a hook runs aborts that hook.
+    ///
+    /// ```rust,no_run
+    /// use gotcha::Gotcha;
+    /// let app = Gotcha::new()
+    ///     .on_shutdown(|context| async move {
+    ///         tracing::info!(port = context.config.server.port, "application stopped");
+    ///     })
+    ///     .on_shutdown(|_| async { /* later resources */ });
+    /// ```
+    pub fn on_shutdown<F, Fut>(mut self, hook: F) -> Self
+    where
+        F: FnOnce(GotchaContext<S, C>) -> Fut + Send + 'static,
+        Fut: std::future::Future<Output = ()> + Send + 'static,
+    {
+        self.shutdown_hooks.push(Box::new(move |context| Box::pin(hook(context))));
+        self
+    }
+
     /// Set the grace period for in-flight scheduled executions (default: 30 seconds).
-    /// Remaining tasks are aborted and joined at the deadline. HTTP draining has no time limit here.
+    /// Remaining tasks are aborted and joined at the deadline. This runs concurrently with
+    /// HTTP draining; see [`Self::http_shutdown_timeout`].
     #[cfg(feature = "task")]
     pub fn task_shutdown_timeout(mut self, timeout: std::time::Duration) -> Self {
         self.task_shutdown_timeout = timeout;
@@ -945,14 +1018,40 @@ where
 
     /// Start the server on a specific socket address
     pub async fn listen_on(self, addr: SocketAddr) -> GotchaResult<()> {
-        startup::run(self, Some(addr)).await
+        self.bind_on(addr).await?.serve().await
     }
 
     /// Start using `host`/`port` overrides, then loaded server settings, then framework defaults.
     /// Bind before initializing state, assembling routes, or registering tasks. The context
     /// contains the effective bound address, including the port chosen for port 0.
     pub async fn run(self) -> GotchaResult<()> {
-        startup::run(self, None).await
+        self.bind().await?.serve().await
+    }
+
+    /// Bind the configured address without serving yet.
+    ///
+    /// The same resolution as [`Self::run`] applies: `listen`/`host`/`port` overrides, then
+    /// loaded server settings, then framework defaults. State, routes, and tasks are initialized
+    /// before this returns, and a bind failure starts none of them. The returned
+    /// [`BoundServer`](crate::BoundServer) exposes [`local_addr`](crate::BoundServer::local_addr),
+    /// which reports the assigned port when the configuration uses port 0.
+    ///
+    /// ```rust,no_run
+    /// use gotcha::Gotcha;
+    /// # async fn example() -> gotcha::GotchaResult<()> {
+    /// let server = Gotcha::new().port(0).bind().await?;
+    /// let address = server.local_addr();
+    /// tokio::spawn(server.serve());
+    /// println!("listening on http://{address}");
+    /// # Ok(()) }
+    /// ```
+    pub async fn bind(self) -> GotchaResult<crate::BoundServer> {
+        startup::bind(self, None).await
+    }
+
+    /// Bind a specific socket address without serving. See [`Self::bind`].
+    pub async fn bind_on(self, addr: SocketAddr) -> GotchaResult<crate::BoundServer> {
+        startup::bind(self, Some(addr)).await
     }
 }
 
@@ -976,6 +1075,37 @@ where
         match self.shutdown_signal.take() {
             Some(signal) => signal.await,
             None => startup::shutdown_signal().await,
+        }
+    }
+
+    fn http_shutdown_timeout(&self) -> std::time::Duration {
+        self.http_shutdown_timeout
+    }
+
+    async fn on_shutdown(&mut self, context: &GotchaContext<S, C>) {
+        let mut first_panic = None;
+        for hook in std::mem::take(&mut self.shutdown_hooks) {
+            // Isolate both the closure call and its future so one panicking hook cannot skip the
+            // remaining hooks. The first panic is re-raised after all hooks have run.
+            let future = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| hook(context.clone()))) {
+                Ok(future) => future,
+                Err(payload) => {
+                    first_panic.get_or_insert(payload);
+                    continue;
+                }
+            };
+            match CleanupTask(Some(tokio::spawn(future))).join().await {
+                Ok(()) => {}
+                Err(error) if error.is_panic() => {
+                    if first_panic.is_none() {
+                        first_panic = Some(error.into_panic());
+                    }
+                }
+                Err(error) => tracing::error!("cleanup hook task failed: {error}"),
+            }
+        }
+        if let Some(payload) = first_panic {
+            std::panic::resume_unwind(payload);
         }
     }
 
@@ -1082,13 +1212,13 @@ mod tests {
         }
 
         let calls = Arc::new(AtomicUsize::new(41));
-        let mut app = Gotcha::from_context(GotchaContext {
-            state: RuntimeState(calls.clone()),
-            config: ConfigWrapper {
+        let mut app = Gotcha::from_context(GotchaContext::new(
+            RuntimeState(calls.clone()),
+            ConfigWrapper {
                 app: RuntimeConfig { value: "parent".into() },
                 server: ServerConfig::default(),
             },
-        })
+        ))
         .with_file_config("unused-required-file.toml")
         .nest("/api", GotchaRouter::default().get("/context", read))
         .merge(GotchaRouter::default().get("/context", read));
@@ -1112,10 +1242,7 @@ mod tests {
         let app = Gotcha::new()
             .route("/composed", crate::get(|| async { "get" }).post(|| async { "post" }))
             .route_raw("/raw", axum::routing::get(|| async { "raw" }));
-        let router = app.router.into_axum_router(GotchaContext {
-            state: EmptyState::default(),
-            config: ConfigWrapper::default(),
-        });
+        let router = app.router.into_axum_router(GotchaContext::new(EmptyState::default(), ConfigWrapper::default()));
         for (method, path, expected) in [("GET", "/composed", "get"), ("POST", "/composed", "post"), ("GET", "/raw", "raw")] {
             let response = router
                 .clone()
@@ -1158,28 +1285,25 @@ mod tests {
         }
 
         let calls = Arc::new(AtomicUsize::new(3));
-        let mut app = Gotcha::from_context(GotchaContext {
-            state: RuntimeState(calls.clone()),
-            config: ConfigWrapper::<EmptyConfig>::default(),
-        })
-        .get("/guarded", || async { "guarded" })
-        .route_layer(middleware::from_fn(mark_route))
-        .nest_service("/assets", tower::service_fn(|_: Request| async { Ok::<_, std::convert::Infallible>("asset") }))
-        .finish_router(|router, context| {
-            let calls = context.state.0.clone();
-            router.nest_service(
-                "/proxy",
-                tower::service_fn(move |_: Request| {
-                    let calls = calls.clone();
-                    async move {
-                        let current = calls.fetch_add(1, Ordering::SeqCst);
-                        Ok::<_, std::convert::Infallible>(format!("proxied {current}"))
-                    }
-                }),
-            )
-        })
-        .fallback(|| async { (StatusCode::NOT_FOUND, "fallback") })
-        .app_layer(middleware::from_fn(mark_app));
+        let mut app = Gotcha::from_context(GotchaContext::new(RuntimeState(calls.clone()), ConfigWrapper::<EmptyConfig>::default()))
+            .get("/guarded", || async { "guarded" })
+            .route_layer(middleware::from_fn(mark_route))
+            .nest_service("/assets", tower::service_fn(|_: Request| async { Ok::<_, std::convert::Infallible>("asset") }))
+            .finish_router(|router, context| {
+                let calls = context.state.0.clone();
+                router.nest_service(
+                    "/proxy",
+                    tower::service_fn(move |_: Request| {
+                        let calls = calls.clone();
+                        async move {
+                            let current = calls.fetch_add(1, Ordering::SeqCst);
+                            Ok::<_, std::convert::Infallible>(format!("proxied {current}"))
+                        }
+                    }),
+                )
+            })
+            .fallback(|| async { (StatusCode::NOT_FOUND, "fallback") })
+            .app_layer(middleware::from_fn(mark_app));
         let router = startup::prepare(&mut app, Some("127.0.0.1:0".parse().unwrap())).await.unwrap().router;
 
         let get = |path: &'static str| {

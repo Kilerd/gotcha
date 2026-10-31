@@ -23,18 +23,18 @@ struct RuntimeConfig {
 }
 
 fn context() -> GotchaContext<RuntimeState, RuntimeConfig> {
-    GotchaContext {
-        state: RuntimeState {
+    GotchaContext::new(
+        RuntimeState {
             requests: Arc::new(AtomicUsize::new(7)),
         },
-        config: ConfigWrapper {
+        ConfigWrapper {
             app: RuntimeConfig { label: "ready".into() },
             server: ServerConfig {
                 host: "127.0.0.1".into(),
                 port: 8123,
             },
         },
-    }
+    )
 }
 
 struct ReadConfig;
@@ -122,7 +122,7 @@ fn config_operations_only_require_the_traits_they_use() {
     assert_eq!(loaded.label, "loaded");
     assert_eq!(loaded.server.port, 3000);
     // Explicit loading on the builder needs Deserialize, but neither Serialize nor Default.
-    let _ = Gotcha::from_context(GotchaContext { state: (), config: loaded })
+    let _ = Gotcha::from_context(GotchaContext::new((), loaded))
         .build_config(|builder| builder.file(&path))
         .unwrap();
 

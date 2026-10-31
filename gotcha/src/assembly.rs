@@ -39,10 +39,7 @@ mod tests {
     use crate::{startup::Application, ConfigWrapper, EmptyConfig, Gotcha, GotchaApp, GotchaContext, GotchaResult, GotchaRouter};
 
     fn context() -> GotchaContext<(), EmptyConfig> {
-        GotchaContext {
-            state: (),
-            config: ConfigWrapper::default(),
-        }
+        GotchaContext::new((), ConfigWrapper::default())
     }
 
     async fn request(router: &Router, path: &str) -> (StatusCode, Vec<u8>) {

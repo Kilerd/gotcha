@@ -63,13 +63,7 @@ impl GotchaApp for App {
 #[tokio::test]
 async fn trait_assembly_transforms_the_complete_document_once_before_serving() {
     let calls = Arc::new(AtomicUsize::new(0));
-    let router = App(calls.clone())
-        .build_router(Context {
-            state: (),
-            config: ConfigWrapper::default(),
-        })
-        .await
-        .unwrap();
+    let router = App(calls.clone()).build_router(Context::new((), ConfigWrapper::default())).await.unwrap();
     assert_eq!(calls.load(Ordering::SeqCst), 3);
 
     for _ in 0..2 {

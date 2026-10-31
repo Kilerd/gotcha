@@ -34,13 +34,7 @@ impl GotchaApp for TupleApp {
 
 #[tokio::test]
 async fn three_segment_tuple_is_documented_in_route_order() {
-    let router = TupleApp
-        .build_router(Context {
-            state: (),
-            config: ConfigWrapper::default(),
-        })
-        .await
-        .unwrap();
+    let router = TupleApp.build_router(Context::new((), ConfigWrapper::default())).await.unwrap();
 
     let response = router
         .clone()

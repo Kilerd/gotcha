@@ -133,8 +133,8 @@ impl GotchaApp for TraitApp {
 }
 
 async fn assert_http(prepared: PreparedServer, label: &str) {
-    let address = prepared.listener.local_addr().unwrap();
-    let server = tokio::spawn(prepared.serve(std::future::pending()));
+    let address = prepared.local_addr();
+    let server = tokio::spawn(prepared.serve(std::future::pending(), std::future::pending()));
     let response = tokio::task::spawn_blocking(move || {
         use std::io::{Read, Write};
         let mut stream = std::net::TcpStream::connect(address).unwrap();
@@ -162,7 +162,7 @@ async fn both_apis_serve_the_loaded_config_and_actual_bound_address() {
     let prepared = prepare(&mut builder, None).await.unwrap();
     assert_http(prepared, "loaded").await;
     let prepared = prepare(&mut &app, None).await.unwrap();
-    assert_eq!(*app.bound.lock().unwrap(), Some(prepared.listener.local_addr().unwrap()));
+    assert_eq!(*app.bound.lock().unwrap(), Some(prepared.local_addr()));
     assert_http(prepared, "loaded").await;
     let mut expected = vec!["logger", "config", "state", "router"];
     if cfg!(feature = "task") {
@@ -230,7 +230,54 @@ async fn initialization_errors_release_the_listener_and_stop_later_stages() {
         app.fallback = true; // A config fallback must not swallow errors from other stages.
         assert!(matches!(prepare(&mut &app, None).await, Err(GotchaError::Message(message)) if message == stage));
         let bound = app.bound.lock().unwrap().unwrap();
-        let _rebound = TcpListener::bind(bound).await.expect("failed startup must release its listener");
+        let _rebound = TcpListener::bind(bound)
+            .await
+            .unwrap_or_else(|error| panic!("failed startup at {stage} must release its listener: {error}"));
         assert_eq!(app.events.lock().unwrap().last(), Some(&stage));
     }
+}
+
+#[tokio::test]
+async fn dropping_an_unserved_bound_server_cancels_the_context_token() {
+    struct UnservedApp {
+        token: Arc<Mutex<Option<CancellationToken>>>,
+    }
+    impl GotchaApp for UnservedApp {
+        type State = ();
+        type Config = ();
+
+        fn logger(&self) -> GotchaResult<()> {
+            Ok(())
+        }
+
+        async fn config(&self) -> GotchaResult<ConfigWrapper<()>> {
+            Ok(ConfigWrapper {
+                app: (),
+                server: ServerConfig {
+                    host: "127.0.0.1".into(),
+                    port: 0,
+                },
+            })
+        }
+
+        async fn state(&self, _: &ConfigWrapper<()>) -> GotchaResult<()> {
+            Ok(())
+        }
+
+        fn routes(&self, router: GotchaRouter<GotchaContext<(), ()>>) -> GotchaRouter<GotchaContext<(), ()>> {
+            router
+        }
+
+        async fn build_router(&self, context: GotchaContext<(), ()>) -> GotchaResult<Router> {
+            *self.token.lock().unwrap() = Some(context.shutdown());
+            Ok(self.routes(GotchaRouter::default()).into_axum_router(context))
+        }
+    }
+
+    let token = Arc::new(Mutex::new(None));
+    let server = UnservedApp { token: token.clone() }.bind().await.unwrap();
+    let captured = token.lock().unwrap().clone().expect("build_router observed the context");
+    assert!(!captured.is_cancelled());
+    drop(server);
+    assert!(captured.is_cancelled(), "dropping an unserved BoundServer must release token waiters");
 }

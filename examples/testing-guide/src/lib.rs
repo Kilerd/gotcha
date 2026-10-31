@@ -255,7 +255,7 @@ pub async fn create_test_app() -> axum::Router {
     };
 
     let state = app.state(&config).await.unwrap();
-    let context = GotchaContext { state, config };
+    let context = GotchaContext::new(state, config);
 
     app.build_router(context).await.unwrap()
 }

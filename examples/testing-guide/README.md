@@ -27,7 +27,7 @@
        let app = App;
        let config = ConfigWrapper { /* ... */ };
        let state = app.state(&config).await.unwrap();
-       let context = GotchaContext { state, config };
+       let context = GotchaContext::new(state, config);
        app.build_router(context).await.unwrap()
    }
    ```
