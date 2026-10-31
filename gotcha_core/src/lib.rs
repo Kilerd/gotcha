@@ -29,7 +29,7 @@
 // Keep generated absolute paths valid inside this crate as well as in downstream crates.
 extern crate self as gotcha_core;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use bigdecimal::BigDecimal;
 use chrono::{DateTime, Utc};
@@ -433,6 +433,40 @@ impl<T: Schematic> Schematic for HashSet<T> {
 }
 
 impl<K: ToString, V: Schematic> Schematic for HashMap<K, V> {
+    fn name() -> &'static str {
+        V::name()
+    }
+
+    fn required() -> bool {
+        true
+    }
+
+    fn type_() -> &'static str {
+        "object"
+    }
+
+    fn generate_schema() -> EnhancedSchema {
+        let mut schema = EnhancedSchema {
+            schema: Schema {
+                _type: Some(Self::type_().into()),
+                format: None,
+                nullable: None,
+                description: Self::doc(),
+                extras: Default::default(),
+                ..Schema::default()
+            },
+            required: Self::required(),
+        };
+        schema
+            .schema
+            .extras
+            .insert("additionalProperties".to_string(), V::generate_schema().schema.to_value());
+        schema
+    }
+}
+
+/// A `BTreeMap` documents exactly like a `HashMap`: an object whose values share one schema.
+impl<K: ToString, V: Schematic> Schematic for BTreeMap<K, V> {
     fn name() -> &'static str {
         V::name()
     }

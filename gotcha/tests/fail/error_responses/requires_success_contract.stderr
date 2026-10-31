@@ -13,11 +13,11 @@ help: the trait `Schematic` is not implemented for `NoSchema`
             &T
             &str
             ()
+            BTreeMap<K, V>
             HashMap<K, V>
             HashSet<T>
             JsonValue
             Vec<T>
-            bigdecimal::BigDecimal
           and $N others
   = note: required for `gotcha::Json<NoSchema>` to implement `Responsible`
   = note: required for `Result<gotcha::Json<NoSchema>, StatusCode>` to implement `gotcha::gotcha_core::responsible::ResultResponse`
