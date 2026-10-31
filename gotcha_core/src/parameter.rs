@@ -92,6 +92,9 @@ impl_path_tuple!(T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T1
 
 impl<T: Schematic> ParameterProvider for Path<T> {
     fn generate(url: String) -> Either<Vec<Parameter>, RequestBody> {
+        // Path parameters are always required: OpenAPI mandates `required: true` for `in: path`,
+        // and a matched route always supplies its segments. Neither a field's own requiredness
+        // nor `T`'s applies here.
         // Case 1: a struct extractor — each field becomes one path parameter. Read the fields
         // directly (as `Query` does) instead of scraping `properties` out of the generated
         // schema: during spec assembly a collection scope is active, so a derived struct's
@@ -103,7 +106,7 @@ impl<T: Schematic> ParameterProvider for Path<T> {
                     .into_iter()
                     .map(|(name, schema)| {
                         let desc = schema.schema.description.clone();
-                        build_param(name.to_string(), ParameterIn::Path, schema.required, schema.schema, desc)
+                        build_param(name.to_string(), ParameterIn::Path, true, schema.schema, desc)
                     })
                     .collect(),
             );
@@ -118,7 +121,7 @@ impl<T: Schematic> ParameterProvider for Path<T> {
             if let Some(properties) = properties.as_object_mut() {
                 properties.iter_mut().for_each(|(key, value)| {
                     let schema = serde_json::from_value(value.clone()).unwrap();
-                    let param = build_param(key.to_string(), ParameterIn::Path, T::required(), schema, T::doc());
+                    let param = build_param(key.to_string(), ParameterIn::Path, true, schema, T::doc());
                     ret.push(param);
                 })
             }
@@ -129,7 +132,7 @@ impl<T: Schematic> ParameterProvider for Path<T> {
             let param_names_in_path: Vec<String> = pattern.captures_iter(&url).map(|digits| digits.get(1).unwrap().as_str().to_string()).collect();
 
             if let Some(param_name) = param_names_in_path.first() {
-                let param = build_param(param_name.clone(), ParameterIn::Path, T::required(), T::generate_schema().schema, T::doc());
+                let param = build_param(param_name.clone(), ParameterIn::Path, true, T::generate_schema().schema, T::doc());
                 ret.push(param);
             }
         }
@@ -218,8 +221,10 @@ impl<T: axum_extra::headers::Header> ParameterProvider for axum_extra::TypedHead
     }
 }
 
-/// axum treats `Option<E>` as "extract `E`, or `None` if it isn't there", so the parameters `E`
-/// contributes are documented but no longer required.
+/// axum treats `Option<E>` as "extract `E`, or `None` if it isn't there", so a request body `E`
+/// contributes becomes optional and its non-path parameters are no longer required. Path
+/// parameters stay required: OpenAPI mandates `required: true` for `in: path`, and a matched
+/// route always supplies its segments.
 impl<T: ParameterProvider> ParameterProvider for Option<T> {
     fn generate(url: String) -> Either<Vec<Parameter>, RequestBody> {
         match T::generate(url) {
@@ -227,12 +232,17 @@ impl<T: ParameterProvider> ParameterProvider for Option<T> {
                 params
                     .into_iter()
                     .map(|mut param| {
-                        param.required = Some(false);
+                        if !matches!(&param._in, ParameterIn::Path) {
+                            param.required = Some(false);
+                        }
                         param
                     })
                     .collect(),
             ),
-            body => body,
+            Either::Right(mut body) => {
+                body.required = Some(false);
+                Either::Right(body)
+            }
         }
     }
 }
