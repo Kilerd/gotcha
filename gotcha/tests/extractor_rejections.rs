@@ -152,6 +152,18 @@ async fn explicit_response(_body: Json<Payload>) -> String {
     String::new()
 }
 
+/// `#[api(skip)]` removes the argument from the document entirely, including its rejections.
+#[api]
+async fn skipped_json(#[api(skip)] _body: Json<Payload>) -> String {
+    String::new()
+}
+
+/// The only provider rejection status is overridden explicitly, so no default body is referenced.
+#[api(errors(response(status = 400, body = "Problem")))]
+async fn query_explicit(_query: Query<Filter>) -> Result<String, gotcha::HttpError> {
+    Ok(String::new())
+}
+
 #[api(request_body(body = "DeclaredBody"))]
 async fn declared_body(Path(_id): Path<u32>, _query: Query<Filter>, _body: Json<Payload>) -> String {
     String::new()
@@ -222,14 +234,10 @@ fn each_provider_documents_the_statuses_its_rejections_can_return() {
     assert_eq!(responses(&query_doc, "/query")["400"]["description"], "Request rejected: invalid query string");
 
     let path_doc = one(operable(path_param), "/path/{id}");
-    assert_eq!(statuses(&path_doc, "/path/{id}"), ["200", "400", "500"]);
+    assert_eq!(statuses(&path_doc, "/path/{id}"), ["200", "400"]);
     assert_eq!(
         responses(&path_doc, "/path/{id}")["400"]["description"],
         "Request rejected: invalid path parameters"
-    );
-    assert_eq!(
-        responses(&path_doc, "/path/{id}")["500"]["description"],
-        "Request rejected: path parameters unavailable"
     );
 
     let multipart_doc = one(operable(multipart_body), "/multipart");
@@ -373,10 +381,33 @@ fn a_declared_request_body_keeps_the_running_extractor_rejections() {
         spec["paths"]["/items/{id}"]["post"]["requestBody"]["content"]["application/json"]["schema"]["$ref"],
         "#/components/schemas/DeclaredBody"
     );
-    assert_eq!(statuses(&spec, "/items/{id}"), ["200", "400", "413", "415", "422", "500"]);
+    assert_eq!(statuses(&spec, "/items/{id}"), ["200", "400", "413", "415", "422"]);
     assert_eq!(
         responses(&spec, "/items/{id}")["400"]["description"],
         "Request rejected: invalid path parameters / invalid query string / invalid JSON body"
+    );
+}
+
+#[test]
+fn skipped_arguments_contribute_neither_parameters_nor_rejections() {
+    let spec = one(operable(skipped_json), "/skipped-json");
+    assert_eq!(statuses(&spec, "/skipped-json"), ["200"]);
+    assert!(spec["paths"]["/skipped-json"]["post"]["parameters"].as_array().unwrap().is_empty());
+    assert!(spec["components"]["schemas"].get("ErrorBody").is_none());
+}
+
+#[test]
+fn fully_overridden_rejections_leave_no_orphan_component() {
+    let spec = one(operable(query_explicit), "/explicit-query");
+    assert_eq!(statuses(&spec, "/explicit-query"), ["200", "400"]);
+    assert_eq!(
+        responses(&spec, "/explicit-query")["400"]["content"]["application/json"]["schema"]["$ref"],
+        "#/components/schemas/Problem"
+    );
+    assert!(spec["components"]["schemas"].get("Problem").is_some());
+    assert!(
+        spec["components"]["schemas"].get("ErrorBody").is_none(),
+        "the shadowed default body must not be registered"
     );
 }
 

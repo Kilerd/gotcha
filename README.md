@@ -609,7 +609,7 @@ argument using `Json`, `Form`, `Query`, `Path`, `Multipart`, `TypedHeader`, `Hea
 | `Json` | `400`, `413`, `415`, `422` | `ErrorBody` |
 | `Form` | `400`, `413`, `415`, `422` | `ErrorBody` |
 | `Query` | `400` | `ErrorBody` |
-| `Path` | `400`, `500` | `ErrorBody` |
+| `Path` | `400` | `ErrorBody` |
 | `Multipart` | `400` | `ErrorBody` |
 | `TypedHeader`, `Header`, `Cookie` | `400` | `ErrorBody` |
 | `Valid` | `422` plus its inner extractor's statuses | `ErrorBody` |
@@ -620,15 +620,18 @@ different bodies become `oneOf` references under `application/json`. Description
 for example `Request rejected: invalid query string / invalid JSON body`. A status declared in
 `errors(...)` or `responses(...)` wins over the automatic one.
 
-A custom handler declares the statuses it actually returns with `.statuses([..])`; otherwise the
-provider's default statuses above are documented:
+A custom handler declares the statuses it actually returns with `.statuses([..])`. It replaces
+the documented set for that provider; without it, the defaults above are documented:
 
 ```rust
 use gotcha::axum::http::StatusCode;
-use gotcha::{Gotcha, JsonConfig};
+use gotcha::{ErrorBody, Gotcha, JsonConfig};
 
-let app = Gotcha::new()
-    .extractor_config(JsonConfig::default().statuses([StatusCode::BAD_REQUEST, StatusCode::CONFLICT]));
+let app = Gotcha::new().extractor_config(
+    JsonConfig::default()
+        .error_handler(|rejection| (StatusCode::BAD_REQUEST, ErrorBody::new(rejection.body_text())))
+        .statuses([StatusCode::BAD_REQUEST, StatusCode::CONFLICT]),
+);
 ```
 
 Axum's own extractors (`gotcha::axum::extract::*`) and custom `ParameterProvider` implementations
@@ -831,7 +834,11 @@ async fn socket(upgrade: WebSocketUpgrade) -> Response {
 ```
 
 Extractors with no OpenAPI representation are excluded with `#[api(skip)]` on the parameter.
-It accepts exactly that form; other parameter-level `#[api(...)]` contents are compile errors:
+The argument contributes neither parameters nor rejection responses, and its
+`ParameterProvider::extractor_kinds` is never queried, so types without a `ParameterProvider`
+implementation still compile. Declare any rejection that extractor can send with `errors(...)` or
+`responses(...)`. It accepts exactly that form; other parameter-level `#[api(...)]` contents are
+compile errors:
 
 ```rust
 # #[cfg(feature = "openapi")]

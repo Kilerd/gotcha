@@ -108,14 +108,10 @@ async fn handlers_declare_their_own_errors_without_an_error_response_trait() {
     let responses = |path: &str| spec["paths"][path]["get"]["responses"].as_object().unwrap();
     assert_eq!(
         responses("/create/{id}").keys().map(String::as_str).collect::<Vec<_>>(),
-        // `Path` rejection responses join the declared ones; the explicit `500` wins over the
-        // provider's automatic one.
+        // `Path` rejection responses join the declared ones.
         ["201", "400", "404", "409", "500"]
     );
-    assert_eq!(
-        responses("/lookup/{id}").keys().map(String::as_str).collect::<Vec<_>>(),
-        ["200", "400", "404", "500"]
-    );
+    assert_eq!(responses("/lookup/{id}").keys().map(String::as_str).collect::<Vec<_>>(), ["200", "400", "404"]);
     assert_eq!(responses("/dynamic").keys().map(String::as_str).collect::<Vec<_>>(), ["409", "default"]);
     assert_eq!(responses("/create/{id}")["409"]["description"], "Duplicate user");
     assert_eq!(responses("/dynamic")["409"]["description"], "Operation-specific conflict");

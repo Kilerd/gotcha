@@ -183,7 +183,7 @@ impl Operable {
         }
         let mut responses = (self.responses)();
         if document_extractor_errors {
-            for (status, response) in rejection_responses(self.extractors, configs).data {
+            for (status, response) in rejection_responses(self.extractors, configs, &responses).data {
                 responses.data.entry(status).or_insert(response);
             }
         }
@@ -219,19 +219,27 @@ inventory::collect!(Operable);
 /// Collect the rejection responses of every provider the operation's arguments use.
 ///
 /// Providers can share a status. Identical configured bodies produce one response; distinct
-/// bodies become `oneOf` alternatives under `application/json`.
-fn rejection_responses(extractors: &'static [ExtractorConstructor], configs: &crate::extract::ExtractorConfigs) -> Responses {
+/// bodies become `oneOf` alternatives under `application/json`. A status that already has an
+/// explicit or inferred response is skipped before its body schema is built, so a fully
+/// overridden operation leaves no unreferenced component behind.
+fn rejection_responses(extractors: &'static [ExtractorConstructor], configs: &crate::extract::ExtractorConfigs, existing: &Responses) -> Responses {
     let mut groups: BTreeMap<u16, RejectionGroup> = BTreeMap::new();
     for constructor in extractors {
         for kind in constructor() {
             let spec = configs.rejection_spec(*kind);
             for (status, phrase) in spec.statuses {
-                let schema = (spec.body_schema)().schema;
-                let value = serde_json::to_value(&schema).expect("schemas are serializable");
+                if existing.data.contains_key(&status.as_u16().to_string()) {
+                    continue;
+                }
                 let group = groups.entry(status.as_u16()).or_default();
                 if !group.phrases.contains(&phrase) {
                     group.phrases.push(phrase);
                 }
+                if !crate::error::status_has_body(status) {
+                    continue;
+                }
+                let schema = (spec.body_schema)().schema;
+                let value = serde_json::to_value(&schema).expect("schemas are serializable");
                 // The same configured body type generates the same reference, so only distinct
                 // bodies become alternatives.
                 if !group

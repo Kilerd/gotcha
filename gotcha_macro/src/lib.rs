@@ -81,8 +81,10 @@ pub(crate) mod utils;
 ///   Cannot be combined with `errors(...)` (declare every status in `responses(...)`) or
 ///   `drop_default` (nothing is inferred to drop).
 /// - On a handler parameter, `#[api(skip)]` excludes that extractor from the documented
-///   parameters. It accepts exactly that form; other parameter-level `#[api(...)]` contents are
-///   compile errors.
+///   parameters and rejection responses. Its `ParameterProvider::extractor_kinds` is not
+///   queried, so argument types without a `ParameterProvider` implementation still compile.
+///   Declare any rejection the extractor can send with `errors(...)` or `responses(...)`. It
+///   accepts exactly that form; other parameter-level `#[api(...)]` contents are compile errors.
 ///
 /// ## Extractor rejection responses
 ///

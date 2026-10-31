@@ -226,16 +226,6 @@
               }
             },
             "description": "Request rejected: JSON body did not match the expected type"
-          },
-          "500": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "Request rejected: path parameters unavailable"
           }
         },
         "summary": "Path Query Json"

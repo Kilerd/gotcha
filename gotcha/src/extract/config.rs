@@ -54,8 +54,9 @@ struct ErrorHandler<R> {
     /// The schema of the body this handler sends, stored type-erased with the handler.
     #[cfg(feature = "openapi")]
     schema: fn() -> crate::EnhancedSchema,
-    /// Whether `schema` came from an application override. Defaults keep existing documents
-    /// byte-identical, so only overridden bodies are registered as components.
+    /// Whether `schema` came from an application override. [`ExtractorConfigs::schemas`]
+    /// registers overridden bodies eagerly; the default body is registered only when an
+    /// operation references it through an automatic rejection response.
     #[cfg(feature = "openapi")]
     custom: bool,
 }
@@ -264,10 +265,7 @@ rejection_config!(
     "Configuration for [`Path`](crate::Path) rejections.",
     |rejection| default_error(rejection.status(), rejection.body_text()),
     "invalid path parameters",
-    [
-        StatusCode::BAD_REQUEST => "invalid path parameters",
-        StatusCode::INTERNAL_SERVER_ERROR => "path parameters unavailable",
-    ]
+    [StatusCode::BAD_REQUEST => "invalid path parameters"]
 );
 
 rejection_config!(

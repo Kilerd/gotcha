@@ -109,9 +109,9 @@ fn descriptors_build_fresh_path_specific_documents() {
     );
     assert_eq!(
         operation["responses"].as_object().unwrap().keys().map(String::as_str).collect::<Vec<_>>(),
-        // Path and Query reject with 400; Path also reports missing captures as 500; Json
-        // rejects with 400/413/415/422. Deployment rewrites each reference.
-        ["202", "400", "409", "413", "415", "422", "500"]
+        // Path and Query reject with 400; Json rejects with 400/413/415/422. Deployment rewrites
+        // each reference.
+        ["202", "400", "409", "413", "415", "422"]
     );
     assert_eq!(operation["responses"]["409"]["description"], "Tree conflict");
     let schemas = &first["components"]["schemas"];

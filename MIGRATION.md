@@ -44,16 +44,18 @@ Default statuses, checked against Axum's rejection types:
 | `Json` | `400`, `413`, `415`, `422` |
 | `Form` | `400`, `413`, `415`, `422` |
 | `Query` | `400` |
-| `Path` | `400`, `500` |
+| `Path` | `400` |
 | `Multipart` | `400` |
 | `TypedHeader`, `Header`, `Cookie` | `400` |
 | `Valid` | `422`, plus whatever its inner extractor declares |
 
 `413` is Axum's body-limit rejection, and `Form` also uses `400` when a `GET`/`HEAD` form fails
-to deserialize. `Path` returns `500` when Axum's path parameters are unavailable (for example
-when a handler extracts the whole request first). `Valid<Json<T>>` documents the JSON statuses
-and its own `422`; `Valid<axum::extract::Json<T>>` documents only `422`, because Axum's original
-`Json` keeps its plain-text rejection.
+to deserialize. `Path` documents only `400`: Axum's other variant, `MissingPathParams` (`500`),
+requires the router's `UrlParams` extension to be absent, which cannot happen for a matched
+`#[api]` route. An application that can still observe it can declare `500` with
+`.statuses([..])` on `PathConfig` or with `errors(...)`. `Valid<Json<T>>` documents the JSON
+statuses and its own `422`; `Valid<axum::extract::Json<T>>` documents only `422`, because Axum's
+original `Json` keeps its plain-text rejection.
 
 - Several providers can share a status. When they use the same configured body, one response is
   emitted; different bodies become `oneOf` references under `application/json`. Descriptions list
@@ -70,6 +72,9 @@ and its own `422`; `Valid<axum::extract::Json<T>>` documents only `422`, because
   present but malformed.
 - A body replaced with `#[api(request_body(...))]` keeps the rejections of the extractor that
   actually runs.
+- An argument marked `#[api(skip)]` contributes neither parameters nor rejection responses, and
+  its `ParameterProvider` is not consulted at all. Declare any rejection it can send with
+  `errors(...)` or `responses(...)`.
 - `ErrorBody` now reserves the component name `ErrorBody` even when an application defines a type
   with the same name; the application's type receives a module-prefixed name instead.
 - Static `Operable` descriptors gain an `extractors` field, one
@@ -79,8 +84,8 @@ and its own `422`; `Valid<axum::extract::Json<T>>` documents only `422`, because
   `generate_openapi_with_schemas{,_and_info}` helpers are replaced by
   `generate_openapi_with_configs_and_info`.
 
-A custom `error_handler` can declare the statuses it actually returns. Without `.statuses(..)`
-the provider's defaults above are documented:
+A custom `error_handler` can declare the statuses it actually returns. `.statuses(..)` replaces
+the documented set for that provider; without it, the provider's defaults above are documented:
 
 ```rust,no_run
 use gotcha::axum::http::StatusCode;
@@ -558,6 +563,7 @@ static `Operable` initializer:
 
 ```rust,ignore
 parameters: &[<Path<u32> as ParameterProvider>::generate],
+extractors: &[<Path<u32> as ParameterProvider>::extractor_kinds],
 responses: <String as Responsible>::response,
 ```
 
