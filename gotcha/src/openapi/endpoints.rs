@@ -1,6 +1,7 @@
 use axum::{body::Bytes, response::Html, routing::get, Router};
 use oas::OpenAPIV3;
 
+use crate::endpoint::validate_path;
 use crate::{GotchaError, GotchaResult};
 
 /// HTTP paths for explicitly enabled OpenAPI documentation.
@@ -51,7 +52,7 @@ impl OpenApiEndpoints {
         let paths = [Some(self.json_path.as_str()), self.redoc_path.as_deref(), self.scalar_path.as_deref()];
         for (index, path) in paths.iter().enumerate() {
             if let Some(path) = path {
-                validate_path(path)?;
+                validate_path("OpenAPI endpoint", path)?;
                 if paths[..index].contains(&Some(path)) {
                     return Err(GotchaError::message(format!("duplicate OpenAPI endpoint path: {path}")));
                 }
@@ -76,23 +77,6 @@ impl OpenApiEndpoints {
     }
 }
 
-fn validate_path(path: &str) -> GotchaResult<()> {
-    let parsed = path.parse::<axum::http::uri::PathAndQuery>();
-    if !path.starts_with('/')
-        || path.starts_with("//")
-        || !path.bytes().all(|byte| byte.is_ascii_alphanumeric() || b"/-._~!$&'()*+,;=:@%".contains(&byte))
-        || path.split('/').any(|segment| {
-            // Browsers normalize literal and percent-encoded dot segments before requesting a URL.
-            let decoded = segment.replace("%2e", ".").replace("%2E", ".");
-            segment.starts_with([':', '*']) || matches!(decoded.as_str(), "." | "..")
-        })
-        || !matches!(parsed, Ok(parsed) if parsed.path() == path && parsed.query().is_none())
-    {
-        return Err(GotchaError::message(format!("OpenAPI endpoint must be a literal absolute URI path: {path:?}")));
-    }
-    Ok(())
-}
-
 fn render_ui(template: &str, json_path: &str) -> String {
     let escaped = json_path
         .replace('&', "&amp;")
@@ -111,7 +95,7 @@ mod tests {
     fn endpoint_paths_are_literal_absolute_and_distinct() {
         OpenApiEndpoints::default().validate().unwrap();
         for path in ["/", "/docs/schema.json", "/docs/api's&schema.json"] {
-            validate_path(path).unwrap();
+            validate_path("OpenAPI endpoint", path).unwrap();
         }
         for path in [
             "",
@@ -129,7 +113,7 @@ mod tests {
             "/docs\\schema",
             "/docs/\"schema",
         ] {
-            assert!(validate_path(path).is_err(), "{path:?}");
+            assert!(validate_path("OpenAPI endpoint", path).is_err(), "{path:?}");
         }
         for endpoints in [
             OpenApiEndpoints {

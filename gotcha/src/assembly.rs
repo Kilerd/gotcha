@@ -6,23 +6,44 @@ use crate::{GotchaResult, GotchaRouter};
 
 pub(crate) fn assemble<State: Clone + Send + Sync + 'static>(
     mut router: GotchaRouter<State>, state: State, #[cfg(feature = "openapi")] endpoints: Option<crate::OpenApiEndpoints>,
-    finish: impl FnOnce(Router, &State) -> Router,
+    #[cfg(feature = "prometheus")] metrics: Option<crate::MetricsEndpoint>, finish: impl FnOnce(Router, &State) -> Router,
 ) -> GotchaResult<Router> {
     // `with_state` consumes the state, so keep the context the finish hook should observe.
     let context = state.clone();
     #[cfg(feature = "openapi")]
-    let (router, extractor_configs) = if let Some(endpoints) = endpoints {
-        endpoints.validate()?;
-        let (router, spec, configs) = router.into_openapi_parts();
-        (endpoints.mount(router.with_state(state), spec), configs)
-    } else {
-        let configs = std::mem::take(&mut router.extractor_configs);
-        (router.into_axum_router(state), configs)
+    let (router, extractor_configs, documentation) = match endpoints {
+        Some(endpoints) => {
+            endpoints.validate()?;
+            #[cfg(feature = "prometheus")]
+            if let Some(metrics) = &metrics {
+                metrics.ensure_no_openapi_conflict(&endpoints)?;
+            }
+            let (router, spec, configs) = router.into_openapi_parts();
+            (router.with_state(state), configs, Some((endpoints, spec)))
+        }
+        None => {
+            let configs = std::mem::take(&mut router.extractor_configs);
+            (router.into_axum_router(state), configs, None)
+        }
     };
     #[cfg(not(feature = "openapi"))]
     let (router, extractor_configs) = {
         let configs = std::mem::take(&mut router.extractor_configs);
         (router.into_axum_router(state), configs)
+    };
+    // The metrics layer covers the business routes assembled above, nested routers included,
+    // and mounts the render route after itself so scrapes are not measured. Documentation is
+    // mounted below, after the layer, so documentation requests are not measured either.
+    // `finish_router` routes and application layers wrap the layer and are not measured.
+    #[cfg(feature = "prometheus")]
+    let router = match metrics {
+        Some(metrics) => metrics.layer(router)?,
+        None => router,
+    };
+    #[cfg(feature = "openapi")]
+    let router = match documentation {
+        Some((endpoints, spec)) => endpoints.mount(router, spec),
+        None => router,
     };
     let router = finish(router, &context);
     // Outermost: routes added by `finish_router`, and `app_layer` middleware, must also see the

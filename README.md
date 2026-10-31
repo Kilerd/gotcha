@@ -270,7 +270,7 @@ gotcha = { version = "0.4", features = ["openapi", "prometheus", "cors", "static
 
 Available features:
 - `openapi` - Automatic OpenAPI/Swagger documentation
-- `prometheus` - Metrics collection and exposition
+- `prometheus` - Opt-in Prometheus metrics endpoint (`/metrics` by default) and `metrics` re-exports
 - `cors` - Cross-Origin Resource Sharing support
 - `static_files` - Static file serving capabilities
 - `task` - Background task scheduling with cron support
@@ -804,6 +804,42 @@ async fn handler(#[api(skip)] connection: RawConnection) -> String {
 }
 # }
 ```
+
+### Prometheus Metrics
+
+The `prometheus` feature exposes the `metrics` crate as `gotcha::prometheus`, but records and
+serves nothing on its own. Enable the endpoint explicitly with `Gotcha::metrics()` or by returning
+`Some(MetricsEndpoint::default())` from `GotchaApp::metrics_endpoint()`:
+
+```rust
+# #[cfg(feature = "prometheus")]
+# {
+use gotcha::{Gotcha, MetricsEndpoint};
+let app = Gotcha::new()
+    .metrics(MetricsEndpoint::default()) // serves /metrics
+    .get("/hello", || async { "hello" });
+# }
+```
+
+Set `MetricsEndpoint::path` to serve the Prometheus text format elsewhere. The metric layer covers
+the application's business routes, nested routers included. Documentation endpoints, the metrics
+endpoint itself, and routes or services mounted by `finish_router` are not measured, and
+`app_layer` middleware runs outside the layer. Custom metrics recorded through
+`gotcha::prometheus` appear on the same endpoint.
+
+Matched routes report their route template (`/users/{id}`), never the concrete URL. Unmatched
+requests, custom fallbacks, and services mounted with `nest_service` share the `<unmatched>`
+label, so scans for random paths cannot grow the metric registry and raw URLs stay out of
+metrics. A metrics path that collides with an enabled documentation endpoint fails assembly;
+collisions with business routes panic as usual in Axum. An application overriding
+`GotchaApp::build_router` can install the same layer and route with
+`MetricsEndpoint::layer(router)`.
+
+The `metrics` recorder is process-wide: the first application assembled with metrics enabled
+installs it, and every later application in the process shares it, so counters and histograms from
+all of them are rendered together. Building several applications with metrics in one process
+(tests, for example) is supported. If another `metrics` recorder was installed first, enabling
+metrics fails router assembly instead of panicking.
 
 ### Configuration System
 
