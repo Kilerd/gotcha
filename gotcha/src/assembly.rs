@@ -10,26 +10,24 @@ pub(crate) fn assemble<State: Clone + Send + Sync + 'static>(
 ) -> GotchaResult<Router> {
     // `with_state` consumes the state, so keep the context the finish hook should observe.
     let context = state.clone();
-    // Extractors read their rejection configs from these extensions. The layer covers business
-    // routes (nested ones included) and documentation, but not services mounted by `finish`,
-    // which are added after it. Without assembly, extractors fall back to the defaults.
     #[cfg(feature = "openapi")]
     let (router, extractor_configs) = if let Some(endpoints) = endpoints {
         endpoints.validate()?;
         let (router, spec, configs) = router.into_openapi_parts();
-        (endpoints.mount(router.with_state(state), spec), std::sync::Arc::new(configs))
+        (endpoints.mount(router.with_state(state), spec), configs)
     } else {
         let configs = std::mem::take(&mut router.extractor_configs);
-        (router.into_axum_router(state), std::sync::Arc::new(configs))
+        (router.into_axum_router(state), configs)
     };
     #[cfg(not(feature = "openapi"))]
     let (router, extractor_configs) = {
         let configs = std::mem::take(&mut router.extractor_configs);
-        (router.into_axum_router(state), std::sync::Arc::new(configs))
+        (router.into_axum_router(state), configs)
     };
-    let router = router.layer(axum::Extension(extractor_configs));
-
-    Ok(finish(router, &context))
+    let router = finish(router, &context);
+    // Outermost: routes added by `finish_router`, and `app_layer` middleware, must also see the
+    // configs. Without this layer (for example a custom `build_router`), extractors use defaults.
+    Ok(extractor_configs.layer(router))
 }
 
 #[cfg(test)]
@@ -94,6 +92,108 @@ mod tests {
             for path in ["/late", "/missing"] {
                 assert_eq!(request(&router, path).await, (StatusCode::OK, b"outer,inner".to_vec()));
             }
+        }
+    }
+
+    #[tokio::test]
+    async fn extractor_configs_cover_finish_hook_routes_and_app_layers() {
+        use serde::Deserialize;
+
+        use crate::{ErrorBody, ExtractorConfigs, Json, JsonConfig, Query, QueryConfig};
+
+        #[derive(Deserialize)]
+        struct GuardQuery {
+            page: Option<u32>,
+        }
+
+        async fn echo(Json(value): Json<u32>) -> Json<u32> {
+            Json(value)
+        }
+
+        async fn search(_query: Query<GuardQuery>) -> String {
+            "ok".to_string()
+        }
+
+        async fn guard(_query: Query<GuardQuery>, request: Request, next: Next) -> Response {
+            next.run(request).await
+        }
+
+        fn json_config() -> JsonConfig {
+            JsonConfig::default().error_handler(|rejection| {
+                (
+                    StatusCode::BAD_REQUEST,
+                    ErrorBody {
+                        error: format!("json: {}", rejection.body_text()),
+                    },
+                )
+            })
+        }
+
+        fn query_config() -> QueryConfig {
+            QueryConfig::default().error_handler(|rejection| {
+                (
+                    StatusCode::BAD_REQUEST,
+                    ErrorBody {
+                        error: format!("query: {}", rejection.body_text()),
+                    },
+                )
+            })
+        }
+
+        async fn post_json(router: &Router, path: &str) -> (StatusCode, String) {
+            let request = Request::builder()
+                .method("POST")
+                .uri(path)
+                .header("content-type", "application/json")
+                .body(Body::from("not json"))
+                .unwrap();
+            let response = router.clone().oneshot(request).await.unwrap();
+            let status = response.status();
+            let body = to_bytes(response.into_body(), 4096).await.unwrap().to_vec();
+            (status, String::from_utf8(body).unwrap())
+        }
+
+        async fn get(router: &Router, path: &str) -> (StatusCode, String) {
+            let (status, body) = request(router, path).await;
+            (status, String::from_utf8(body).unwrap())
+        }
+
+        struct App;
+        impl GotchaApp for App {
+            type State = ();
+            type Config = EmptyConfig;
+            async fn state(&self, _: &ConfigWrapper<EmptyConfig>) -> GotchaResult<()> {
+                Ok(())
+            }
+            fn extractor_configs(&self) -> ExtractorConfigs {
+                ExtractorConfigs::default().set(json_config()).set(query_config())
+            }
+            fn routes(&self, router: GotchaRouter<GotchaContext<(), EmptyConfig>>) -> GotchaRouter<GotchaContext<(), EmptyConfig>> {
+                router.post("/json", echo).get("/search", search)
+            }
+            fn finish_router(&self, router: Router, _context: &GotchaContext<(), EmptyConfig>) -> Router {
+                router.route("/late", axum::routing::post(echo)).layer(axum::middleware::from_fn(guard))
+            }
+        }
+
+        let mut builder = Gotcha::from_state(())
+            .extractor_config(json_config())
+            .extractor_config(query_config())
+            .post("/json", echo)
+            .get("/search", search)
+            .finish_router(|router, _context: &GotchaContext<(), EmptyConfig>| router.route("/late", axum::routing::post(echo)))
+            .app_layer(axum::middleware::from_fn(guard));
+
+        for router in [builder.router(context()).await.unwrap(), App.build_router(context()).await.unwrap()] {
+            for path in ["/json", "/late"] {
+                let (status, body) = post_json(&router, path).await;
+                assert_eq!(status, StatusCode::BAD_REQUEST, "{path}");
+                assert!(body.starts_with(r#"{"error":"json: "#), "{path}: {body}");
+            }
+            // Extractors used by app-layer (or finish_router-layer) middleware see the configs.
+            let (status, body) = get(&router, "/search?page=not-a-number").await;
+            assert_eq!(status, StatusCode::BAD_REQUEST);
+            assert!(body.starts_with(r#"{"error":"query: "#), "{body}");
         }
     }
 

@@ -31,6 +31,73 @@ use serde::Serialize;
 use crate::error::HttpError;
 use crate::extract::config::configs;
 
+/// A rejection that keeps the original Axum rejection next to its rendered response.
+///
+/// `IntoResponse` returns the rendered response (the provider's configured handler), while
+/// [`rejection`](Self::rejection) and [`into_inner`](Self::into_inner) expose the original
+/// rejection. This is what makes Axum's per-handler pattern work with Gotcha's wrappers:
+///
+/// ```
+/// use gotcha::{Json, Rejected};
+/// use gotcha::axum::extract::rejection::JsonRejection;
+///
+/// async fn handler(body: Result<Json<u32>, Rejected<JsonRejection>>) -> String {
+///     match body {
+///         Ok(Json(value)) => value.to_string(),
+///         Err(rejected) => rejected.into_inner().body_text(),
+///     }
+/// }
+/// ```
+pub struct Rejected<R> {
+    rejection: R,
+    response: Response,
+}
+
+impl<R> Rejected<R> {
+    /// Build a rejection from the original rejection and its rendered response.
+    pub fn new(rejection: R, response: Response) -> Self {
+        Self { rejection, response }
+    }
+
+    /// The original rejection.
+    pub fn rejection(&self) -> &R {
+        &self.rejection
+    }
+
+    /// The response that will be sent.
+    pub fn response(&self) -> &Response {
+        &self.response
+    }
+
+    /// Recover the original rejection, discarding the rendered response.
+    pub fn into_inner(self) -> R {
+        self.rejection
+    }
+
+    /// Split into the original rejection and the rendered response.
+    pub fn into_parts(self) -> (R, Response) {
+        (self.rejection, self.response)
+    }
+}
+
+impl<R: std::fmt::Debug> std::fmt::Debug for Rejected<R> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.debug_struct("Rejected").field("rejection", &self.rejection).finish_non_exhaustive()
+    }
+}
+
+impl<R: std::fmt::Display> std::fmt::Display for Rejected<R> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.rejection.fmt(formatter)
+    }
+}
+
+impl<R> IntoResponse for Rejected<R> {
+    fn into_response(self) -> Response {
+        self.response
+    }
+}
+
 pub use config::{
     CookieConfig, ErrorBodyResponse, ExtractorConfig, ExtractorConfigs, FormConfig, HeaderConfig, JsonConfig, MultipartConfig, PathConfig, QueryConfig,
     TypedHeaderConfig, ValidConfig,
@@ -246,14 +313,17 @@ where
     T: DeserializeOwned,
     S: Send + Sync,
 {
-    type Rejection = Response;
+    type Rejection = Rejected<axum::extract::rejection::JsonRejection>;
 
     async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
         let config = configs(req.extensions());
         <axum::Json<T> as FromRequest<S>>::from_request(req, state)
             .await
             .map(|axum::Json(value)| Json(value))
-            .map_err(|rejection| config.json.render(rejection))
+            .map_err(|rejection| {
+                let response = config.json.render(&rejection);
+                Rejected::new(rejection, response)
+            })
     }
 }
 
@@ -262,14 +332,17 @@ where
     T: DeserializeOwned,
     S: Send + Sync,
 {
-    type Rejection = Response;
+    type Rejection = Rejected<axum::extract::rejection::JsonRejection>;
 
     async fn from_request(req: Request, state: &S) -> Result<Option<Self>, Self::Rejection> {
         let config = configs(req.extensions());
         <axum::Json<T> as OptionalFromRequest<S>>::from_request(req, state)
             .await
             .map(|value| value.map(|axum::Json(value)| Json(value)))
-            .map_err(|rejection| config.json.render(rejection))
+            .map_err(|rejection| {
+                let response = config.json.render(&rejection);
+                Rejected::new(rejection, response)
+            })
     }
 }
 
@@ -278,14 +351,17 @@ where
     T: DeserializeOwned,
     S: Send + Sync,
 {
-    type Rejection = Response;
+    type Rejection = Rejected<axum::extract::rejection::FormRejection>;
 
     async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
         let config = configs(req.extensions());
         <axum::extract::Form<T> as FromRequest<S>>::from_request(req, state)
             .await
             .map(|axum::extract::Form(value)| Form(value))
-            .map_err(|rejection| config.form.render(rejection))
+            .map_err(|rejection| {
+                let response = config.form.render(&rejection);
+                Rejected::new(rejection, response)
+            })
     }
 }
 
@@ -293,14 +369,17 @@ impl<S> FromRequest<S> for Multipart
 where
     S: Send + Sync,
 {
-    type Rejection = Response;
+    type Rejection = Rejected<axum::extract::multipart::MultipartRejection>;
 
     async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
         let config = configs(req.extensions());
         <axum::extract::Multipart as FromRequest<S>>::from_request(req, state)
             .await
             .map(Multipart)
-            .map_err(|rejection| config.multipart.render(rejection))
+            .map_err(|rejection| {
+                let response = config.multipart.render(&rejection);
+                Rejected::new(rejection, response)
+            })
     }
 }
 
@@ -308,14 +387,17 @@ impl<S> OptionalFromRequest<S> for Multipart
 where
     S: Send + Sync,
 {
-    type Rejection = Response;
+    type Rejection = Rejected<axum::extract::multipart::MultipartRejection>;
 
     async fn from_request(req: Request, state: &S) -> Result<Option<Self>, Self::Rejection> {
         let config = configs(req.extensions());
         <axum::extract::Multipart as OptionalFromRequest<S>>::from_request(req, state)
             .await
             .map(|value| value.map(Multipart))
-            .map_err(|rejection| config.multipart.render(rejection))
+            .map_err(|rejection| {
+                let response = config.multipart.render(&rejection);
+                Rejected::new(rejection, response)
+            })
     }
 }
 
@@ -324,14 +406,17 @@ where
     T: DeserializeOwned + Send,
     S: Send + Sync,
 {
-    type Rejection = Response;
+    type Rejection = Rejected<axum::extract::rejection::PathRejection>;
 
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
         let config = configs(&parts.extensions);
         <axum::extract::Path<T> as FromRequestParts<S>>::from_request_parts(parts, state)
             .await
             .map(|axum::extract::Path(value)| Path(value))
-            .map_err(|rejection| config.path.render(rejection))
+            .map_err(|rejection| {
+                let response = config.path.render(&rejection);
+                Rejected::new(rejection, response)
+            })
     }
 }
 
@@ -340,14 +425,17 @@ where
     T: DeserializeOwned + Send + 'static,
     S: Send + Sync,
 {
-    type Rejection = Response;
+    type Rejection = Rejected<axum::extract::rejection::PathRejection>;
 
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Option<Self>, Self::Rejection> {
         let config = configs(&parts.extensions);
         <axum::extract::Path<T> as OptionalFromRequestParts<S>>::from_request_parts(parts, state)
             .await
             .map(|value| value.map(|axum::extract::Path(value)| Path(value)))
-            .map_err(|rejection| config.path.render(rejection))
+            .map_err(|rejection| {
+                let response = config.path.render(&rejection);
+                Rejected::new(rejection, response)
+            })
     }
 }
 
@@ -356,14 +444,17 @@ where
     T: DeserializeOwned,
     S: Send + Sync,
 {
-    type Rejection = Response;
+    type Rejection = Rejected<axum::extract::rejection::QueryRejection>;
 
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
         let config = configs(&parts.extensions);
         <axum::extract::Query<T> as FromRequestParts<S>>::from_request_parts(parts, state)
             .await
             .map(|axum::extract::Query(value)| Query(value))
-            .map_err(|rejection| config.query.render(rejection))
+            .map_err(|rejection| {
+                let response = config.query.render(&rejection);
+                Rejected::new(rejection, response)
+            })
     }
 }
 
@@ -372,14 +463,17 @@ where
     T: axum_extra::headers::Header,
     S: Send + Sync,
 {
-    type Rejection = Response;
+    type Rejection = Rejected<axum_extra::typed_header::TypedHeaderRejection>;
 
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
         let config = configs(&parts.extensions);
         <axum_extra::TypedHeader<T> as FromRequestParts<S>>::from_request_parts(parts, state)
             .await
             .map(|axum_extra::TypedHeader(value)| TypedHeader(value))
-            .map_err(|rejection| config.typed_header.render(rejection))
+            .map_err(|rejection| {
+                let response = config.typed_header.render(&rejection);
+                Rejected::new(rejection, response)
+            })
     }
 }
 
@@ -388,14 +482,17 @@ where
     T: axum_extra::headers::Header,
     S: Send + Sync,
 {
-    type Rejection = Response;
+    type Rejection = Rejected<axum_extra::typed_header::TypedHeaderRejection>;
 
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Option<Self>, Self::Rejection> {
         let config = configs(&parts.extensions);
         <axum_extra::TypedHeader<T> as OptionalFromRequestParts<S>>::from_request_parts(parts, state)
             .await
             .map(|value| value.map(|axum_extra::TypedHeader(value)| TypedHeader(value)))
-            .map_err(|rejection| config.typed_header.render(rejection))
+            .map_err(|rejection| {
+                let response = config.typed_header.render(&rejection);
+                Rejected::new(rejection, response)
+            })
     }
 }
 

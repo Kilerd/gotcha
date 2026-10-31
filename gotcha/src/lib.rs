@@ -47,7 +47,7 @@ pub use crate::error::{ErrorBody, GotchaError, GotchaResult, HttpError};
 /// `gotcha::axum_extra::TypedHeader`.
 pub use crate::extract::{
     CookieConfig, ErrorBodyResponse, ExtractorConfig, ExtractorConfigs, Form, FormConfig, HeaderConfig, Json, JsonConfig, Multipart, MultipartConfig, Path,
-    PathConfig, Query, QueryConfig, TypedHeader, TypedHeaderConfig, ValidConfig,
+    PathConfig, Query, QueryConfig, Rejected, TypedHeader, TypedHeaderConfig, ValidConfig,
 };
 /// Attribute macro that makes a struct usable as `State<T>` in handlers by
 /// generating a `FromRef<GotchaContext<T, C>>` impl. See [`GotchaContext`].
@@ -77,7 +77,7 @@ pub use crate::message::{Message, Messager};
 #[cfg_attr(docsrs, doc(cfg(feature = "openapi")))]
 pub use crate::openapi::{OpenApiEndpoints, Operable};
 pub use crate::params::{Cookie, CookieParam, Header, HeaderParam, ParamRejection};
-pub use crate::validation::{Valid, ValidationErrorsBody};
+pub use crate::validation::{Valid, ValidRejection, ValidationErrorsBody};
 /// The header types [`TypedHeader`] works with. `TypedHeader<T>` documents itself as an OpenAPI
 /// header parameter (the name comes from `headers::Header`).
 /// `TypedHeaderRejection` converts into [`HttpError`] for handlers that want the JSON error body.
@@ -399,7 +399,9 @@ pub trait GotchaApp: Sized + Send + Sync {
     ///
     /// Prefer `finish_router` for whole-application middleware or services that need the
     /// application context. Overriding this method takes responsibility for the complete
-    /// assembly, including documentation and final middleware.
+    /// assembly, including documentation and final middleware. It must also apply
+    /// `self.extractor_configs().layer(router)` after every route and middleware; without that
+    /// layer, extractors fall back to the default rejection handlers.
     fn build_router(&self, context: GotchaContext<Self::State, Self::Config>) -> impl std::future::Future<Output = GotchaResult<axum::Router>> + Send {
         async move {
             let router = GotchaRouter::<GotchaContext<Self::State, Self::Config>>::default();

@@ -5,7 +5,7 @@ use gotcha::axum::http::{Request, StatusCode};
 use gotcha::axum::response::IntoResponse;
 use gotcha::{
     ConfigWrapper, Cookie, CookieParam, EmptyConfig, ExtractorConfigs, Form, GotchaApp, GotchaContext, GotchaError, GotchaResult, GotchaRouter, Header,
-    HeaderParam, HttpError, Json, JsonConfig, Multipart, Path, Query, TypedHeader, Valid, ValidConfig,
+    HeaderParam, HttpError, Json, JsonConfig, Multipart, Path, Query, Rejected, TypedHeader, Valid, ValidConfig,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -97,6 +97,14 @@ async fn optional_path(id: Option<Path<u32>>) -> String {
     format!("{:?}", id.map(|Path(id)| id))
 }
 
+/// Axum's documented per-handler pattern, with the original rejection still available.
+async fn per_handler(body: Result<Json<Item>, Rejected<gotcha::axum::extract::rejection::JsonRejection>>) -> String {
+    match body {
+        Ok(Json(item)) => format!("ok:{}", item.id),
+        Err(rejected) => format!("rejected:{}", rejected.rejection().body_text()),
+    }
+}
+
 type Context = GotchaContext<(), EmptyConfig>;
 
 fn context() -> Context {
@@ -125,6 +133,7 @@ impl GotchaApp for App {
             .post("/valid", validate)
             .post("/optional", optional)
             .get("/optional-path", optional_path)
+            .post("/per-handler", per_handler)
     }
 }
 
@@ -257,6 +266,17 @@ async fn optional_extractors_still_extract_none() {
     let router = app().await;
     assert_eq!(send(&router, request("POST", "/optional", None, "")).await.2, b"None");
     assert_eq!(send(&router, request("GET", "/optional-path", None, "")).await.2, b"None");
+}
+
+#[tokio::test]
+async fn result_handlers_can_still_match_the_original_rejection() {
+    let router = app().await;
+    let (status, _, body) = send(&router, request("POST", "/per-handler", Some("application/json"), r#"{"id":7}"#)).await;
+    assert_eq!((status, body.as_slice()), (StatusCode::OK, b"ok:7".as_slice()));
+
+    let (status, _, body) = send(&router, request("POST", "/per-handler", Some("application/json"), "not json")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(String::from_utf8_lossy(&body).starts_with("rejected:"));
 }
 
 #[derive(Debug, Serialize)]

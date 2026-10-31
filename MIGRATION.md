@@ -51,16 +51,42 @@ Default behavior by provider:
 Override one provider on the builder with
 `.extractor_config(JsonConfig::default().error_handler(|rejection| (status, body)))`, or in the
 trait API by overriding `GotchaApp::extractor_configs` and calling
-`ExtractorConfigs::default().set(...)`. The handler receives that provider's concrete rejection
-type and returns `(StatusCode, E)`. `E` must be `Serialize`, and with `openapi` also `Schematic`;
-an overridden body is registered as an OpenAPI component (defaults add none, so existing
-documents are unchanged). Configurations reach extractors through
-request extensions inserted during assembly; extractors used without that assembly (a plain Axum
-router, or a direct `from_request` call) use the defaults.
+`ExtractorConfigs::default().set(...)`. The handler receives a reference to that provider's
+concrete rejection type and returns `(StatusCode, E)`. `E` must be `Serialize`, and with
+`openapi` also `Schematic`; an overridden body is registered as an OpenAPI component (defaults
+add none, so existing documents are unchanged).
 
-`ValidRejection` is removed. `Valid<Json<T>>` and `Valid<axum::extract::Json<T>>` now return a
-rendered response as their rejection; the latter still keeps Axum's original JSON rejection
-response. Extractor rejection types keep their `From<_> for HttpError` conversions.
+Configurations reach extractors through request extensions installed as the outermost layer,
+after routes, documentation, `finish_router`, and `app_layer` middleware. Extractors used without
+that assembly (a plain Axum router, or a direct `from_request` call) use the defaults. An
+application that overrides `GotchaApp::build_router` entirely must call
+`ExtractorConfigs::layer(router)` last.
+
+**Extractor rejections are now `Rejected<R>`.** `IntoResponse` returns the configured response,
+while `rejection()` and `into_inner()` expose the original rejection. Axum's per-handler pattern
+still works, but the second type changes:
+
+```rust
+use gotcha::{Json, Rejected};
+use gotcha::axum::extract::rejection::JsonRejection;
+
+async fn handler(body: Result<Json<MyBody>, Rejected<JsonRejection>>) -> String {
+    match body {
+        Ok(Json(value)) => value.to_string(),
+        Err(rejected) => rejected.rejection().body_text(),
+    }
+}
+```
+
+`Header`/`Cookie` use `Rejected<ParamRejection>`. `Valid` uses `Rejected<ValidRejection>`;
+`ValidRejection::Json` carries the original JSON rejection and `ValidRejection::Invalid` the
+validation errors. `Valid<axum::extract::Json<T>>` remains supported and keeps Axum's original
+JSON rejection response. To keep Axum's exact rejection types instead, use
+`gotcha::axum::extract::*` directly. Extractor rejection types keep their `From<_> for HttpError`
+conversions.
+
+`Json::from_bytes` and `Query::try_from_uri` return `HttpError`: they have no request and
+therefore no configured handler; the error keeps the Axum status and body text.
 
 Use Axum's originals to opt out of the wrappers and their configured handlers:
 
@@ -81,7 +107,8 @@ the body is now `{"error": "internal server error"}`. The full error (including 
 paths, addresses, and I/O failures) is sent to `tracing::error!` only.
 
 **`json_response!` expands to `gotcha::Json`** and to gotcha's re-exported `serde_json` instead
-of naming `axum::Json` at the call site, so callers need neither dependency directly.
+of naming `axum::Json` at the call site, so callers need neither dependency directly. It also
+forwards object and array literal tokens correctly, so `json_response!({"ok": true})` compiles.
 
 ---
 

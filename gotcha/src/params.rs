@@ -149,7 +149,7 @@ where
     T: HeaderParam,
     S: Send + Sync,
 {
-    type Rejection = Response;
+    type Rejection = crate::Rejected<ParamRejection>;
 
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
         let config = crate::extract::config::configs(&parts.extensions);
@@ -157,13 +157,20 @@ where
             // A header can carry arbitrary bytes; only text can be parsed.
             Some(value) => match value.to_str() {
                 Ok(value) => Some(value),
-                Err(_) => return Err(config.header.render(ParamRejection::NotText { kind: "header", name: T::NAME })),
+                Err(_) => {
+                    let rejection = ParamRejection::NotText { kind: "header", name: T::NAME };
+                    let response = config.header.render(&rejection);
+                    return Err(crate::Rejected::new(rejection, response));
+                }
             },
             None => None,
         };
         resolve("header", T::NAME, T::REQUIRED, raw, T::parse, T::missing)
             .map(Header)
-            .map_err(|rejection| config.header.render(rejection))
+            .map_err(|rejection| {
+                let response = config.header.render(&rejection);
+                crate::Rejected::new(rejection, response)
+            })
     }
 }
 
@@ -172,7 +179,7 @@ where
     T: CookieParam,
     S: Send + Sync,
 {
-    type Rejection = Response;
+    type Rejection = crate::Rejected<ParamRejection>;
 
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
         let config = crate::extract::config::configs(&parts.extensions);
@@ -184,7 +191,10 @@ where
         let raw = cookie_value(cookies, T::NAME);
         resolve("cookie", T::NAME, T::REQUIRED, raw, T::parse, T::missing)
             .map(Cookie)
-            .map_err(|rejection| config.cookie.render(rejection))
+            .map_err(|rejection| {
+                let response = config.cookie.render(&rejection);
+                crate::Rejected::new(rejection, response)
+            })
     }
 }
 
@@ -303,7 +313,9 @@ mod tests {
     #[tokio::test]
     async fn missing_required_header_is_rejected_with_a_json_body() {
         let mut parts = parts_with(&[]);
-        let response = Header::<RequestId>::from_request_parts(&mut parts, &()).await.err().expect("must be rejected");
+        let rejected = Header::<RequestId>::from_request_parts(&mut parts, &()).await.err().expect("must be rejected");
+        assert!(matches!(rejected.rejection(), ParamRejection::Missing { .. }));
+        let response = rejected.into_response();
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
         assert_eq!(response.headers()["content-type"], "application/json");
         let bytes = to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
@@ -314,7 +326,9 @@ mod tests {
     #[tokio::test]
     async fn unparseable_header_is_rejected() {
         let mut parts = parts_with(&[("x-request-id", "")]);
-        let response = Header::<RequestId>::from_request_parts(&mut parts, &()).await.err().expect("must be rejected");
+        let rejected = Header::<RequestId>::from_request_parts(&mut parts, &()).await.err().expect("must be rejected");
+        assert!(matches!(rejected.rejection(), ParamRejection::Invalid { .. }));
+        let response = rejected.into_response();
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
         let bytes = to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
         let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();

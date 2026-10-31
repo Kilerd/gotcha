@@ -50,7 +50,7 @@ pub trait ExtractorConfig: Send + Sync + 'static {
 }
 
 struct ErrorHandler<R> {
-    render: Arc<dyn Fn(R) -> Response + Send + Sync>,
+    render: Arc<dyn Fn(&R) -> Response + Send + Sync>,
     /// The schema of the body this handler sends, stored type-erased with the handler.
     #[cfg(feature = "openapi")]
     schema: fn() -> crate::EnhancedSchema,
@@ -61,7 +61,7 @@ struct ErrorHandler<R> {
 }
 
 impl<R: 'static> ErrorHandler<R> {
-    fn default_handler<E: ErrorBodyResponse>(render: impl Fn(R) -> Response + Send + Sync + 'static) -> Self {
+    fn default_handler<E: ErrorBodyResponse>(render: impl Fn(&R) -> Response + Send + Sync + 'static) -> Self {
         Self {
             render: Arc::new(render),
             #[cfg(feature = "openapi")]
@@ -71,7 +71,7 @@ impl<R: 'static> ErrorHandler<R> {
         }
     }
 
-    fn custom<E: ErrorBodyResponse>(handler: impl Fn(R) -> (StatusCode, E) + Send + Sync + 'static) -> Self {
+    fn custom<E: ErrorBodyResponse>(handler: impl Fn(&R) -> (StatusCode, E) + Send + Sync + 'static) -> Self {
         Self {
             render: Arc::new(move |rejection| {
                 let (status, body) = handler(rejection);
@@ -84,7 +84,7 @@ impl<R: 'static> ErrorHandler<R> {
         }
     }
 
-    fn render(&self, rejection: R) -> Response {
+    fn render(&self, rejection: &R) -> Response {
         (self.render)(rejection)
     }
 
@@ -116,10 +116,11 @@ macro_rules! rejection_config {
         impl $config {
             /// Replace the response used for this extractor's rejections.
             ///
-            /// The handler receives the extractor's concrete rejection type and returns the
-            /// status and body to send. With the `openapi` feature, the body type is registered
-            /// as a component.
-            pub fn error_handler<E>(self, handler: impl Fn($rejection) -> (StatusCode, E) + Send + Sync + 'static) -> Self
+            /// The handler receives a reference to the extractor's concrete rejection type, so
+            /// the extractor can return the original rejection alongside the rendered response
+            /// (see [`Rejected`](crate::Rejected)), and returns the status and body to send.
+            /// With the `openapi` feature, the body type is registered as a component.
+            pub fn error_handler<E>(self, handler: impl Fn(&$rejection) -> (StatusCode, E) + Send + Sync + 'static) -> Self
             where
                 E: ErrorBodyResponse,
             {
@@ -128,7 +129,7 @@ macro_rules! rejection_config {
                 }
             }
 
-            pub(crate) fn render(&self, rejection: $rejection) -> Response {
+            pub(crate) fn render(&self, rejection: &$rejection) -> Response {
                 self.handler.render(rejection)
             }
 
@@ -141,7 +142,7 @@ macro_rules! rejection_config {
         impl Default for $config {
             fn default() -> Self {
                 Self {
-                    handler: ErrorHandler::default_handler::<crate::ErrorBody>(|$rejection_var: $rejection| $render),
+                    handler: ErrorHandler::default_handler::<crate::ErrorBody>(|$rejection_var: &$rejection| $render),
                 }
             }
         }
@@ -229,9 +230,10 @@ pub struct ValidConfig {
 impl ValidConfig {
     /// Replace the response used when validation fails.
     ///
-    /// The handler receives the structured [`validator::ValidationErrors`] and returns the status
-    /// and body to send. With the `openapi` feature, the body type is registered as a component.
-    pub fn error_handler<E>(self, handler: impl Fn(validator::ValidationErrors) -> (StatusCode, E) + Send + Sync + 'static) -> Self
+    /// The handler receives a reference to the structured [`validator::ValidationErrors`] and
+    /// returns the status and body to send. With the `openapi` feature, the body type is
+    /// registered as a component.
+    pub fn error_handler<E>(self, handler: impl Fn(&validator::ValidationErrors) -> (StatusCode, E) + Send + Sync + 'static) -> Self
     where
         E: ErrorBodyResponse,
     {
@@ -240,7 +242,7 @@ impl ValidConfig {
         }
     }
 
-    pub(crate) fn render(&self, rejection: validator::ValidationErrors) -> Response {
+    pub(crate) fn render(&self, rejection: &validator::ValidationErrors) -> Response {
         self.handler.render(rejection)
     }
 
@@ -287,6 +289,16 @@ impl ExtractorConfigs {
     pub fn set<C: ExtractorConfig>(mut self, config: C) -> Self {
         config.apply(&mut self);
         self
+    }
+
+    /// Insert these configurations into every request's extensions.
+    ///
+    /// The framework's default assembly applies this as the outermost layer, after business
+    /// routes, documentation, `finish_router`, and `app_layer` middleware. An application that
+    /// overrides [`GotchaApp::build_router`](crate::GotchaApp::build_router) itself must call
+    /// this last; otherwise its extractors fall back to the defaults.
+    pub fn layer(self, router: axum::Router) -> axum::Router {
+        router.layer(axum::Extension(Arc::new(self)))
     }
 
     #[cfg(feature = "openapi")]

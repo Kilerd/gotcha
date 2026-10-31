@@ -535,18 +535,36 @@ let app = Gotcha::new()
 # #[derive(serde::Deserialize, serde::Serialize)] struct CreateItem { name: String }
 ```
 
-The handler receives that provider's concrete rejection type and returns `(StatusCode, E)`. With
-the `openapi` feature, `E` must also implement `Schematic`, and an overridden body is registered
-as a component; defaults add no components, so existing documents stay unchanged. The builder
-and the trait API (`GotchaApp::extractor_configs`) share the same config types. Providers
-are `Json`, `Form`, `Query`, `Path`, `Multipart`, `TypedHeader`, `Header`, `Cookie`, and `Valid`
-(validation failures only; a malformed body inside `Valid<Json<T>>` uses the `Json` handler).
+The handler receives a reference to that provider's concrete rejection type and returns
+`(StatusCode, E)`. With the `openapi` feature, `E` must also implement `Schematic`, and an
+overridden body is registered as a component; defaults add no components, so existing documents
+stay unchanged. The builder and the trait API (`GotchaApp::extractor_configs`) share the same
+config types. Providers are `Json`, `Form`, `Query`, `Path`, `Multipart`, `TypedHeader`,
+`Header`, `Cookie`, and `Valid` (validation failures only; a malformed body inside
+`Valid<Json<T>>` uses the `Json` handler).
+
+Extractor rejections are `Rejected<R>`: they carry both the original rejection and the rendered
+response, so Axum's per-handler pattern still works:
+
+```rust
+use gotcha::prelude::*;
+use gotcha::axum::extract::rejection::JsonRejection;
+
+async fn create(body: Result<Json<CreateItem>, Rejected<JsonRejection>>) -> Result<String, HttpError> {
+    let Json(item) = body.map_err(|rejected| HttpError::bad_request(rejected.rejection().body_text()))?;
+    Ok(item.name)
+}
+# #[derive(serde::Deserialize)] struct CreateItem { name: String }
+```
 
 `Form`, `Multipart`, `Json`, `Path`, `Query`, and `TypedHeader` are Gotcha wrappers; `Header` and
 `Cookie` are Gotcha's named-parameter extractors. Use `gotcha::axum::extract::*` or
 `gotcha::axum_extra::TypedHeader` for Axum's originals, which keep Axum's own rejection responses.
-Extractors used outside a Gotcha application (for example in a plain Axum router) fall back to
-the same defaults. `Extension` is still Axum's extractor.
+The configs are installed as the outermost layer of the assembled application, so routes added
+in `finish_router` and `app_layer` middleware also see them. An application that overrides
+`GotchaApp::build_router` must call `ExtractorConfigs::layer(router)` last; otherwise extractors
+fall back to the defaults, as they do in a plain Axum router. `Extension` is still Axum's
+extractor.
 
 `HttpError` remains an optional convenience type for application errors and `#[api(errors(...))]`:
 
