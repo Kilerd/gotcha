@@ -17,6 +17,7 @@
 - [Unreleased: schema identity and component names](#unreleased-schema-identity-and-component-names)
 - [Unreleased: ordered configuration sources](#unreleased-ordered-configuration-sources)
 - [Unreleased: typed configuration defaults](#unreleased-typed-configuration-defaults)
+- [Unreleased: default configuration sources](#unreleased-default-configuration-sources)
 - [0.3 → 0.4](#03--04) — **every application must edit its route paths and configuration file**
 - [0.2 → 0.3: API simplification](#02--03-api-simplification)
 
@@ -843,6 +844,20 @@ values for those fields are coerced rather than rejected.
 - `Gotcha::build_config` starts its builder function above the framework defaults. Automatic
   loading (`GotchaApp::config`'s default and the builder's automatic stack) and every `with_*`
   source helper use the same defaults layer.
+
+---
+
+# Unreleased: default configuration sources
+
+`Gotcha::with_default_config()`, `with_default_files()`, and `with_default_env()` now enable
+variable substitution, matching the explicit `with_*` helpers and automatic loading. `${VAR}`
+and path placeholders in the conventional files and the `APP` environment prefix are resolved
+instead of being passed through literally. A variable or path that is not set resolves to an
+empty string; it does not fail the load.
+
+`Config::load_default` now returns `ConfigResult<T>` and no longer falls back to `T::default()`
+when loading fails. Propagate the error, or choose an explicit fallback with
+`ConfigErrorPolicy::fallback_to_default` during startup.
 
 ---
 

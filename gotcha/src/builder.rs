@@ -352,6 +352,7 @@ where
     /// Errors from these explicitly selected sources are returned when the server starts.
     /// The framework's typed server defaults always sit beneath these sources, so an
     /// environment-only `APP_SERVER__PORT` is coerced without a configuration file.
+    /// `${VAR}` and path variables in these sources are resolved, as in automatic loading.
     ///
     /// # Example
     /// ```no_run
@@ -428,6 +429,7 @@ where
     ///
     /// This adds to any existing configuration sources rather than replacing them.
     /// Missing default files are optional; existing files that cannot be loaded fail startup.
+    /// Variable substitution is enabled for these sources, as for automatic loading.
     ///
     /// # Example
     /// ```no_run
@@ -440,6 +442,7 @@ where
         self.config.update_sources(|builder| {
             let mut builder = builder
                 .unwrap_or_else(ConfigBuilder::framework_defaults)
+                .enable_vars()
                 .file_optional("configurations/application.toml");
             if let Ok(profile) = std::env::var("GOTCHA_ACTIVE_PROFILE") {
                 builder = builder.file_optional(format!("configurations/application_{}.toml", profile));
@@ -452,6 +455,7 @@ where
     /// Add default environment variable prefix ("APP")
     ///
     /// This adds to any existing configuration sources rather than replacing them.
+    /// Variable substitution is enabled for these sources, as for automatic loading.
     ///
     /// # Example
     /// ```no_run
@@ -462,13 +466,16 @@ where
     /// ```
     pub fn with_default_env(mut self) -> Self {
         self.config
-            .update_sources(|builder| builder.unwrap_or_else(ConfigBuilder::framework_defaults).env("APP"));
+            .update_sources(|builder| builder.unwrap_or_else(ConfigBuilder::framework_defaults).enable_vars().env("APP"));
         self
     }
 
-    /// Enable variable substitution (${VAR} and ${VAR:-default} syntax)
+    /// Enable variable substitution
     ///
-    /// This affects all configuration sources added to the builder.
+    /// Values may reference environment variables with `${VAR}` and other configuration paths
+    /// with `${app.database.name}`. A variable or path that is not set resolves to an empty
+    /// string; substitution does not fail the load. This affects all configuration sources
+    /// added to the builder.
     ///
     /// # Example
     /// ```no_run
@@ -1361,5 +1368,82 @@ mod tests {
         let config = app.config.resolve().unwrap();
         assert_eq!(config.server.port, 8700);
         assert_eq!(config.server.host, "0.0.0.0");
+    }
+
+    /// Default files resolve environment and path variables through `with_default_config()`.
+    #[test]
+    fn default_sources_resolve_variables() {
+        const CHILD: &str = "GOTCHA_BUILDER_DEFAULT_VARS_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            let dir = tempfile::tempdir().unwrap();
+            std::fs::create_dir(dir.path().join("configurations")).unwrap();
+            // `default_host` resolves the environment variable; `server.host` resolves the
+            // path variable to that value.
+            std::fs::write(
+                dir.path().join("configurations/application.toml"),
+                "default_host = \"${GOTCHA_DEFAULT_VARS_FILE}\"\n\n[server]\nhost = \"${default_host}\"\nport = 18080\n",
+            )
+            .unwrap();
+            let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+            for (key, _) in std::env::vars_os().filter(|(key, _)| key.to_string_lossy().starts_with("APP_")) {
+                command.env_remove(key);
+            }
+            let output = command
+                .args(["--exact", "builder::tests::default_sources_resolve_variables", "--nocapture"])
+                .current_dir(dir.path())
+                .env(CHILD, "1")
+                .env("GOTCHA_DEFAULT_VARS_FILE", "10.0.0.1")
+                .env("APP_SERVER__PORT", "9000")
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "child failed:\n{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        }
+
+        let resolve = |app: Gotcha<EmptyState, EmptyConfig>| app.config.resolve().unwrap().server;
+        let config = resolve(Gotcha::with_config::<EmptyConfig>().with_default_config());
+        assert_eq!(config.host, "10.0.0.1", "the path variable resolves to the environment-resolved file value");
+        assert_eq!(config.port, 9000, "the environment still wins over the file");
+
+        let config = resolve(Gotcha::with_config::<EmptyConfig>().with_default_files());
+        assert_eq!(config.host, "10.0.0.1", "with_default_files resolves variables in the default files");
+        assert_eq!(config.port, 18080, "file values win over framework defaults");
+    }
+
+    /// `with_default_env` resolves `${VAR}` in environment values.
+    #[test]
+    fn default_environment_source_resolves_variables() {
+        const CHILD: &str = "GOTCHA_BUILDER_DEFAULT_ENV_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            let dir = tempfile::tempdir().unwrap();
+            let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+            for (key, _) in std::env::vars_os().filter(|(key, _)| key.to_string_lossy().starts_with("APP_")) {
+                command.env_remove(key);
+            }
+            let output = command
+                .args(["--exact", "builder::tests::default_environment_source_resolves_variables", "--nocapture"])
+                .current_dir(dir.path())
+                .env(CHILD, "1")
+                .env("GOTCHA_DEFAULT_VARS_ENV", "10.0.0.2")
+                .env("APP_SERVER__HOST", "${GOTCHA_DEFAULT_VARS_ENV}")
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "child failed:\n{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        }
+
+        let app = Gotcha::with_config::<EmptyConfig>().with_default_env();
+        let config = app.config.resolve().unwrap();
+        assert_eq!(config.server.host, "10.0.0.2");
     }
 }

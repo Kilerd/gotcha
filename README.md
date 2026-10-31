@@ -575,8 +575,9 @@ The server settings are their own extractor, `State<ServerConfig>`; `State<Confi
 still gives you both at once and derefs to your config.
 
 Configuration supports:
-- Environment variable resolution inside values: `${ENV_VAR}`
-- Path variable resolution: `${app.database.name}`
+- Environment variable resolution inside values: `${ENV_VAR}`. An unset variable resolves to
+  an empty string.
+- Path variable resolution: `${app.database.name}`. A missing path resolves to an empty string.
 - Profile-based overrides via `GOTCHA_ACTIVE_PROFILE` environment variable
 - Environment overrides with the `APP_` prefix, where `__` separates nested sections:
 
@@ -587,6 +588,9 @@ Configuration supports:
 
   A single underscore stays part of the field name, so snake_case fields are addressable, and
   typed fields (numbers, booleans) parse the value rather than rejecting it.
+
+Variable substitution is enabled for automatic loading and for every `with_*` source helper,
+including `with_default_config()`, `with_default_files()`, and `with_default_env()`.
 
 Framework-managed loading installs typed defaults for the reserved `[server]` section beneath
 every file and environment source. Environment-only configuration therefore works without a
