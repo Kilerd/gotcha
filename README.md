@@ -411,8 +411,8 @@ Generated documents use OpenAPI 3.2.0 and JSON Schema 2020-12 semantics. See the
 
 #### Optional and nullable fields
 
-`#[derive(Schematic)]` reads the serde attributes already on a field, so the document matches
-what serde accepts and writes. `Option<T>` on its own is optional *and* nullable; add a serde
+`#[derive(Schematic)]` reads the serde attributes already on a field, so the document follows the
+contract for the patterns below. `Option<T>` on its own is optional *and* nullable; add a serde
 attribute to choose one axis:
 
 | Field | Generated schema | Serde behavior | zod equivalent |
@@ -420,12 +420,18 @@ attribute to choose one axis:
 | `value: Option<T>` | optional, `anyOf: [T, {"type": "null"}]` | missing or `null` → `None`; `None` → `null` | `.optional().nullable()` |
 | `#[serde(deserialize_with = "Option::deserialize")] value: Option<T>` | required, same `anyOf` | missing key → error; `null` → `None` | `.nullable()` |
 | `#[serde(skip_serializing_if = "Option::is_none")] value: Option<T>` | optional, `T` (no null branch) | missing or `null` → `None`; `None` is omitted | `.optional()` |
-| `#[serde(default)]` on the struct | every field optional | missing keys use the field defaults | every field `.optional()` |
+| `deserialize_with` or `with` **and** `skip_serializing_if = "Option::is_none"`, no `default` | optional, same `anyOf` as plain `Option<T>` | input requires the key; `null` → `None`; output omits `None` | no single equivalent |
+| `#[serde(default)]` on the struct | every direct field optional (a `#[serde(flatten)]` field keeps the inner type's requiredness) | missing direct keys use the field defaults | every direct field `.optional()` |
 
 `deserialize_with` (or `with`) without a `default` requires the key, so the field stays required
 even when its type is `Option<T>`. Only `Option::is_none`, `std::option::Option::is_none` and
 `core::option::Option::is_none` are recognized for dropping the null branch; any other
 `skip_serializing_if` predicate keeps today's behavior (optional, with the null branch).
+
+Combining a custom deserializer with `Option::is_none` and no `default` is asymmetric: input
+requires the key while output may omit it, and one schema cannot express both directions. That
+field keeps the previous optional + nullable contract. Prefer adding a `default` to make a
+missing key acceptable; for "absent, `null` or value" use the tri-state pattern below.
 
 A PATCH-style tri-state distinguishes "absent", `null` and a value with `Option<Option<T>>`. The
 document is optional and nullable with one null branch. The inner option needs a small helper to

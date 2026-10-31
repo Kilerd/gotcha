@@ -299,10 +299,20 @@ pub(crate) struct SerdeFieldPresence {
 /// An `Option<T>` field skipped by a recognisable `Option::is_none` predicate emits `T`'s
 /// schema, dropping the null branch that serialization never writes. For `Option<Option<T>>`
 /// the inner option's null branch remains, keeping the tri-state.
+///
+/// A custom deserializer plus such a skip and no `default` is asymmetric: input requires the
+/// key, output may omit it, and a single schema cannot express both. That combination keeps
+/// the previous optional + nullable schema.
 pub(crate) fn serde_field_presence(ty: &syn::Type, attrs: &[Attribute], container_default: bool) -> SerdeFieldPresence {
-    let required = if has_serde_default(attrs) || container_default {
+    let has_default = has_serde_default(attrs) || container_default;
+    let deserialize_with = has_serde_deserialize_with(attrs);
+    let inner_option = option_inner_type(ty);
+    let skips_none = inner_option.is_some() && skips_none(attrs);
+    let asymmetric = deserialize_with && skips_none && !has_default;
+
+    let required = if has_default || asymmetric {
         Some(false)
-    } else if has_serde_deserialize_with(attrs) {
+    } else if deserialize_with {
         Some(true)
     } else if has_serde_skip_serializing_if(attrs) {
         Some(false)
@@ -310,8 +320,8 @@ pub(crate) fn serde_field_presence(ty: &syn::Type, attrs: &[Attribute], containe
         None
     };
 
-    let schema_type = match option_inner_type(ty) {
-        Some(inner) if skips_none(attrs) => inner.clone(),
+    let schema_type = match inner_option {
+        Some(inner) if skips_none && !asymmetric => inner.clone(),
         _ => ty.clone(),
     };
 

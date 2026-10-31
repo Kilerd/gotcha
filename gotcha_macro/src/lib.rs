@@ -133,11 +133,13 @@ pub fn api(args: TokenStream, input_stream: TokenStream) -> TokenStream {
 /// schema matches what deserialization requires and serialization writes:
 ///
 /// - `deserialize_with` or `with` without a `default` makes the field required, including
-///   `Option<T>`.
+///   `Option<T>`. Combined with a recognized `Option::is_none` skip it is asymmetric (input
+///   requires the key, output may omit it), so that case stays optional and nullable.
 /// - `skip_serializing_if = "Option::is_none"` (also the `std::option::` and `core::option::`
 ///   paths) makes an `Option<T>` field optional and removes its null branch.
-/// - `default` on the field or on a struct container, and any other `skip_serializing_if`
-///   predicate, make the field optional.
+/// - `default` on the field or on a struct container (direct fields only; `flatten` fields keep
+///   the inner type's requiredness), and any other `skip_serializing_if` predicate, make the
+///   field optional.
 ///
 /// `Option<Option<T>>` always produces a single null branch. The README section
 /// "Optional and nullable fields" maps each pattern to its schema and zod equivalent.

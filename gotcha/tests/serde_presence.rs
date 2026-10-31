@@ -170,6 +170,51 @@ fn nested_option_has_one_null_branch_and_round_trips() {
     );
 }
 
+// A custom deserializer requires the key while `Option::is_none` omits it on output. One schema
+// cannot express both directions, so the previous optional + nullable contract is kept.
+#[derive(Debug, Serialize, Deserialize, Schematic)]
+struct AsymmetricOption {
+    #[serde(deserialize_with = "Option::deserialize", skip_serializing_if = "Option::is_none")]
+    value: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Schematic)]
+struct AsymmetricNested {
+    #[serde(deserialize_with = "deserialize_some", skip_serializing_if = "Option::is_none")]
+    attributes: Option<Option<String>>,
+}
+
+#[test]
+fn deserialize_with_and_option_is_none_skip_stay_optional_and_nullable() {
+    let schema = document::<AsymmetricOption>();
+    assert_eq!(schema["properties"]["value"], json!({"anyOf": [{"type": "string"}, {"type": "null"}]}));
+    assert!(required(&schema).is_empty());
+
+    let error = serde_json::from_str::<AsymmetricOption>("{}").unwrap_err();
+    assert!(error.to_string().contains("value"), "{error}");
+    assert_eq!(serde_json::from_str::<AsymmetricOption>(r#"{"value": null}"#).unwrap().value, None);
+    assert_eq!(
+        serde_json::from_str::<AsymmetricOption>(r#"{"value": "x"}"#).unwrap().value.as_deref(),
+        Some("x")
+    );
+    assert_eq!(serde_json::to_string(&AsymmetricOption { value: None }).unwrap(), "{}");
+
+    let schema = document::<AsymmetricNested>();
+    assert_eq!(schema["properties"]["attributes"], json!({"anyOf": [{"type": "string"}, {"type": "null"}]}));
+    assert!(required(&schema).is_empty());
+
+    assert!(serde_json::from_str::<AsymmetricNested>("{}").is_err());
+    assert_eq!(
+        serde_json::from_str::<AsymmetricNested>(r#"{"attributes": null}"#).unwrap().attributes,
+        Some(None)
+    );
+    assert_eq!(serde_json::to_string(&AsymmetricNested { attributes: None }).unwrap(), "{}");
+    assert_eq!(
+        serde_json::to_string(&AsymmetricNested { attributes: Some(None) }).unwrap(),
+        r#"{"attributes":null}"#
+    );
+}
+
 // Container `#[serde(default)]` makes every field optional.
 #[derive(Debug, Default, PartialEq, Serialize, Deserialize, Schematic)]
 #[serde(default)]

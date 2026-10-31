@@ -29,9 +29,9 @@
 # Unreleased: serde-driven field presence
 
 `#[derive(Schematic)]` now derives a named field's presence and nullability from the serde
-attributes already on it, so the document matches what deserialization requires and what
-serialization writes. Plain `Option<T>` and fields without these attributes keep their current
-schemas.
+attributes already on it, so the document follows the contract for most patterns. Plain
+`Option<T>` and fields without these attributes keep their current schemas. One asymmetric
+combination keeps its previous schema; see the last bullet.
 
 - `#[serde(deserialize_with = "...")]` or `#[serde(with = "...")]` without a `default` makes the
   field required, including `Option<T>`. Serde rejects a missing key before the option can
@@ -43,8 +43,13 @@ schemas.
   recognized predicates are `Option::is_none`, `std::option::Option::is_none` and
   `core::option::Option::is_none`. Any other predicate keeps the current behavior (optional,
   with the null branch).
-- `#[serde(default)]` on a struct container makes every field optional, matching serde.
-  Field-level `default` behaves as before.
+- `#[serde(default)]` on a struct container makes every direct field optional, matching serde.
+  Fields merged by `#[serde(flatten)]` keep the inner type's requiredness. Field-level `default`
+  behaves as before.
+- `deserialize_with` or `with` combined with a recognized `Option::is_none` skip, without a
+  `default`, stays optional and nullable as before. Input requires the key while output may
+  omit it, which a single schema cannot express; use `default` with the tri-state pattern to
+  make the contract consistent.
 - `Option<Option<T>>` renders one `anyOf` with a single null branch instead of a nested `anyOf`
   of `anyOf`. With `default` + `deserialize_with` + `skip_serializing_if = "Option::is_none"` it
   documents the tri-state contract: optional, nullable, and never more than one null branch.
