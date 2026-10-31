@@ -1,14 +1,49 @@
 {
   "components": {
     "schemas": {
+      "ErrorBody": {
+        "description": "The JSON body of every error response Gotcha generates.\n\nIt serializes as `{\"error\": \"...\"}`, plus a `fields` map for failures that report more than\none problem: `Valid` sends `{\"error\": \"validation failed\", \"fields\": {\"name\": [\"is\nrequired\"]}}`. `fields` is omitted when there is nothing to report, so every other provider's\nbody is unchanged. The type is public so it can be declared as the body of an OpenAPI response\n(`body = \"ErrorBody\"` in `#[api(errors(...))]` / `#[api(responses(...))]`), and so applications\ncan reuse the same wire shape for their own errors.",
+        "properties": {
+          "error": {
+            "description": "Human-readable description of the failure.",
+            "type": "string"
+          },
+          "fields": {
+            "additionalProperties": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "description": "Per-field failure messages keyed by the field's flattened path (for example `address.city`\nor `items[0].name`). Omitted when `None`.",
+            "type": "object"
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "type": "object"
+      },
       "FormBody": {
-        "properties": { "name": { "type": "string" } },
-        "required": ["name"],
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
         "type": "object"
       },
       "JsonBody": {
-        "properties": { "name": { "type": "string" } },
-        "required": ["name"],
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
         "type": "object"
       }
     }
@@ -26,7 +61,13 @@
         "parameters": [],
         "responses": {
           "200": {
-            "content": { "text/plain": { "schema": { "type": "string" } } },
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
             "description": "text response"
           }
         },
@@ -41,15 +82,63 @@
         "requestBody": {
           "content": {
             "application/x-www-form-urlencoded": {
-              "schema": { "$ref": "#/components/schemas/FormBody" }
+              "schema": {
+                "$ref": "#/components/schemas/FormBody"
+              }
             }
           },
           "required": true
         },
         "responses": {
           "200": {
-            "content": { "text/plain": { "schema": { "type": "string" } } },
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
             "description": "text response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Request rejected: invalid form body"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Request rejected: form body too large"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Request rejected: missing or invalid form content type"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Request rejected: form body did not match the expected type"
           }
         },
         "summary": "Form Only"
@@ -60,19 +149,83 @@
         "deprecated": false,
         "operationId": "path_query_json",
         "parameters": [
-          { "in": "path", "name": "id", "required": true, "schema": { "type": "integer" } },
-          { "in": "query", "name": "page", "required": true, "schema": { "type": "integer" } }
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
         ],
         "requestBody": {
           "content": {
-            "application/json": { "schema": { "$ref": "#/components/schemas/JsonBody" } }
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JsonBody"
+              }
+            }
           },
           "required": true
         },
         "responses": {
           "200": {
-            "content": { "text/plain": { "schema": { "type": "string" } } },
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
             "description": "text response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Request rejected: invalid path parameters / invalid query string / invalid JSON body"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Request rejected: JSON body too large"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Request rejected: missing or invalid JSON content type"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Request rejected: JSON body did not match the expected type"
           }
         },
         "summary": "Path Query Json"
@@ -85,14 +238,64 @@
         "parameters": [],
         "requestBody": {
           "content": {
-            "application/json": { "schema": { "$ref": "#/components/schemas/JsonBody" } }
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JsonBody"
+              }
+            }
           },
           "required": true
         },
         "responses": {
           "200": {
-            "content": { "text/plain": { "schema": { "type": "string" } } },
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
             "description": "text response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Request rejected: invalid JSON body"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Request rejected: JSON body too large"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Request rejected: missing or invalid JSON content type"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Request rejected: JSON body did not match the expected type"
           }
         },
         "summary": "Json Only"
@@ -104,14 +307,32 @@
         "operationId": "multipart_only",
         "parameters": [],
         "requestBody": {
-          "content": { "multipart/form-data": {} },
+          "content": {
+            "multipart/form-data": {}
+          },
           "description": "Multipart form data",
           "required": true
         },
         "responses": {
           "200": {
-            "content": { "text/plain": { "schema": { "type": "string" } } },
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
             "description": "text response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Request rejected: invalid multipart boundary"
           }
         },
         "summary": "Multipart Only"

@@ -701,7 +701,7 @@ mod documents {
     }
 
     #[test]
-    fn gotcha_extractors_document_exactly_like_axum_originals() {
+    fn gotcha_extractors_document_like_axum_originals_plus_their_rejections() {
         let ours = GotchaRouter::<()>::default()
             .get("/items/{id}", read_gotcha)
             .post("/write", write_gotcha)
@@ -716,13 +716,43 @@ mod documents {
             .post("/upload", upload_axum)
             .get("/host", host_axum)
             .into_openapi();
+        let ours = serde_json::to_value(ours).unwrap();
+        let axum = serde_json::to_value(axum).unwrap();
+
+        // Parameters and request bodies are identical; only responses differ. Axum's originals
+        // keep their plain-text rejections, so they document nothing beyond the return type.
+        for (method, path) in [
+            ("get", "/items/{id}"),
+            ("post", "/write"),
+            ("post", "/form"),
+            ("post", "/upload"),
+            ("get", "/host"),
+        ] {
+            let operation = &ours["paths"][path][method];
+            let original = &axum["paths"][path][method];
+            assert_eq!(operation["parameters"], original["parameters"], "{path}");
+            assert_eq!(operation["requestBody"], original["requestBody"], "{path}");
+            assert_eq!(
+                original["responses"].as_object().unwrap().keys().map(String::as_str).collect::<Vec<_>>(),
+                ["200"],
+                "raw Axum extractors add no rejection responses for {path}"
+            );
+            assert!(
+                operation["responses"].as_object().unwrap().len() > 1,
+                "the Gotcha wrapper documents rejections for {path}"
+            );
+        }
+        assert!(axum["components"]["schemas"].get("ErrorBody").is_none());
         assert_eq!(
-            serde_json::to_string(&ours).unwrap(),
-            serde_json::to_string(&axum).unwrap(),
-            "the wrappers must document exactly like Axum's originals"
+            ours["paths"]["/items/{id}"]["get"]["responses"]["400"]["content"]["application/json"]["schema"]["$ref"],
+            "#/components/schemas/ErrorBody"
+        );
+        assert_eq!(
+            ours["paths"]["/write"]["post"]["responses"]["422"]["description"],
+            "Request rejected: JSON body did not match the expected type"
         );
 
-        let document = serde_json::to_value(ours).unwrap();
+        let document = ours;
         assert_eq!(document["paths"]["/items/{id}"]["get"]["parameters"][0]["name"], "id");
         assert_eq!(document["paths"]["/items/{id}"]["get"]["parameters"][1]["in"], "query");
         assert_eq!(
@@ -752,8 +782,9 @@ mod documents {
         assert_eq!(fields["additionalProperties"]["type"], "array");
         assert_eq!(fields["additionalProperties"]["items"]["type"], "string");
 
-        // Documents that never reference ErrorBody do not gain the component.
-        let plain = serde_json::to_value(GotchaRouter::<()>::default().get("/read", read_gotcha).into_openapi()).unwrap();
+        // Documents that never reference ErrorBody do not gain the component. Axum's extractors
+        // keep their plain-text rejections and contribute no rejection responses.
+        let plain = serde_json::to_value(GotchaRouter::<()>::default().get("/read", read_axum).into_openapi()).unwrap();
         assert!(
             plain["components"]["schemas"].get("ErrorBody").is_none(),
             "unrelated documents are unchanged: {}",

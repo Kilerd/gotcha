@@ -75,13 +75,27 @@ pub(crate) mod utils;
 ///   contract; `responses(...)` overrides matching statuses afterward.
 /// - `drop_default` - Remove the inferred `default` response. At least one response must remain.
 /// - `skip_response` - Do not infer responses from the return type. The nonempty `responses(...)`
-///   list is the complete contract, and the return type is never placed in a trait path, so
-///   opaque types such as `Sse<impl Stream<...>>` are accepted. Cannot be combined with
-///   `errors(...)` (declare every status in `responses(...)`) or `drop_default` (nothing is
-///   inferred to drop).
+///   list describes the return-type part of the contract, and the return type is never placed in
+///   a trait path, so opaque types such as `Sse<impl Stream<...>>` are accepted. Rejection
+///   responses of Gotcha extractor arguments are still added, and explicit statuses still win.
+///   Cannot be combined with `errors(...)` (declare every status in `responses(...)`) or
+///   `drop_default` (nothing is inferred to drop).
 /// - On a handler parameter, `#[api(skip)]` excludes that extractor from the documented
-///   parameters. It accepts exactly that form; other parameter-level `#[api(...)]` contents are
-///   compile errors.
+///   parameters and rejection responses. Its `ParameterProvider::extractor_kinds` is not
+///   queried, so argument types without a `ParameterProvider` implementation still compile.
+///   Declare any rejection the extractor can send with `errors(...)` or `responses(...)`. It
+///   accepts exactly that form; other parameter-level `#[api(...)]` contents are compile errors.
+///
+/// ## Extractor rejection responses
+///
+/// Every documented argument that uses one of Gotcha's extractor providers (`Json`, `Form`,
+/// `Query`, `Path`, `Multipart`, `TypedHeader`, `Header`, `Cookie`, or `Valid`) contributes the
+/// rejection responses that provider can produce. The statuses come from the provider and the
+/// body comes from the application's `XxxConfig` handler (`ErrorBody` by default); the document
+/// assembly adds them at generation time. A status declared in `errors(...)` or `responses(...)`
+/// wins over the automatic one. Axum's own extractors and custom `ParameterProvider`
+/// implementations contribute nothing. Applications can opt out with
+/// `Gotcha::document_extractor_errors(false)` or `GotchaApp::document_extractor_errors`.
 ///
 /// Response and request body declarations describe HTTP behavior; they do not change what the
 /// handler sends or reads. `errors(...)` preserves any `default` from the success branch unless
@@ -106,7 +120,7 @@ pub(crate) mod utils;
 /// }
 /// ```
 ///
-/// Streaming handlers can declare their whole contract explicitly:
+/// Streaming handlers can declare their return-type contract explicitly:
 ///
 /// ```rust,ignore
 /// // For `text/event-stream`, `item` describes the parsed event, not the JSON in `data`.

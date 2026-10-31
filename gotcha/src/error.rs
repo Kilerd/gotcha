@@ -19,6 +19,9 @@ use crate::config::ConfigError;
 /// can reuse the same wire shape for their own errors.
 #[derive(Debug, Clone, Serialize)]
 #[cfg_attr(feature = "openapi", derive(gotcha_macro::Schematic))]
+// The framework's error shape keeps its public name even when an application defines a type with
+// the same name; the collision renames the application's component instead.
+#[cfg_attr(feature = "openapi", schematic(name = "ErrorBody"))]
 pub struct ErrorBody {
     /// Human-readable description of the failure.
     pub error: String,

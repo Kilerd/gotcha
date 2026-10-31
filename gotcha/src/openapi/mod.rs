@@ -43,7 +43,10 @@ use std::collections::{BTreeMap, HashMap};
 use axum::http::Method;
 use convert_case::{Case, Casing};
 use either::Either;
-use oas::{Components, Info, OpenAPIV3, Operation, Parameter, PathItem, Referenceable, RequestBody, Responses, SecurityRequirement, Tag};
+use oas::{
+    Components, Info, MediaType, OpenAPIV3, Operation, Parameter, PathItem, Referenceable, RequestBody, Response, Responses, Schema, SchemaValue,
+    SecurityRequirement, Tag,
+};
 use regex::Regex;
 
 mod endpoints;
@@ -67,6 +70,10 @@ pub type ParamType = Either<Vec<Parameter>, RequestBody>;
 /// Builds an argument's [`ParamType`] given the route path (needed to name path parameters).
 /// A constructor is a function or a non-capturing closure; its result is built for each operation.
 pub type ParamConstructor = fn(String) -> ParamType;
+
+/// Reports the Gotcha extractor providers a handler argument uses, so document assembly can add
+/// their rejection responses. Axum's originals and custom implementations report none.
+pub type ExtractorConstructor = fn() -> &'static [crate::ExtractorKind];
 
 /// Normalise a route path into the form OpenAPI uses for path templating.
 ///
@@ -114,6 +121,7 @@ pub fn parameters_only<T: crate::ParameterProvider>(url: String) -> ParamType {
 ///     deprecated: false,
 ///     security: None,
 ///     parameters: &[<Path<u32> as ParameterProvider>::generate],
+///     extractors: &[<Path<u32> as ParameterProvider>::extractor_kinds],
 ///     responses: <String as Responsible>::response,
 /// };
 /// ```
@@ -134,13 +142,34 @@ pub struct Operable {
     pub security: Option<&'static str>,
     /// One constructor per documented handler argument, stored in a static slice.
     pub parameters: &'static [ParamConstructor],
+    /// One constructor per documented handler argument reporting its Gotcha providers. Their
+    /// rejection responses are added when the document is generated, using the application's
+    /// extractor configurations.
+    pub extractors: &'static [ExtractorConstructor],
     /// Builds fresh responses inside the current document's schema collection scope.
     pub responses: fn() -> Responses,
+}
+
+/// One rejection status shared by the providers of one operation.
+#[derive(Default)]
+struct RejectionGroup {
+    /// Provider phrases, in handler-argument order, without duplicates.
+    phrases: Vec<&'static str>,
+    /// The distinct configured bodies that can produce this status.
+    schemas: Vec<Schema>,
 }
 
 impl Operable {
     /// Build the OpenAPI operation for this handler at `path`.
     pub fn generate(&self, path: String) -> Operation {
+        self.generate_with_configs(path, &crate::extract::ExtractorConfigs::default(), true)
+    }
+
+    /// Build the operation, consulting the application's extractor configurations.
+    ///
+    /// `document_extractor_errors` is the application-level opt-out. Explicit statuses already
+    /// present in `responses` win over the automatic ones.
+    pub(crate) fn generate_with_configs(&self, path: String, configs: &crate::extract::ExtractorConfigs, document_extractor_errors: bool) -> Operation {
         let tags = self.group.map(|group| vec![group.to_string()]);
         let mut params = vec![];
         let mut request_body = None;
@@ -152,7 +181,12 @@ impl Operable {
                 Either::Right(req_body) => request_body = Some(Referenceable::Data(req_body)),
             }
         }
-        let responses = (self.responses)();
+        let mut responses = (self.responses)();
+        if document_extractor_errors {
+            for (status, response) in rejection_responses(self.extractors, configs, &responses).data {
+                responses.data.entry(status).or_insert(response);
+            }
+        }
 
         // An explicit `#[api(summary = "...")]` wins; otherwise derive it from the id in Title Case.
         let summary = self.summary.map(|s| s.to_string()).or_else(|| Some(self.id.to_case(Case::Title)));
@@ -181,6 +215,92 @@ impl Operable {
 }
 
 inventory::collect!(Operable);
+
+/// Collect the rejection responses of every provider the operation's arguments use.
+///
+/// Providers can share a status. Identical configured bodies produce one response; distinct
+/// bodies become `oneOf` alternatives under `application/json`. A status that already has an
+/// explicit or inferred response is skipped before its body schema is built, so a fully
+/// overridden operation leaves no unreferenced component behind.
+fn rejection_responses(extractors: &'static [ExtractorConstructor], configs: &crate::extract::ExtractorConfigs, existing: &Responses) -> Responses {
+    let mut groups: BTreeMap<u16, RejectionGroup> = BTreeMap::new();
+    for constructor in extractors {
+        for kind in constructor() {
+            let spec = configs.rejection_spec(*kind);
+            for (status, phrase) in spec.statuses {
+                if existing.data.contains_key(&status.as_u16().to_string()) {
+                    continue;
+                }
+                let group = groups.entry(status.as_u16()).or_default();
+                if !group.phrases.contains(&phrase) {
+                    group.phrases.push(phrase);
+                }
+                if !crate::error::status_has_body(status) {
+                    continue;
+                }
+                let schema = (spec.body_schema)().schema;
+                let value = serde_json::to_value(&schema).expect("schemas are serializable");
+                // The same configured body type generates the same reference, so only distinct
+                // bodies become alternatives.
+                if !group
+                    .schemas
+                    .iter()
+                    .any(|each| serde_json::to_value(each).expect("schemas are serializable") == value)
+                {
+                    group.schemas.push(schema);
+                }
+            }
+        }
+    }
+    Responses {
+        default: None,
+        data: groups
+            .into_iter()
+            .map(|(status, group)| (status.to_string(), Referenceable::Data(rejection_response(status, group))))
+            .collect(),
+    }
+}
+
+fn rejection_response(status: u16, group: RejectionGroup) -> Response {
+    let description = format!("Request rejected: {}", group.phrases.join(" / "));
+    let carries_body = axum::http::StatusCode::from_u16(status).is_ok_and(crate::error::status_has_body);
+    let content = carries_body.then(|| {
+        let schema: SchemaValue = if group.schemas.len() == 1 {
+            group.schemas.into_iter().next().expect("at least one body").into()
+        } else {
+            Schema {
+                extras: BTreeMap::from([(
+                    "oneOf".to_owned(),
+                    serde_json::Value::Array(
+                        group
+                            .schemas
+                            .into_iter()
+                            .map(|schema| serde_json::to_value(schema).expect("schemas are serializable"))
+                            .collect(),
+                    ),
+                )]),
+                ..Schema::default()
+            }
+            .into()
+        };
+        BTreeMap::from([(
+            "application/json".to_owned(),
+            MediaType {
+                schema: Some(schema),
+                example: None,
+                examples: None,
+                encoding: None,
+                item_schema: None,
+            },
+        )])
+    });
+    Response {
+        description,
+        headers: None,
+        content,
+        links: None,
+    }
+}
 
 /// The neutral [`Info`] used when an application does not configure one.
 ///
@@ -244,33 +364,28 @@ macro_rules! cargo_info {
 /// scope, so each named schema is emitted once under `components/schemas` and referenced by `$ref`
 /// at its use sites (which is also what lets recursive types produce a finite spec).
 pub fn generate_openapi(operables: HashMap<(String, Method), &'static Operable>) -> OpenAPIV3 {
-    generate_openapi_with_schemas(operables, Vec::new())
+    let configs = crate::extract::ExtractorConfigs::default();
+    generate_openapi_with_configs_and_info(operables, &configs, true, default_info())
 }
 
-/// Like [`generate_openapi`], also registering the schemas of configured extractor error bodies.
-/// Each function is called inside the collection scope, so its type becomes a component.
+/// Like [`generate_openapi`], with the application's extractor configurations and opt-out.
+///
+/// Configured error bodies are registered inside the collection scope, and every operation
+/// documents the rejection responses of the Gotcha providers its arguments use.
 #[doc(hidden)]
-pub fn generate_openapi_with_schemas(
-    operables: HashMap<(String, Method), &'static Operable>, extra_schemas: Vec<fn() -> gotcha_core::EnhancedSchema>,
-) -> OpenAPIV3 {
-    generate_openapi_with_schemas_and_info(operables, extra_schemas, default_info())
-}
-
-/// Like [`generate_openapi_with_schemas`], with an explicit application-level `info` block.
-#[doc(hidden)]
-pub fn generate_openapi_with_schemas_and_info(
-    operables: HashMap<(String, Method), &'static Operable>, extra_schemas: Vec<fn() -> gotcha_core::EnhancedSchema>, info: Info,
+pub fn generate_openapi_with_configs_and_info(
+    operables: HashMap<(String, Method), &'static Operable>, configs: &crate::extract::ExtractorConfigs, document_extractor_errors: bool, info: Info,
 ) -> OpenAPIV3 {
     let mut operables: Vec<_> = operables.into_iter().collect();
     operables.sort_by(|((path_a, method_a), _), ((path_b, method_b), _)| (path_a, method_a.as_str()).cmp(&(path_b, method_b.as_str())));
     let (operations, schemas) = gotcha_core::registry::collect(|| {
         // Custom rejection bodies are not attached to operations, but their components must exist.
-        for schema in &extra_schemas {
+        for schema in &configs.schemas() {
             let _ = schema();
         }
         operables
             .iter()
-            .map(|((path, _), operable)| operable.generate(path.clone()))
+            .map(|((path, _), operable)| operable.generate_with_configs(path.clone(), configs, document_extractor_errors))
             .collect::<Vec<_>>()
     });
 

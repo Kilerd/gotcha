@@ -98,7 +98,10 @@ async fn composed_routes_keep_http_handlers_and_documentation_together() {
                 "#/components/schemas/Item"
             );
         }
-        assert_eq!(spec["components"]["schemas"].as_object().unwrap().len(), 1);
+        // The routes use Gotcha's `Path`/`Json` wrappers, so their rejection bodies are
+        // components too.
+        assert_eq!(spec["components"]["schemas"].as_object().unwrap().len(), 2);
         assert_eq!(spec["components"]["schemas"]["Item"]["properties"]["id"]["type"], "integer");
+        assert!(spec["components"]["schemas"].get("ErrorBody").is_some());
     }
 }
