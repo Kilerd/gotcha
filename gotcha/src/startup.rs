@@ -1,11 +1,9 @@
 //! Shared application startup, binding, and shutdown. API adapters provide the application-specific hooks.
 
-use std::collections::HashMap;
 use std::future::{Future, IntoFuture};
 use std::io;
-use std::net::{IpAddr, Shutdown, SocketAddr};
+use std::net::{IpAddr, SocketAddr};
 use std::pin::Pin;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
 use std::time::Duration;
@@ -88,13 +86,17 @@ impl PreparedServer {
 
     /// Serve until `signal`, `extra_shutdown`, or the shared shutdown token resolves, then drain
     /// HTTP up to `http_shutdown_timeout` and scheduled tasks up to their own timeout. Both
-    /// deadlines run concurrently. Remaining connections are closed at the HTTP deadline.
+    /// deadlines run concurrently. HTTP draining also waits for upgraded connections, which axum
+    /// no longer tracks after a WebSocket upgrade; all remaining connections are closed at the
+    /// deadline.
     pub(crate) async fn serve(self, signal: impl Future<Output = ()> + Send, extra_shutdown: impl Future<Output = ()> + Send) -> GotchaResult<()> {
         let shutdown = self.shutdown.clone();
         let local_addr = self.local_addr;
         let http_shutdown_timeout = self.http_shutdown_timeout;
         tracing::info!("Server listening on http://{local_addr}");
         // If the serving future is dropped, stop HTTP acceptance and abort owned scheduled tasks.
+        // Connections keep the existing cancellation semantics: graceful shutdown is signalled,
+        // but force-closing happens only at the HTTP drain deadline.
         let _shutdown_on_drop = shutdown.clone().drop_guard();
         #[cfg(feature = "task")]
         let tasks = crate::RunningTasks::start(self.tasks, shutdown.clone());
@@ -147,11 +149,18 @@ async fn drain_http<F>(server: &mut Pin<&mut F>, timeout: Duration, tracker: &Co
 where
     F: Future<Output = io::Result<()>>,
 {
-    match tokio::time::timeout(timeout, server).await {
+    let drained = async {
+        let result = server.await;
+        // Axum stops tracking a connection once it upgrades, so a WebSocket handler can still be
+        // running after the server future resolves. Wait for the tracked streams themselves.
+        tracker.wait_empty().await;
+        result
+    };
+    match tokio::time::timeout(timeout, drained).await {
         Ok(result) => result,
         Err(_) => {
             tracing::warn!("HTTP connections did not drain within {timeout:?}; closing remaining connections");
-            tracker.close_all();
+            tracker.force_close();
             Ok(())
         }
     }
@@ -218,31 +227,46 @@ pub(crate) async fn run<A: Application>(mut app: A, explicit: Option<SocketAddr>
     result
 }
 
-/// Bind, then spawn the signal and cleanup driver. `BoundServer` waits for it after draining.
+type LifecycleStarter = Box<dyn FnOnce(bool) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send>;
+
+/// Bind, then prepare the signal and cleanup driver. The driver is not started (and no signal
+/// handler is installed) until [`BoundServer::serve`] or [`BoundServer::serve_with_shutdown`].
 pub(crate) async fn bind<A>(mut app: A, explicit: Option<SocketAddr>) -> GotchaResult<BoundServer>
 where
     A: Application + 'static,
 {
     let (server, context) = prepare_with_context(&mut app, explicit).await?;
     let shutdown = server.shutdown.clone();
+    let drop_shutdown = shutdown.clone();
     let (finish, finish_rx) = oneshot::channel();
     let abort = CancellationToken::new();
     let lifecycle_abort = abort.clone();
-    // The task owns the application. It resolves the shutdown signal, cancels the shared token,
-    // waits until serving has drained, and only then runs application cleanup.
-    let lifecycle = tokio::spawn(async move {
-        tokio::select! {
-            biased;
-            _ = lifecycle_abort.cancelled() => {}
-            _ = app.shutdown_signal() => {}
-        }
-        shutdown.cancel();
-        let _ = finish_rx.await;
-        app.on_shutdown(&context).await;
+    // The driver owns the application. It resolves the shutdown signal, cancels the shared token,
+    // waits until serving has drained, and only then runs application cleanup. The argument
+    // selects whether the application's own signal is polled at all.
+    let start: LifecycleStarter = Box::new(move |use_app_signal| {
+        Box::pin(async move {
+            if use_app_signal {
+                tokio::select! {
+                    biased;
+                    _ = lifecycle_abort.cancelled() => {}
+                    _ = app.shutdown_signal() => {}
+                }
+            } else {
+                lifecycle_abort.cancelled().await;
+            }
+            shutdown.cancel();
+            let _ = finish_rx.await;
+            app.on_shutdown(&context).await;
+        })
     });
     Ok(BoundServer {
         server,
-        lifecycle: LifecycleTask(Some(lifecycle)),
+        lifecycle: BoundLifecycle {
+            starter: Some(start),
+            handle: None,
+            shutdown: drop_shutdown,
+        },
         finish: Some(finish),
         abort,
     })
@@ -252,15 +276,18 @@ where
 /// serving starts. Binding can use port 0; [`Self::local_addr`] then reports the assigned port.
 ///
 /// Shutdown order: the signal resolves, the context shutdown token is cancelled and the listener
-/// stops accepting, in-flight HTTP connections drain (bounded by
+/// stops accepting, in-flight HTTP connections (including WebSocket upgrades) drain (bounded by
 /// [`GotchaApp::http_shutdown_timeout`] or the builder's `.http_shutdown_timeout()`), scheduled
-/// tasks drain (bounded by the task shutdown timeout), and finally cleanup hooks run.
+/// tasks drain (bounded by the task shutdown timeout), and finally cleanup hooks run. At the HTTP
+/// deadline, remaining connections are closed.
 ///
-/// Dropping a `BoundServer` without serving it aborts its signal driver and runs no cleanup.
+/// Signal handling starts only when serving starts: holding an unserved `BoundServer` does not
+/// install a signal handler, and dropping it cancels the context shutdown token (releasing tasks
+/// or handlers that captured it) without running cleanup hooks.
 #[must_use = "a bound server holds a listener; call `serve` to run it"]
 pub struct BoundServer {
     server: PreparedServer,
-    lifecycle: LifecycleTask,
+    lifecycle: BoundLifecycle,
     finish: Option<oneshot::Sender<()>>,
     abort: CancellationToken,
 }
@@ -273,58 +300,68 @@ impl BoundServer {
 
     /// Serve until the application's shutdown signal resolves, then drain and clean up.
     pub async fn serve(self) -> GotchaResult<()> {
-        self.serve_inner(std::future::pending()).await
+        self.serve_inner(std::future::pending(), true).await
     }
 
     /// Serve until `signal` resolves instead of the application's configured shutdown signal.
-    /// The application cleanup hooks still run after draining.
+    ///
+    /// The application signal is not polled at all, so Ctrl-C and SIGTERM do not stop this server;
+    /// `signal` replaces them. Application cleanup hooks still run after draining.
     pub async fn serve_with_shutdown<S>(self, signal: S) -> GotchaResult<()>
     where
         S: Future<Output = ()> + Send,
     {
-        self.serve_inner(signal).await
+        self.serve_inner(signal, false).await
     }
 
-    async fn serve_inner<S>(self, signal: S) -> GotchaResult<()>
+    async fn serve_inner<S>(mut self, signal: S, use_app_signal: bool) -> GotchaResult<()>
     where
         S: Future<Output = ()> + Send,
     {
-        let Self {
-            server,
-            lifecycle,
-            finish,
-            abort,
-        } = self;
-        let result = server.serve(std::future::pending(), signal).await;
-        abort.cancel();
-
-        if let Some(finish) = finish {
+        self.lifecycle.start(use_app_signal);
+        let result = self.server.serve(std::future::pending(), signal).await;
+        self.abort.cancel();
+        if let Some(finish) = self.finish.take() {
             let _ = finish.send(());
         }
-        lifecycle.wait().await;
+        self.lifecycle.wait().await;
         result
     }
 }
 
-/// Owns the spawned signal/cleanup driver, aborting it if the server is dropped before serving.
-struct LifecycleTask(Option<tokio::task::JoinHandle<()>>);
+/// Owns the signal/cleanup driver. Created at bind, started only when serving begins.
+struct BoundLifecycle {
+    starter: Option<LifecycleStarter>,
+    handle: Option<tokio::task::JoinHandle<()>>,
+    shutdown: CancellationToken,
+}
 
-impl LifecycleTask {
+impl BoundLifecycle {
+    fn start(&mut self, use_app_signal: bool) {
+        let starter = self.starter.take().expect("bound server was already served");
+        self.handle = Some(tokio::spawn(starter(use_app_signal)));
+    }
+
     async fn wait(mut self) {
-        let Some(handle) = self.0.take() else {
+        let Some(handle) = self.handle.take() else {
             return;
         };
         match handle.await {
             Ok(()) => {}
             Err(error) if error.is_cancelled() => {}
+            // Re-raise a panicking cleanup hook so every API path behaves the same.
+            Err(error) if error.is_panic() => std::panic::resume_unwind(error.into_panic()),
             Err(error) => tracing::error!("application cleanup task failed: {error}"),
         }
     }
 }
 
-impl Drop for LifecycleTask {
+impl Drop for BoundLifecycle {
     fn drop(&mut self) {
-        if let Some(handle) = self.0.take() {
+        if self.starter.is_some() {
+            // Bound but never served: release anything that captured the context token.
+            self.shutdown.cancel();
+        } else if let Some(handle) = self.handle.take() {
             handle.abort();
         }
     }
@@ -348,7 +385,8 @@ pub(crate) async fn shutdown_signal() {
     }
 }
 
-/// Tracks accepted sockets so the HTTP drain deadline can close them.
+/// Tracks live accepted connections and carries the force-close signal used at the drain
+/// deadline. It also covers upgraded connections (WebSockets), which axum stops tracking.
 #[derive(Clone, Default)]
 struct ConnectionTracker {
     state: Arc<TrackerState>,
@@ -356,40 +394,43 @@ struct ConnectionTracker {
 
 #[derive(Default)]
 struct TrackerState {
-    connections: Mutex<HashMap<u64, std::net::TcpStream>>,
-    next_id: AtomicU64,
-    closed: AtomicBool,
+    active: Mutex<usize>,
+    empty: tokio::sync::Notify,
+    close: CancellationToken,
 }
 
 impl ConnectionTracker {
-    fn track(&self, stream: TcpStream) -> Option<TrackedStream> {
-        let std_stream = stream.into_std().ok()?;
-        let clone = std_stream.try_clone().ok()?;
-        let stream = TcpStream::from_std(std_stream).ok()?;
-        let id = self.state.next_id.fetch_add(1, Ordering::Relaxed);
-        let mut connections = self.state.connections.lock().unwrap();
-        if self.state.closed.load(Ordering::SeqCst) {
-            let _ = clone.shutdown(Shutdown::Both);
-        } else {
-            connections.insert(id, clone);
-        }
-        Some(TrackedStream {
+    fn track(&self, stream: TcpStream) -> TrackedStream {
+        *self.state.active.lock().unwrap() += 1;
+        let cancelled = Box::pin(self.state.close.clone().cancelled_owned());
+        TrackedStream {
             stream,
-            id,
+            cancelled,
+            closed: false,
             state: self.state.clone(),
-        })
+        }
     }
 
-    fn close_all(&self) {
-        self.state.closed.store(true, Ordering::SeqCst);
-        let connections = self.state.connections.lock().unwrap();
-        for stream in connections.values() {
-            let _ = stream.shutdown(Shutdown::Both);
+    /// Resolve once every tracked connection has been dropped.
+    async fn wait_empty(&self) {
+        loop {
+            let notified = self.state.empty.notified();
+            tokio::pin!(notified);
+            // Register before checking, so a drop between the check and the await is not missed.
+            notified.as_mut().enable();
+            if *self.state.active.lock().unwrap() == 0 {
+                return;
+            }
+            notified.await;
         }
+    }
+
+    fn force_close(&self) {
+        self.state.close.cancel();
     }
 }
 
-/// Accepts TCP connections and records them until the connection future is dropped.
+/// Accepts TCP connections and counts them until the connection future is dropped.
 struct TrackingListener {
     listener: TcpListener,
     tracker: ConnectionTracker,
@@ -408,10 +449,7 @@ impl Listener for TrackingListener {
     async fn accept(&mut self) -> (Self::Io, Self::Addr) {
         loop {
             match self.listener.accept().await {
-                Ok((stream, addr)) => match self.tracker.track(stream) {
-                    Some(stream) => return (stream, addr),
-                    None => continue,
-                },
+                Ok((stream, addr)) => return (self.tracker.track(stream), addr),
                 Err(error) if is_connection_error(&error) => continue,
                 Err(error) => {
                     tracing::error!("accept error: {error}");
@@ -426,35 +464,82 @@ impl Listener for TrackingListener {
     }
 }
 
+/// A connection whose I/O fails as soon as the server force-closes it. The cancellation future is
+/// polled alongside the socket, so a task blocked on this stream wakes when the deadline fires.
 struct TrackedStream {
     stream: TcpStream,
-    id: u64,
+    cancelled: Pin<Box<dyn Future<Output = ()> + Send>>,
+    closed: bool,
     state: Arc<TrackerState>,
+}
+
+impl TrackedStream {
+    fn ensure_open(&mut self, cx: &mut Context<'_>) -> io::Result<()> {
+        if self.closed {
+            return Err(connection_aborted());
+        }
+        if self.cancelled.as_mut().poll(cx).is_ready() {
+            self.closed = true;
+            return Err(connection_aborted());
+        }
+        Ok(())
+    }
+}
+
+fn connection_aborted() -> io::Error {
+    io::Error::new(io::ErrorKind::ConnectionAborted, "server is shutting down")
 }
 
 impl Drop for TrackedStream {
     fn drop(&mut self) {
-        self.state.connections.lock().unwrap().remove(&self.id);
+        let mut active = self.state.active.lock().unwrap();
+        *active -= 1;
+        if *active == 0 {
+            self.state.empty.notify_waiters();
+        }
     }
 }
 
 impl AsyncRead for TrackedStream {
     fn poll_read(mut self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &mut ReadBuf<'_>) -> Poll<io::Result<()>> {
+        if let Err(error) = self.ensure_open(cx) {
+            return Poll::Ready(Err(error));
+        }
         Pin::new(&mut self.stream).poll_read(cx, buf)
     }
 }
 
 impl AsyncWrite for TrackedStream {
     fn poll_write(mut self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<io::Result<usize>> {
+        if let Err(error) = self.ensure_open(cx) {
+            return Poll::Ready(Err(error));
+        }
         Pin::new(&mut self.stream).poll_write(cx, buf)
     }
 
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        if let Err(error) = self.ensure_open(cx) {
+            return Poll::Ready(Err(error));
+        }
         Pin::new(&mut self.stream).poll_flush(cx)
     }
 
     fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        if let Err(error) = self.ensure_open(cx) {
+            return Poll::Ready(Err(error));
+        }
         Pin::new(&mut self.stream).poll_shutdown(cx)
+    }
+
+    fn is_write_vectored(&self) -> bool {
+        self.stream.is_write_vectored()
+    }
+
+    fn poll_write_vectored(mut self: Pin<&mut Self>, cx: &mut Context<'_>, bufs: &[io::IoSlice<'_>]) -> Poll<io::Result<usize>> {
+        if let Err(error) = self.ensure_open(cx) {
+            return Poll::Ready(Err(error));
+        }
+        Pin::new(&mut self.stream).poll_write_vectored(cx, bufs)
     }
 }
 

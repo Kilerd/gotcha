@@ -460,6 +460,15 @@ selected for port `0`, and `BoundServer::serve()` runs the server. `run()`, `lis
 `GotchaApp::bind()` requires `Self: 'static` because the signal and cleanup driver runs in its own
 task. Applications that borrow external data can keep using `run()`.
 
+Signal handling starts only when serving starts. An unserved `BoundServer` does not install a
+signal handler, so holding one does not swallow Ctrl-C/SIGTERM. Dropping one cancels the context
+shutdown token (because routes or `finish_router` hooks may have captured it), releases the
+listener, and runs no cleanup.
+
+`BoundServer::serve_with_shutdown(future)` replaces the application signal completely: the
+configured `shutdown_signal` is not polled, so Ctrl-C and SIGTERM do not stop that server. Cleanup
+hooks still run after it drains.
+
 ## Context shutdown token
 
 `GotchaContext` now carries a shutdown token, available through `context.shutdown()`. It is
@@ -479,15 +488,23 @@ with:
 GotchaContext::new(state, config)
 ```
 
-The token created by `new` is never cancelled by the framework; contexts created by a running
-application receive the server's token.
+Exhaustive destructuring (`let GotchaContext { state, config } = context;`) also stops compiling;
+read `context.state` / `context.config` directly instead. A context passed to
+`Gotcha::from_context` has its own token discarded; the running server owns the token handlers and
+cleanup hooks see.
+
+`gotcha::CancellationToken` is a re-export of `tokio_util::sync::CancellationToken`, so
+**`tokio-util` 0.7 is now part of gotcha's public API**. Naming the type directly requires a
+compatible `tokio-util` dependency.
 
 ## Bounded HTTP draining
 
 HTTP draining was previously unbounded. `http_shutdown_timeout` now defaults to 30 seconds
-(builder `.http_shutdown_timeout(duration)` or trait `http_shutdown_timeout(&self)`). At the
-deadline, remaining connections are closed and shutdown continues. Scheduled tasks keep their
-independently configured `task_shutdown_timeout` and drain concurrently with HTTP.
+(builder `.http_shutdown_timeout(duration)` or trait `http_shutdown_timeout(&self)`). Upgraded
+connections (WebSockets) are no longer tracked by axum's graceful shutdown after the upgrade, so
+the drain also waits for those tracked streams and closes them at the deadline. Remaining
+connections are closed and shutdown continues. Scheduled tasks keep their independently configured
+`task_shutdown_timeout` and drain concurrently with HTTP.
 
 ## Cleanup hooks
 
@@ -495,11 +512,16 @@ Register ordered cleanup with builder `.on_shutdown(|context| async move { ... }
 registration order) or override `GotchaApp::on_shutdown(&self, context)`. Hooks receive the
 application context and run after serving stops. Errors are not returned; log inside the hook.
 
+A panicking hook does not prevent later hooks from running; the first panic is re-raised from
+`run()` / `serve()` after all hooks have run. A hook that never resolves blocks shutdown, because
+application cleanup has no timeout.
+
 The complete order is:
 
 1. the shutdown signal resolves and the context token is cancelled,
 2. the listener stops accepting,
-3. in-flight HTTP connections drain (bounded by `http_shutdown_timeout`),
+3. in-flight HTTP connections, including upgraded WebSockets, drain (bounded by
+   `http_shutdown_timeout`),
 4. scheduled tasks stop starting and drain (bounded by `task_shutdown_timeout`,
    concurrently with HTTP draining),
 5. cleanup hooks run in order, and only then do `run()` / `serve()` return.

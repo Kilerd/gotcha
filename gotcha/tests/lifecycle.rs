@@ -11,7 +11,7 @@ use std::time::Duration;
 use futures_util::{stream, StreamExt};
 use gotcha::axum::body::{Body, Bytes};
 use gotcha::axum::response::Response;
-use gotcha::{ConfigWrapper, Gotcha, GotchaApp, GotchaContext, GotchaResult, GotchaRouter, ServerConfig, State};
+use gotcha::{ConfigWrapper, Gotcha, GotchaApp, GotchaContext, GotchaResult, GotchaRouter, ServerConfig, State, WebSocketUpgrade};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::{mpsc, oneshot, Notify};
@@ -226,9 +226,12 @@ async fn http_drain_deadline_closes_streaming_connections() {
 
     let started_at = std::time::Instant::now();
     stop.send(()).unwrap();
-    // Serving returns at the drain deadline even though the response never ends.
+    // Serving returns at the drain deadline even though the response never ends. The lower bound
+    // rejects shutting down immediately instead of waiting for graceful drain.
     within(serving).await.unwrap().unwrap();
-    assert!(started_at.elapsed() < Duration::from_secs(2));
+    let elapsed = started_at.elapsed();
+    assert!(elapsed >= Duration::from_millis(90), "the drain deadline must be honored: {elapsed:?}");
+    assert!(elapsed < Duration::from_secs(2), "serve must return at the drain deadline: {elapsed:?}");
 
     // The remaining connection was closed rather than left running.
     let mut rest = Vec::new();
@@ -336,4 +339,263 @@ async fn trait_run_runs_cleanup_after_serving_stops() {
     stop.notify_one();
     within(serving).await.unwrap().unwrap();
     assert_eq!(*events.lock().unwrap(), ["request", "trait-cleanup"]);
+}
+
+#[derive(Clone)]
+struct WsControls {
+    started: mpsc::UnboundedSender<()>,
+    done: mpsc::UnboundedSender<()>,
+    events: Events,
+}
+
+/// Completes a WebSocket handshake and leaves the upgraded connection open.
+async fn websocket(address: SocketAddr, path: &str) -> TcpStream {
+    let mut stream = TcpStream::connect(address).await.unwrap();
+    stream
+        .write_all(
+            format!(
+                "GET {path} HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\
+                 Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n"
+            )
+            .as_bytes(),
+        )
+        .await
+        .unwrap();
+    let mut response = Vec::new();
+    let mut byte = [0u8; 1];
+    while !response.ends_with(b"\r\n\r\n") {
+        let read = tokio::time::timeout(Duration::from_secs(5), stream.read(&mut byte)).await.unwrap().unwrap();
+        assert_eq!(read, 1, "connection closed during the WebSocket handshake");
+        response.push(byte[0]);
+        assert!(response.len() < 8192, "unexpectedly large handshake response");
+    }
+    let response = String::from_utf8_lossy(&response);
+    assert!(response.starts_with("HTTP/1.1 101"), "{response}");
+    stream
+}
+
+/// Closes on the shutdown token after a teardown delay the drain must wait for.
+async fn graceful_ws(ws: WebSocketUpgrade, State(context): State<GotchaContext<WsControls, ()>>) -> Response {
+    let controls = context.state.clone();
+    let shutdown = context.shutdown();
+    ws.on_upgrade(move |mut socket| async move {
+        controls.events.lock().unwrap().push("ws-start");
+        let _ = controls.started.send(());
+        tokio::select! {
+            _ = shutdown.cancelled() => {}
+            _ = socket.recv() => {}
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        controls.events.lock().unwrap().push("ws-done");
+        let _ = controls.done.send(());
+    })
+}
+
+/// Never looks at the shutdown token; only the drain deadline can close it.
+async fn ignoring_ws(ws: WebSocketUpgrade, State(context): State<GotchaContext<WsControls, ()>>) -> Response {
+    let controls = context.state.clone();
+    ws.on_upgrade(move |mut socket| async move {
+        controls.events.lock().unwrap().push("ws-start");
+        let _ = controls.started.send(());
+        while let Some(Ok(_)) = socket.recv().await {}
+        controls.events.lock().unwrap().push("ws-done");
+        let _ = controls.done.send(());
+    })
+}
+
+#[tokio::test]
+async fn cleanup_waits_for_websocket_teardown() {
+    let (started, mut started_rx) = mpsc::unbounded_channel();
+    let (done, mut done_rx) = mpsc::unbounded_channel();
+    let events: Events = Arc::default();
+    let cleanup_events = events.clone();
+    let controls = WsControls {
+        started,
+        done,
+        events: events.clone(),
+    };
+    let (stop, stopped) = oneshot::channel::<()>();
+    let server = Gotcha::from_context(GotchaContext::new(controls, config()))
+        .get("/ws", graceful_ws)
+        .on_shutdown(move |_| {
+            let events = cleanup_events.clone();
+            async move {
+                events.lock().unwrap().push("cleanup");
+            }
+        })
+        .shutdown_signal(async move {
+            let _ = stopped.await;
+        })
+        .bind()
+        .await
+        .unwrap();
+    let address = server.local_addr();
+    let serving = tokio::spawn(server.serve());
+
+    let _client = within(websocket(address, "/ws")).await;
+    within(started_rx.recv()).await.unwrap();
+    stop.send(()).unwrap();
+    // The upgrade leaves axum's drain, so cleanup must still wait for the handler's teardown.
+    within(done_rx.recv()).await.unwrap();
+    within(serving).await.unwrap().unwrap();
+    assert_eq!(*events.lock().unwrap(), ["ws-start", "ws-done", "cleanup"]);
+}
+
+#[tokio::test]
+async fn http_drain_deadline_closes_websocket_that_ignores_the_token() {
+    let (started, mut started_rx) = mpsc::unbounded_channel();
+    let (done, mut done_rx) = mpsc::unbounded_channel();
+    let controls = WsControls {
+        started,
+        done,
+        events: Arc::default(),
+    };
+    let (stop, stopped) = oneshot::channel::<()>();
+    let server = Gotcha::from_context(GotchaContext::new(controls, config()))
+        .get("/ws", ignoring_ws)
+        .http_shutdown_timeout(Duration::from_millis(100))
+        .shutdown_signal(async move {
+            let _ = stopped.await;
+        })
+        .bind()
+        .await
+        .unwrap();
+    let address = server.local_addr();
+    let serving = tokio::spawn(server.serve());
+
+    let mut client = within(websocket(address, "/ws")).await;
+    within(started_rx.recv()).await.unwrap();
+    let started_at = std::time::Instant::now();
+    stop.send(()).unwrap();
+    within(serving).await.unwrap().unwrap();
+    let elapsed = started_at.elapsed();
+    assert!(elapsed >= Duration::from_millis(90), "the drain deadline must be honored: {elapsed:?}");
+    assert!(elapsed < Duration::from_secs(2), "serve must return at the drain deadline: {elapsed:?}");
+
+    // Force-closing the tracked stream wakes the handler, which drops the connection.
+    within(done_rx.recv()).await.unwrap();
+    let mut rest = Vec::new();
+    let closed = tokio::time::timeout(Duration::from_secs(2), client.read_to_end(&mut rest)).await;
+    assert!(closed.is_ok(), "the upgraded connection must be closed at the drain deadline");
+}
+
+#[tokio::test]
+async fn cancelling_the_context_token_requests_shutdown() {
+    async fn cancel(State(context): State<GotchaContext<(), ()>>) -> &'static str {
+        context.shutdown().cancel();
+        "cancelled"
+    }
+
+    let events: Events = Arc::default();
+    let cleanup_events = events.clone();
+    let server = Gotcha::from_context(GotchaContext::new((), config()))
+        .get("/cancel", cancel)
+        .on_shutdown(move |_| {
+            let events = cleanup_events.clone();
+            async move {
+                events.lock().unwrap().push("cleanup");
+            }
+        })
+        .bind()
+        .await
+        .unwrap();
+    let address = server.local_addr();
+    // The custom signal never fires: only the handler's token cancellation stops the server.
+    let serving = tokio::spawn(server.serve_with_shutdown(std::future::pending::<()>()));
+
+    assert!(within(get(address, "/cancel")).await.ends_with("cancelled"));
+    within(serving).await.unwrap().unwrap();
+    assert_eq!(*events.lock().unwrap(), ["cleanup"]);
+}
+
+#[tokio::test]
+async fn serve_with_shutdown_replaces_the_application_signal() {
+    struct App {
+        stop: Arc<Notify>,
+        events: Events,
+    }
+    impl GotchaApp for App {
+        type State = ();
+        type Config = ();
+        fn logger(&self) -> GotchaResult<()> {
+            Ok(())
+        }
+        async fn config(&self) -> GotchaResult<ConfigWrapper<()>> {
+            Ok(config())
+        }
+        async fn state(&self, _: &ConfigWrapper<()>) -> GotchaResult<()> {
+            Ok(())
+        }
+        fn routes(&self, router: GotchaRouter<GotchaContext<(), ()>>) -> GotchaRouter<GotchaContext<(), ()>> {
+            let events = self.events.clone();
+            router.get("/", move || {
+                let events = events.clone();
+                async move {
+                    events.lock().unwrap().push("request");
+                    "ok"
+                }
+            })
+        }
+        async fn shutdown_signal(&self) {
+            self.stop.notified().await;
+        }
+    }
+
+    let stop = Arc::new(Notify::new());
+    let events: Events = Arc::default();
+    let server = App {
+        stop: stop.clone(),
+        events: events.clone(),
+    }
+    .bind()
+    .await
+    .unwrap();
+    let address = server.local_addr();
+    let (custom_stop, custom_stopped) = oneshot::channel::<()>();
+    let serving = tokio::spawn(server.serve_with_shutdown(async move {
+        let _ = custom_stopped.await;
+    }));
+
+    // The application signal fires but must not be polled at all.
+    stop.notify_one();
+    tokio::task::yield_now().await;
+    assert!(!serving.is_finished(), "the application signal must not stop serve_with_shutdown");
+    assert!(within(get(address, "/")).await.ends_with("ok"));
+
+    custom_stop.send(()).unwrap();
+    within(serving).await.unwrap().unwrap();
+    assert_eq!(*events.lock().unwrap(), ["request"]);
+}
+
+#[tokio::test]
+async fn panicking_cleanup_hook_runs_later_hooks_and_surfaces() {
+    let events: Events = Arc::default();
+    let first_events = events.clone();
+    let second_events = events.clone();
+    let (stop, stopped) = oneshot::channel::<()>();
+    let server = Gotcha::from_context(GotchaContext::new((), config()))
+        .on_shutdown(move |_| {
+            let events = first_events.clone();
+            async move {
+                events.lock().unwrap().push("first");
+                panic!("cleanup hook panic");
+            }
+        })
+        .on_shutdown(move |_| {
+            let events = second_events.clone();
+            async move {
+                events.lock().unwrap().push("second");
+            }
+        })
+        .shutdown_signal(async move {
+            let _ = stopped.await;
+        })
+        .bind()
+        .await
+        .unwrap();
+    let serving = tokio::spawn(server.serve());
+    stop.send(()).unwrap();
+    let error = within(serving).await.unwrap_err();
+    assert!(error.is_panic(), "a panicking cleanup hook must be re-raised");
+    assert_eq!(*events.lock().unwrap(), ["first", "second"]);
 }

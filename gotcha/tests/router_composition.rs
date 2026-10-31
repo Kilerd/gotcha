@@ -76,12 +76,12 @@ impl GotchaApp for App {
 }
 
 fn context() -> Context {
-    Context {
-        state: State {
+    Context::new(
+        State {
             value: Arc::new(AtomicUsize::new(7)),
         },
-        config: ConfigWrapper::default(),
-    }
+        ConfigWrapper::default(),
+    )
 }
 
 async fn request(router: &Router, path: &str) -> (StatusCode, HeaderMap, Vec<u8>) {

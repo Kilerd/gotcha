@@ -111,14 +111,20 @@ for behavior changes and the trait example.
 Both application APIs stop gracefully on Ctrl-C or Unix SIGTERM. When the signal resolves, gotcha:
 
 1. cancels the shutdown token in `GotchaContext` and stops accepting connections,
-2. drains in-flight HTTP connections, bounded by `http_shutdown_timeout` (30 seconds by default),
+2. drains in-flight HTTP connections, bounded by `http_shutdown_timeout` (30 seconds by default).
+   This also waits for upgraded connections such as WebSockets, which axum no longer tracks after
+   the upgrade,
 3. waits for running scheduled executions, bounded by `task_shutdown_timeout` (30 seconds by
    default with the `task` feature; this deadline runs concurrently with HTTP draining),
 4. runs cleanup hooks in registration order.
 
-At the HTTP drain deadline, remaining connections are closed and shutdown continues. A server that
-is dropped or cancelled before the deadline skips draining and cleanup, as before. To provide your
-own shutdown signal:
+At the HTTP drain deadline, remaining connections (including upgraded ones) are closed and
+shutdown continues. A panicking cleanup hook does not skip later hooks; the first panic is
+re-raised from `run()` / `serve()` after every hook has run. A hook that never resolves blocks
+shutdown, as there is no cleanup timeout. A server that is dropped or cancelled before the
+deadline skips draining and cleanup, as before. Signal handling starts only when serving starts;
+holding an unserved `BoundServer` installs no signal handler, and dropping it cancels the context
+token so captured-token waiters wake. To provide your own shutdown signal:
 
 ```rust,no_run
 use gotcha::Gotcha;
@@ -172,8 +178,10 @@ server.serve().await?;
 # Ok(()) }
 ```
 
-`BoundServer::serve_with_shutdown(future)` replaces the application signal for one server. The
-trait API offers `bind()`, `http_shutdown_timeout()`, and `on_shutdown(&context)` as well.
+`BoundServer::serve_with_shutdown(future)` actually replaces the application signal for one
+server: the configured `shutdown_signal` is not polled, so Ctrl-C and SIGTERM do not stop it,
+while cleanup hooks still run. The trait API offers `bind()`, `http_shutdown_timeout()`, and
+`on_shutdown(&context)` as well.
 
 Override the HTTP drain period with builder `.http_shutdown_timeout(duration)` or trait
 `http_shutdown_timeout(&self)`; see the [migration guide](MIGRATION.md#unreleased-bound-servers-and-shutdown-lifecycle).

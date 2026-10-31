@@ -236,3 +236,48 @@ async fn initialization_errors_release_the_listener_and_stop_later_stages() {
         assert_eq!(app.events.lock().unwrap().last(), Some(&stage));
     }
 }
+
+#[tokio::test]
+async fn dropping_an_unserved_bound_server_cancels_the_context_token() {
+    struct UnservedApp {
+        token: Arc<Mutex<Option<CancellationToken>>>,
+    }
+    impl GotchaApp for UnservedApp {
+        type State = ();
+        type Config = ();
+
+        fn logger(&self) -> GotchaResult<()> {
+            Ok(())
+        }
+
+        async fn config(&self) -> GotchaResult<ConfigWrapper<()>> {
+            Ok(ConfigWrapper {
+                app: (),
+                server: ServerConfig {
+                    host: "127.0.0.1".into(),
+                    port: 0,
+                },
+            })
+        }
+
+        async fn state(&self, _: &ConfigWrapper<()>) -> GotchaResult<()> {
+            Ok(())
+        }
+
+        fn routes(&self, router: GotchaRouter<GotchaContext<(), ()>>) -> GotchaRouter<GotchaContext<(), ()>> {
+            router
+        }
+
+        async fn build_router(&self, context: GotchaContext<(), ()>) -> GotchaResult<Router> {
+            *self.token.lock().unwrap() = Some(context.shutdown());
+            Ok(self.routes(GotchaRouter::default()).into_axum_router(context))
+        }
+    }
+
+    let token = Arc::new(Mutex::new(None));
+    let server = UnservedApp { token: token.clone() }.bind().await.unwrap();
+    let captured = token.lock().unwrap().clone().expect("build_router observed the context");
+    assert!(!captured.is_cancelled());
+    drop(server);
+    assert!(captured.is_cancelled(), "dropping an unserved BoundServer must release token waiters");
+}
