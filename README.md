@@ -522,6 +522,24 @@ async fn socket(upgrade: WebSocketUpgrade) -> Response {
 # }
 ```
 
+Extractors with no OpenAPI representation are excluded with `#[api(skip)]` on the parameter.
+It accepts exactly that form; other parameter-level `#[api(...)]` contents are compile errors:
+
+```rust
+# #[cfg(feature = "openapi")]
+# mod skip_parameter_example {
+use gotcha::prelude::*;
+
+struct RawConnection;
+
+#[api]
+async fn handler(#[api(skip)] connection: RawConnection) -> String {
+    let _ = connection;
+    String::new()
+}
+# }
+```
+
 ### Configuration System
 
 Create a `configurations/application.toml` file. Your application's own settings live at the top
