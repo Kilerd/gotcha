@@ -21,6 +21,15 @@ pub trait ParameterProvider {
     fn generate(_url: String) -> Either<Vec<Parameter>, RequestBody> {
         Either::Left(vec![])
     }
+
+    /// Whether this extractor consumes the whole request body.
+    ///
+    /// `#[api(request_body(...))]` uses this to drop the body such an extractor would otherwise
+    /// contribute, while keeping the path, query, header, and cookie parameters of the others.
+    /// Implement it as `true` for custom whole-body extractors; the default is `false`.
+    fn is_request_body() -> bool {
+        false
+    }
 }
 
 fn build_param(name: String, _in: ParameterIn, required: bool, schema: Schema, description: Option<String>) -> Parameter {
@@ -162,6 +171,10 @@ impl<T: Schematic> ParameterProvider for Json<T> {
         };
         Either::Right(req_body)
     }
+
+    fn is_request_body() -> bool {
+        true
+    }
 }
 
 impl<T: Schematic> ParameterProvider for Form<T> {
@@ -185,6 +198,10 @@ impl<T: Schematic> ParameterProvider for Form<T> {
             content: contents,
         };
         Either::Right(req_body)
+    }
+
+    fn is_request_body() -> bool {
+        true
     }
 }
 
@@ -269,6 +286,10 @@ impl<T: ParameterProvider> ParameterProvider for Option<T> {
             }
         }
     }
+
+    fn is_request_body() -> bool {
+        T::is_request_body()
+    }
 }
 
 impl ParameterProvider for Request {}
@@ -295,6 +316,10 @@ impl ParameterProvider for axum::extract::multipart::Multipart {
         };
 
         Either::Right(req_body)
+    }
+
+    fn is_request_body() -> bool {
+        true
     }
 }
 

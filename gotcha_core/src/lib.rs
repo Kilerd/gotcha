@@ -46,6 +46,7 @@ pub use serde_json;
 
 pub mod registry;
 
+pub mod request;
 pub mod responsible;
 pub use responsible::Responsible;
 
@@ -171,6 +172,52 @@ impl_primitive_type! { String, "string", "string"}
 impl_primitive_type! { bool, "bool", "boolean"}
 impl_primitive_type! { f32, "f32", "number"}
 impl_primitive_type! { f64, "f64", "number"}
+
+/// A binary payload, such as a file field in a `multipart/form-data` form.
+///
+/// It documents as an OpenAPI 3.2 string carrying bytes:
+/// `{"type": "string", "contentMediaType": "application/octet-stream"}`. The schema describes
+/// the wire format only; parsing the upload is still the handler's job with `Multipart`.
+///
+/// ```rust
+/// use gotcha_core::{Binary, Schematic};
+///
+/// #[derive(Schematic)]
+/// struct UploadForm {
+///     file: Binary,
+///     title: String,
+/// }
+/// ```
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Binary;
+
+impl Schematic for Binary {
+    fn name() -> &'static str {
+        "binary"
+    }
+
+    fn required() -> bool {
+        true
+    }
+
+    fn type_() -> &'static str {
+        "string"
+    }
+
+    fn generate_schema() -> EnhancedSchema {
+        EnhancedSchema {
+            schema: Schema {
+                _type: Some("string".into()),
+                // OpenAPI 3.2 spells binary content as a string with a media type; the 3.0
+                // `format: binary` keyword is not used.
+                content_media_type: Some("application/octet-stream".into()),
+                description: Self::doc(),
+                ..Schema::default()
+            },
+            required: Self::required(),
+        }
+    }
+}
 
 /// The unit type means "no value". As a *return* type that is an empty body, which
 /// [`Responsible`] documents as a response carrying no content. In the rare
@@ -586,6 +633,14 @@ mod tests {
         assert_eq!(<bool as Schematic>::name(), "bool");
         assert_eq!(<f32 as Schematic>::name(), "f32");
         assert_eq!(<f64 as Schematic>::name(), "f64");
+    }
+
+    #[test]
+    fn binary_is_an_openapi_3_2_media_typed_string() {
+        assert_eq!(
+            <Binary as Schematic>::generate_schema().schema.to_value(),
+            serde_json::json!({"type": "string", "contentMediaType": "application/octet-stream"})
+        );
     }
 
     #[test]

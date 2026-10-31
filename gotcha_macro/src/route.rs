@@ -46,6 +46,115 @@ impl RouteMeta {
     }
 }
 
+/// `request_body(...)` may appear more than once, which `RouteMeta`'s single-value fields cannot
+/// express, so the entries are split off before the rest is parsed.
+fn split_request_bodies(args: Vec<syn::NestedMeta>) -> darling::Result<(Vec<RequestBodyMeta>, Vec<syn::NestedMeta>)> {
+    let mut declarations = Vec::new();
+    let mut remaining = Vec::new();
+    for arg in args {
+        match arg {
+            // Match every form so a malformed `request_body` is reported as such rather than as
+            // an unknown field of the route attribute.
+            syn::NestedMeta::Meta(meta) if meta.path().is_ident("request_body") => {
+                declarations.push(RequestBodyMeta::from_meta(&meta)?);
+            }
+            other => remaining.push(other),
+        }
+    }
+    Ok((declarations, remaining))
+}
+
+/// Entries describe one logical body, so they may only differ in media type and body type.
+fn validate_request_bodies(declarations: &[RequestBodyMeta]) -> darling::Result<()> {
+    let Some(first) = declarations.first() else {
+        return Ok(());
+    };
+    let mut content_types = std::collections::BTreeSet::new();
+    for declaration in declarations {
+        if !content_types.insert(declaration.content_type.as_str()) {
+            return Err(darling::Error::custom(format!(
+                "duplicate request_body content_type {:?}; every entry must declare a distinct media type",
+                declaration.content_type
+            ))
+            .with_span(&declaration.span));
+        }
+        if declaration.required != first.required {
+            return Err(darling::Error::custom("all request_body(...) declarations must agree on required").with_span(&declaration.span));
+        }
+        if declaration.description != first.description {
+            return Err(darling::Error::custom("all request_body(...) declarations must agree on description").with_span(&declaration.span));
+        }
+    }
+    Ok(())
+}
+
+/// One media type of an explicitly declared request body.
+#[derive(Debug)]
+struct RequestBodyMeta {
+    /// Span of the whole entry, used for errors that depend on the other entries.
+    span: proc_macro2::Span,
+    body: String,
+    /// Defaults to `application/json`, matching a body declaration in `response(...)`.
+    content_type: String,
+    description: Option<String>,
+    /// Defaults to `true`: a declared body is required unless stated otherwise.
+    required: bool,
+}
+
+#[derive(Debug, FromMeta)]
+struct RequestBodyFields {
+    body: String,
+    content_type: Option<String>,
+    description: Option<String>,
+    required: Option<bool>,
+}
+
+impl FromMeta for RequestBodyMeta {
+    fn from_meta(item: &syn::Meta) -> darling::Result<Self> {
+        let syn::Meta::List(meta) = item else {
+            return Err(darling::Error::custom("expected request_body(body = \"Type\")").with_span(item));
+        };
+        let fields = RequestBodyFields::from_list(&meta.nested.iter().cloned().collect::<Vec<_>>()).map_err(|error| error.with_span(meta))?;
+        syn::parse_str::<syn::Type>(&fields.body).map_err(|error| darling::Error::custom(error).with_span(meta))?;
+        Ok(Self {
+            span: meta.span(),
+            body: fields.body,
+            content_type: fields.content_type.unwrap_or_else(|| "application/json".to_owned()),
+            description: fields.description,
+            required: fields.required.unwrap_or(true),
+        })
+    }
+}
+
+impl RequestBodyMeta {
+    fn tokens(&self) -> proc_macro2::TokenStream {
+        let body: syn::Type = syn::parse_str(&self.body).expect("validated body type");
+        let content_type = &self.content_type;
+        let required = self.required;
+        let description = match &self.description {
+            Some(description) => quote!(Some(#description)),
+            None => quote!(None),
+        };
+        quote!(::gotcha::request::request_body::<#body>(#content_type, #description, #required))
+    }
+
+    /// A constructor that builds the whole declared body, or `None` when nothing is declared.
+    ///
+    /// It is appended after the extractor constructors, so it replaces any body they infer.
+    fn constructor(declarations: &[RequestBodyMeta]) -> Option<proc_macro2::TokenStream> {
+        let mut entries = declarations.iter().map(RequestBodyMeta::tokens);
+        let first = entries.next()?;
+        let rest = entries;
+        Some(quote! {
+            |_url: ::std::string::String| {
+                let mut body = #first;
+                #(::gotcha::request::merge_request_bodies(&mut body, #rest);)*
+                ::gotcha::Either::Right(body)
+            }
+        })
+    }
+}
+
 #[derive(Debug, Default)]
 struct ResponseDeclarations(Vec<ResponseMeta>);
 
@@ -160,6 +269,12 @@ fn unknown_parameter_attribute(tokens: &impl quote::ToTokens) -> syn::Error {
 pub(crate) fn request_handler(args: TokenStream, input_stream: TokenStream) -> TokenStream {
     let attr_args = parse_macro_input!(args as AttributeArgs);
 
+    let (request_bodies, attr_args) = match split_request_bodies(attr_args) {
+        Ok(v) => v,
+        Err(e) => {
+            return TokenStream::from(e.write_errors());
+        }
+    };
     let args = match RouteMeta::from_list(&attr_args) {
         Ok(v) => v,
         Err(e) => {
@@ -170,7 +285,11 @@ pub(crate) fn request_handler(args: TokenStream, input_stream: TokenStream) -> T
     if let Err(e) = meta.validate() {
         return TokenStream::from(e.write_errors());
     }
+    if let Err(e) = validate_request_bodies(&request_bodies) {
+        return TokenStream::from(e.write_errors());
+    }
     let skip_response = meta.skip_response.is_present();
+    let declared_request_body = RequestBodyMeta::constructor(&request_bodies);
     let extra_responses: Vec<_> = meta.responses.unwrap_or_default().0.iter().map(ResponseMeta::tokens).collect();
     let explicit_errors = meta.errors.is_some();
     let error_responses: Vec<_> = meta.errors.into_iter().flat_map(|errors| errors.0).map(|response| response.tokens()).collect();
@@ -223,7 +342,13 @@ pub(crate) fn request_handler(args: TokenStream, input_stream: TokenStream) -> T
             continue;
         }
         let ty = &typed.ty;
-        params_token.push(quote! { <#ty as ::gotcha::ParameterProvider>::generate });
+        if declared_request_body.is_some() {
+            // The declared body replaces whatever a body extractor would infer, without
+            // registering the replaced type's schema.
+            params_token.push(quote! { ::gotcha::openapi::parameters_only::<#ty> });
+        } else {
+            params_token.push(quote! { <#ty as ::gotcha::ParameterProvider>::generate });
+        }
     }
     let ret_type = match &input.sig.output {
         // A handler without an explicit return type returns `()`.
@@ -263,7 +388,7 @@ pub(crate) fn request_handler(args: TokenStream, input_stream: TokenStream) -> T
                 description: #docs,
                 deprecated: #deprecated,
                 security: #security,
-                parameters: &[#(#params_token,)*],
+                parameters: &[#(#params_token,)* #declared_request_body],
                 responses: || {
                     let mut responses = #ret_responses;
                     // Declared Err alternatives join the inferred Ok contract, including shared statuses.
@@ -293,6 +418,21 @@ mod tests {
         let meta = parse(meta)?;
         meta.validate()?;
         Ok(meta)
+    }
+
+    /// Parse `#[api(...)]` as the macro does: request bodies are split off, the rest is
+    /// parsed as `RouteMeta`, and both halves are validated.
+    fn parse_api(meta: syn::Meta) -> darling::Result<(RouteMeta, Vec<RequestBodyMeta>)> {
+        let syn::Meta::List(meta) = meta else { unreachable!() };
+        let (request_bodies, args) = split_request_bodies(meta.nested.into_iter().collect())?;
+        Ok((RouteMeta::from_list(&args)?, request_bodies))
+    }
+
+    fn parse_api_validated(meta: syn::Meta) -> darling::Result<(RouteMeta, Vec<RequestBodyMeta>)> {
+        let (route, request_bodies) = parse_api(meta)?;
+        route.validate()?;
+        validate_request_bodies(&request_bodies)?;
+        Ok((route, request_bodies))
     }
 
     #[test]
@@ -362,6 +502,67 @@ mod tests {
             let error = validate_parameter_skip(&invalid).unwrap_err();
             assert!(error.to_string().contains("only #[api(skip)] is supported"));
         }
+    }
+
+    #[test]
+    fn request_body_declarations_default_content_type_and_requiredness() {
+        let (_, bodies) = parse_api(syn::parse_quote!(api(request_body(body = "UploadForm")))).unwrap();
+        let declaration = &bodies[0];
+        assert_eq!(declaration.content_type, "application/json");
+        assert!(declaration.required);
+        assert_eq!(declaration.description, None);
+
+        let (_, bodies) = parse_api(syn::parse_quote!(api(request_body(
+            content_type = "multipart/form-data",
+            body = "UploadForm",
+            description = "File upload",
+            required = false
+        ))))
+        .unwrap();
+        let declaration = &bodies[0];
+        assert_eq!(declaration.content_type, "multipart/form-data");
+        assert_eq!(declaration.description.as_deref(), Some("File upload"));
+        assert!(!declaration.required);
+    }
+
+    #[test]
+    fn request_body_declarations_validate_body_types_and_media_types() {
+        for invalid in [
+            // `body` is mandatory and must name a type.
+            syn::parse_quote!(api(request_body(content_type = "text/plain"))),
+            syn::parse_quote!(api(request_body(body = "Vec<"))),
+            syn::parse_quote!(api(request_body(body = "Upload", unknown = "x"))),
+            syn::parse_quote!(api(request_body)),
+            syn::parse_quote!(api(request_body = "Upload")),
+        ] {
+            assert!(parse_api(invalid).is_err());
+        }
+
+        for invalid in [
+            // Entries describe one body, so media types must be distinct and the shared
+            // description and requiredness must agree.
+            syn::parse_quote!(api(
+                request_body(body = "Upload", content_type = "application/json"),
+                request_body(body = "Upload", content_type = "application/json")
+            )),
+            syn::parse_quote!(api(
+                request_body(body = "A", required = true),
+                request_body(body = "B", content_type = "text/plain", required = false)
+            )),
+            syn::parse_quote!(api(
+                request_body(body = "A", description = "one"),
+                request_body(body = "B", content_type = "text/plain", description = "two")
+            )),
+        ] {
+            assert!(parse_api_validated(invalid).is_err());
+        }
+
+        let (_, bodies) = parse_api_validated(syn::parse_quote!(api(
+            request_body(body = "A", content_type = "application/json", description = "payload", required = true),
+            request_body(body = "B", content_type = "text/plain", description = "payload", required = true)
+        )))
+        .unwrap();
+        assert_eq!(bodies.len(), 2);
     }
 
     #[test]

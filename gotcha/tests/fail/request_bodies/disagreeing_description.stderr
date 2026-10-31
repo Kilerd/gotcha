@@ -1,0 +1,5 @@
+error: all request_body(...) declarations must agree on description
+ --> tests/fail/request_bodies/disagreeing_description.rs:5:5
+  |
+5 |     request_body(body = "String", content_type = "text/plain", description = "two")
+  |     ^^^^^^^^^^^^

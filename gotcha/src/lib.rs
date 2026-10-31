@@ -60,6 +60,10 @@ pub mod message;
 pub use gotcha_core;
 #[cfg(feature = "openapi")]
 #[cfg_attr(docsrs, doc(cfg(feature = "openapi")))]
+/// Request body documentation helpers, mirroring [`crate::response`].
+pub use gotcha_core::request;
+#[cfg(feature = "openapi")]
+#[cfg_attr(docsrs, doc(cfg(feature = "openapi")))]
 pub use gotcha_core::Responsible;
 
 #[cfg(feature = "openapi")]

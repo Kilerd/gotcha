@@ -56,6 +56,15 @@ pub(crate) mod utils;
 ///   `text/event-stream`, requires an explicit `content_type`, and is independent of `body`. For
 ///   `text/event-stream` it must describe the parsed event envelope (`data` plus the optional
 ///   `event`, `id`, and `retry` fields), not only JSON carried inside `data`.
+/// - `request_body(content_type = "multipart/form-data", body = "UploadForm", description = "Upload", required = true)` -
+///   Declare the request body instead of inferring it from extractor parameters. `body` is a
+///   required Rust type string; `content_type` defaults to `application/json` (matching
+///   `response(...)`) and `required` defaults to `true`. The declaration replaces the body
+///   contributed by `Json`, `Form`, `Multipart`, and their wrappers; path, query, header, and
+///   cookie parameters are unaffected. Repeat the entry with distinct `content_type` values to
+///   document several representations of one body; the entries must agree on `description` and
+///   `required`. Body types must implement `Schematic` and are registered as components exactly
+///   like response bodies. Use `gotcha::openapi::Binary` for a file field in a multipart form.
 /// - `errors(response(status = 404, body = "ErrorBody", description = "Not found"))` -
 ///   Fully describe the `Err` branch of `Result<T, E>` (including type aliases). Requires at
 ///   least one declaration and only infers `T: Responsible`; `E` does not need `Responsible`.
@@ -71,8 +80,9 @@ pub(crate) mod utils;
 ///   parameters. It accepts exactly that form; other parameter-level `#[api(...)]` contents are
 ///   compile errors.
 ///
-/// Response declarations describe HTTP behavior; they do not change what the handler sends.
-/// `errors(...)` preserves any `default` from the success branch unless `drop_default` is explicit.
+/// Response and request body declarations describe HTTP behavior; they do not change what the
+/// handler sends or reads. `errors(...)` preserves any `default` from the success branch unless
+/// `drop_default` is explicit.
 /// The error type still needs `IntoResponse` when the handler is registered on a router, and
 /// declared body and item types must implement `Schematic`. Without `errors(...)` or
 /// `skip_response`, the whole return type must implement `Responsible`, even when `responses(...)`
@@ -103,6 +113,25 @@ pub(crate) mod utils;
 /// )]
 /// async fn events() -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
 ///     // Implementation
+/// }
+/// ```
+///
+/// A multipart form has no type for `Multipart` to infer, so declare the form it accepts:
+///
+/// ```rust,ignore
+/// use gotcha::openapi::Binary;
+/// use gotcha::{api, Multipart, Schematic};
+///
+/// #[derive(Schematic)]
+/// struct UploadForm {
+///     file: Binary,
+///     title: String,
+/// }
+///
+/// #[api(request_body(content_type = "multipart/form-data", body = "UploadForm"))]
+/// async fn upload(_form: Multipart) -> String {
+///     // Read the fields with `Multipart`; the declaration documents the wire format.
+///     String::new()
 /// }
 /// ```
 #[proc_macro_attribute]

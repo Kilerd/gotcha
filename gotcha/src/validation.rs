@@ -300,6 +300,10 @@ where
     fn generate(url: String) -> crate::Either<Vec<oas::Parameter>, oas::RequestBody> {
         <crate::Json<T> as crate::ParameterProvider>::generate(url)
     }
+
+    fn is_request_body() -> bool {
+        true
+    }
 }
 
 #[cfg(feature = "openapi")]
@@ -309,6 +313,10 @@ where
 {
     fn generate(url: String) -> crate::Either<Vec<oas::Parameter>, oas::RequestBody> {
         <axum::extract::Json<T> as crate::ParameterProvider>::generate(url)
+    }
+
+    fn is_request_body() -> bool {
+        true
     }
 }
 

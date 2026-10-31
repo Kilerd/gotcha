@@ -1,0 +1,122 @@
+{
+  "components": {
+    "schemas": {
+      "FormBody": {
+        "properties": { "name": { "type": "string" } },
+        "required": ["name"],
+        "type": "object"
+      },
+      "JsonBody": {
+        "properties": { "name": { "type": "string" } },
+        "required": ["name"],
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "description": "Gotcha is a framework for building microservices",
+    "title": "Gotcha",
+    "version": "1.0.0"
+  },
+  "openapi": "3.2.0",
+  "paths": {
+    "/empty": {
+      "post": {
+        "deprecated": false,
+        "operationId": "no_body",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "content": { "text/plain": { "schema": { "type": "string" } } },
+            "description": "text response"
+          }
+        },
+        "summary": "No Body"
+      }
+    },
+    "/form": {
+      "post": {
+        "deprecated": false,
+        "operationId": "form_only",
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": { "$ref": "#/components/schemas/FormBody" }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": { "text/plain": { "schema": { "type": "string" } } },
+            "description": "text response"
+          }
+        },
+        "summary": "Form Only"
+      }
+    },
+    "/items/{id}": {
+      "post": {
+        "deprecated": false,
+        "operationId": "path_query_json",
+        "parameters": [
+          { "in": "path", "name": "id", "required": true, "schema": { "type": "integer" } },
+          { "in": "query", "name": "page", "required": true, "schema": { "type": "integer" } }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/JsonBody" } }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": { "text/plain": { "schema": { "type": "string" } } },
+            "description": "text response"
+          }
+        },
+        "summary": "Path Query Json"
+      }
+    },
+    "/json": {
+      "post": {
+        "deprecated": false,
+        "operationId": "json_only",
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/JsonBody" } }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": { "text/plain": { "schema": { "type": "string" } } },
+            "description": "text response"
+          }
+        },
+        "summary": "Json Only"
+      }
+    },
+    "/upload": {
+      "post": {
+        "deprecated": false,
+        "operationId": "multipart_only",
+        "parameters": [],
+        "requestBody": {
+          "content": { "multipart/form-data": {} },
+          "description": "Multipart form data",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": { "text/plain": { "schema": { "type": "string" } } },
+            "description": "text response"
+          }
+        },
+        "summary": "Multipart Only"
+      }
+    }
+  }
+}
