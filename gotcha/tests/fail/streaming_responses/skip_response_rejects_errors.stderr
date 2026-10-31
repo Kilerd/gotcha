@@ -1,0 +1,5 @@
+error: skip_response cannot be combined with errors(...); declare every status in responses(...)
+ --> tests/fail/streaming_responses/skip_response_rejects_errors.rs:4:5
+  |
+4 |     skip_response,
+  |     ^^^^^^^^^^^^^

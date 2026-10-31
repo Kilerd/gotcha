@@ -1,0 +1,5 @@
+error: this status cannot declare response content
+ --> tests/fail/streaming_responses/item_requires_a_content_status.rs:3:17
+  |
+3 | #[api(responses(response(status = 204, content_type = "text/event-stream", item = "String")))]
+  |                 ^^^^^^^^

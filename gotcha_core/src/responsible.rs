@@ -26,22 +26,26 @@ impl<T: Responsible, E> ResultResponse for Result<T, E> {
     }
 }
 
-fn body_response(schema: Schema, media_type: &str, description: impl Into<String>) -> Response {
+fn content_response(schema: Option<SchemaValue>, item_schema: Option<SchemaValue>, media_type: &str, description: impl Into<String>) -> Response {
     Response {
         description: description.into(),
         headers: None,
         content: Some(BTreeMap::from([(
             media_type.into(),
             MediaType {
-                schema: Some(schema.into()),
+                schema,
                 example: None,
                 examples: None,
                 encoding: None,
-                item_schema: None,
+                item_schema,
             },
         )])),
         links: None,
     }
+}
+
+fn body_response(schema: Schema, media_type: &str, description: impl Into<String>) -> Response {
+    content_response(Some(schema.into()), None, media_type, description)
 }
 
 /// Describe a body with a fixed HTTP status. The caller's `IntoResponse` must match this contract.
@@ -50,6 +54,37 @@ fn body_response(schema: Schema, media_type: &str, description: impl Into<String
 pub fn response<T: Schematic>(status: u16, media_type: &str, description: impl Into<String>) -> Responses {
     assert!(status >= 200 && !matches!(status, 204 | 205 | 304), "use empty_response for a bodyless status");
     single_response(status, body_response(T::generate_schema().schema, media_type, description))
+}
+
+/// Describe a sequential response with a fixed status, where `T` is the OpenAPI 3.2
+/// `itemSchema` for each parsed item rather than a whole-body schema.
+///
+/// Use this for server-sent events (`text/event-stream`) and newline-delimited payloads such as
+/// `application/jsonl`. Set the media type explicitly: the media type name does not imply an item
+/// schema, and an item schema alone does not describe the complete body.
+pub fn item_response<T: Schematic>(status: u16, media_type: &str, description: impl Into<String>) -> Responses {
+    assert!(status >= 200 && !matches!(status, 204 | 205 | 304), "use empty_response for a bodyless status");
+    single_response(
+        status,
+        content_response(None, Some(T::generate_schema().schema.into()), media_type, description),
+    )
+}
+
+/// Describe a response with both a whole-body schema (`B`) and a per-item schema (`I`).
+///
+/// The two schemas are independent, matching OpenAPI 3.2's separate `schema` and `itemSchema`
+/// fields. A media type may use either one alone; use [`response`] or [`item_response`] then.
+pub fn response_with_item<B: Schematic, I: Schematic>(status: u16, media_type: &str, description: impl Into<String>) -> Responses {
+    assert!(status >= 200 && !matches!(status, 204 | 205 | 304), "use empty_response for a bodyless status");
+    single_response(
+        status,
+        content_response(
+            Some(B::generate_schema().schema.into()),
+            Some(I::generate_schema().schema.into()),
+            media_type,
+            description,
+        ),
+    )
 }
 
 /// Describe a body whose status is only known at runtime, using OpenAPI's `default` entry.
@@ -325,6 +360,22 @@ mod tests {
             ])
         );
         assert_eq!(json["200"]["content"]["text/plain"]["schema"]["type"], "string");
+    }
+
+    #[test]
+    fn item_schemas_are_independent_of_whole_body_schemas() {
+        use serde_json::json;
+        let item_only = item_response::<String>(200, "text/event-stream", "events");
+        let mut value = serde_json::to_value(&item_only).unwrap();
+        let media = &value["200"]["content"]["text/event-stream"];
+        assert!(media.get("schema").is_none());
+        assert_eq!(media["itemSchema"], json!({"type": "string"}));
+
+        let both = response_with_item::<String, i32>(200, "application/jsonl", "records");
+        value = serde_json::to_value(&both).unwrap();
+        let media = &value["200"]["content"]["application/jsonl"];
+        assert_eq!(media["schema"], json!({"type": "string"}));
+        assert_eq!(media["itemSchema"], json!({"type": "integer"}));
     }
 
     #[test]
