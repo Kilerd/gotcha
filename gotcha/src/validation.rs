@@ -108,6 +108,12 @@ impl<E> std::ops::DerefMut for Valid<E> {
 /// with `#[validate(nested)]`) are indexed by map iteration order without their key, so that
 /// index can vary between requests and the original key cannot be recovered.
 ///
+/// Field segments are **Rust field names**: validator keys its errors by the Rust identifier and
+/// ignores `#[serde(rename = "..")]` / `#[serde(rename_all = "..")]`. A `first_name` field
+/// serialized as `firstName` is reported as `first_name`. Until a follow-up maps wire names, a
+/// [`ValidConfig::error_handler`](crate::ValidConfig::error_handler) can remap the keys if
+/// clients need the JSON names.
+///
 /// The default `Valid` rejection body is this map in [`ErrorBody::fields`](crate::ErrorBody).
 /// Custom [`ValidConfig::error_handler`](crate::ValidConfig::error_handler) handlers receive the
 /// original `ValidationErrors` and can reuse the same flattening:

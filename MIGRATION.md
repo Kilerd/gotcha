@@ -90,6 +90,10 @@ framework-wide `ErrorBody` instead of validator's raw `ValidationErrors` structu
 - Values of a nested map (`HashMap`/`BTreeMap` with `#[validate(nested)]`) appear as
   `entries[<index>].name`. Validator indexes them by map iteration order and drops the key, so
   the original key cannot be recovered and the index may differ between requests.
+- Field segments are Rust field names. Validator keys errors by the Rust identifier and ignores
+  `#[serde(rename = "..")]` / `#[serde(rename_all = "..")]`, so a `first_name` field serialized
+  as `firstName` is reported as `first_name`. Until a follow-up maps wire names, remap the keys
+  in a `ValidConfig::error_handler` if clients need the JSON names.
 - The unreleased `ValidationErrorsBody` type is removed. A custom
   `ValidConfig::error_handler` still receives `&validator::ValidationErrors`; use
   `gotcha::validation::flatten_errors(&errors)` to build the same field map (or any other

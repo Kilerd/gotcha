@@ -609,9 +609,11 @@ A `Valid` failure keeps `422 Unprocessable Entity` and also renders as `ErrorBod
 Nested struct fields use dotted paths (`address.city`), list elements are indexed
 (`items[0].name`), and struct-level validations keep validator's `__all__` key. A directly
 validated collection has no field name (`[0].name`). Values of a nested map are indexed by
-validator's iteration order and lose their key. Messages are the declared ones or readable
-defaults. A `ValidConfig` handler still receives the original `validator::ValidationErrors`;
-`gotcha::validation::flatten_errors` builds the same field map.
+validator's iteration order and lose their key. Field segments are Rust field names:
+`#[serde(rename)]` / `#[serde(rename_all)]` are not applied (`first_name`, not `firstName`);
+remap them in a `ValidConfig` handler if clients need the JSON names. Messages are the declared
+ones or readable defaults. A `ValidConfig` handler still receives the original
+`validator::ValidationErrors`; `gotcha::validation::flatten_errors` builds the same field map.
 
 Extractor rejections are `Rejected<R>`: they carry both the original rejection and the rendered
 response, so Axum's per-handler pattern still works:

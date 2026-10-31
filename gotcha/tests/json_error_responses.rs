@@ -34,6 +34,14 @@ struct Validated {
 }
 
 #[derive(Debug, Deserialize, gotcha::Validate)]
+#[serde(rename_all = "camelCase")]
+#[validate(crate = "gotcha::validator")]
+struct Renamed {
+    #[validate(length(min = 1))]
+    first_name: String,
+}
+
+#[derive(Debug, Deserialize, gotcha::Validate)]
 #[validate(crate = "gotcha::validator")]
 struct Address {
     #[validate(length(min = 1, max = 64))]
@@ -124,6 +132,10 @@ async fn validate_order(Valid(Json(order)): Valid<Json<Order>>) -> String {
     format!("{}:{}", order.address.city, order.items.len())
 }
 
+async fn validate_renamed(Valid(Json(value)): Valid<Json<Renamed>>) -> String {
+    value.first_name
+}
+
 async fn validate_list(Valid(Json(items)): Valid<Json<Vec<Validated>>>) -> String {
     items.len().to_string()
 }
@@ -175,6 +187,7 @@ impl GotchaApp for App {
             .get("/typed-header", host)
             .post("/valid", validate)
             .post("/valid-order", validate_order)
+            .post("/valid-renamed", validate_renamed)
             .post("/valid-list", validate_list)
             .post("/valid-nested-list", validate_nested_list)
             .post("/optional", optional)
@@ -318,6 +331,20 @@ async fn valid_default_flattens_nested_list_and_struct_level_errors() {
     assert_eq!(
         serde_json::from_slice::<Value>(&body).unwrap(),
         json!({"error": "validation failed", "fields": {"__all__": ["at least one item is required"]}})
+    );
+}
+
+#[tokio::test]
+async fn valid_field_keys_use_rust_names_not_serde_names() {
+    // validator keys errors by the Rust identifier and ignores `#[serde(rename_all)]`, so the
+    // wire name `firstName` is reported as `first_name`. A follow-up wire-name mapping in the
+    // `Schematic` derive will flip this expectation to `firstName`.
+    let router = app().await;
+    let (status, content_type, body) = send(&router, request("POST", "/valid-renamed", Some("application/json"), r#"{"firstName":""}"#)).await;
+    assert_eq!((status, content_type.as_str()), (StatusCode::UNPROCESSABLE_ENTITY, "application/json"));
+    assert_eq!(
+        serde_json::from_slice::<Value>(&body).unwrap(),
+        json!({"error": "validation failed", "fields": {"first_name": ["length must be at least 1"]}})
     );
 }
 
