@@ -863,6 +863,9 @@ where
 
     /// Customize the generated OpenAPI document when it is exported or served.
     ///
+    /// Transforms run after the `info` block set by [`Self::openapi_info`], so they can override
+    /// it along with anything else in the document.
+    ///
     /// Repeated calls append transforms. Child subtrees run in `nest`/`merge` insertion order,
     /// then this application's own transforms run in registration order, once per document.
     /// This does not enable HTTP documentation. Without serving or exporting a document,
@@ -886,6 +889,27 @@ where
         F: FnOnce(oas::OpenAPIV3) -> oas::OpenAPIV3 + Send + 'static,
     {
         self.router = self.router.openapi(transform);
+        self
+    }
+
+    /// Set the [`oas::Info`] block of the generated OpenAPI document.
+    ///
+    /// The default is neutral rather than gotcha's own identity: `title: "API"`,
+    /// `version: "0.1.0"`, no description, and every optional field `None`. The same block is
+    /// used by documentation endpoints and [`Self::into_openapi`]. Use
+    /// [`cargo_info!`](crate::cargo_info) to fill it from the application crate's Cargo metadata:
+    ///
+    /// ```rust,no_run
+    /// use gotcha::Gotcha;
+    ///
+    /// let app = Gotcha::new().openapi_info(gotcha::cargo_info!());
+    /// ```
+    ///
+    /// `Info` describes the whole application, so `nest` and `merge` keep the parent's value.
+    /// It is applied before [`Self::openapi`] transforms, which can still override it.
+    #[cfg(feature = "openapi")]
+    pub fn openapi_info(mut self, info: oas::Info) -> Self {
+        self.router = self.router.openapi_info(info);
         self
     }
 
@@ -1386,6 +1410,35 @@ mod tests {
             });
         let _ = app.into_openapi();
         assert_eq!(captured.lock().unwrap().as_deref(), Some("nested merged parent"));
+    }
+
+    #[cfg(feature = "openapi")]
+    #[tokio::test]
+    async fn builder_openapi_info_reaches_the_served_document() {
+        use axum::body::{to_bytes, Body};
+        use axum::http::{Request, StatusCode};
+        use tower::ServiceExt;
+
+        let info = crate::oas::Info {
+            title: "Builder API".into(),
+            description: Some("Served with info".into()),
+            terms_of_service: None,
+            contact: None,
+            license: None,
+            version: "9.9.9".into(),
+        };
+        let mut app = Gotcha::new().openapi_info(info).with_openapi().get("/hello", || async { "hello" });
+        let router = startup::prepare(&mut app, Some("127.0.0.1:0".parse().unwrap())).await.unwrap().router;
+        let response = router
+            .oneshot(Request::builder().uri("/openapi.json").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
+        let spec: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(spec["info"]["title"], "Builder API");
+        assert_eq!(spec["info"]["version"], "9.9.9");
+        assert_eq!(spec["info"]["description"], "Served with info");
     }
 
     #[derive(Clone, Default, Serialize, Deserialize)]

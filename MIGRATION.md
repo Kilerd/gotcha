@@ -1,5 +1,6 @@
 # Migration Guide
 
+- [Unreleased: neutral OpenAPI info defaults](#unreleased-neutral-openapi-info-defaults)
 - [Unreleased: serde-driven field presence](#unreleased-serde-driven-field-presence)
 - [Unreleased: validation error bodies](#unreleased-validation-error-bodies)
 - [Unreleased: JSON error bodies and extractors](#unreleased-json-error-bodies-and-extractors)
@@ -24,6 +25,49 @@
 - [Unreleased: default configuration sources](#unreleased-default-configuration-sources)
 - [0.3 → 0.4](#03--04) — **every application must edit its route paths and configuration file**
 - [0.2 → 0.3: API simplification](#02--03-api-simplification)
+
+---
+
+# Unreleased: neutral OpenAPI info defaults
+
+**Generated documents no longer identify themselves as gotcha.** The default `info` block is now
+neutral: `title: "API"`, `version: "0.1.0"`, and no description (every other optional field is
+absent). Previously every application's document said `title: "Gotcha"`,
+`description: "Gotcha is a framework for building microservices"`, and `version: "1.0.0"`.
+
+Set the application's own identity with `.openapi_info(..)` on the builder, or by overriding
+`GotchaApp::openapi_info`. The builder setting feeds the served document and every offline export
+(`Gotcha::into_openapi`, `GotchaRouter::into_openapi`). The trait hook feeds the served document and
+`GotchaApp::openapi_document`; exporting straight from `routes(..)` requires passing it on:
+`app.routes(GotchaRouter::default()).openapi_info(app.openapi_info()).into_openapi()`.
+`gotcha::cargo_info!()` fills the block from the calling crate's Cargo metadata:
+
+```rust,no_run
+let app = gotcha::Gotcha::new().openapi_info(gotcha::cargo_info!());
+```
+
+To keep a specific title and version, set the block explicitly or edit it in a transform:
+
+```rust,no_run
+let app = gotcha::Gotcha::new().openapi_info(gotcha::oas::Info {
+    title: "My Service".into(),
+    description: Some("Service API".into()),
+    terms_of_service: None,
+    contact: None,
+    license: None,
+    version: "1.0.0".into(),
+});
+
+let app = gotcha::Gotcha::new().openapi(|mut spec| {
+    spec.info.title = "My Service".into();
+    spec.info.version = "1.0.0".into();
+    spec
+});
+```
+
+An existing `.openapi(|spec| ..)` transform still runs afterwards and can override the block, which
+is the migration path for applications that relied on the old branding. Regenerate or republish
+checked-in documents if clients or tooling read `info`.
 
 ---
 
