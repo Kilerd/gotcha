@@ -229,14 +229,21 @@ macro_rules! cargo_info {
 /// scope, so each named schema is emitted once under `components/schemas` and referenced by `$ref`
 /// at its use sites (which is also what lets recursive types produce a finite spec).
 pub fn generate_openapi(operables: HashMap<(String, Method), &'static Operable>) -> OpenAPIV3 {
-    generate_openapi_with_schemas(operables, Vec::new(), default_info())
+    generate_openapi_with_schemas(operables, Vec::new())
 }
 
 /// Like [`generate_openapi`], also registering the schemas of configured extractor error bodies.
 /// Each function is called inside the collection scope, so its type becomes a component.
-/// `info` is the application-level metadata block placed in the document.
 #[doc(hidden)]
 pub fn generate_openapi_with_schemas(
+    operables: HashMap<(String, Method), &'static Operable>, extra_schemas: Vec<fn() -> gotcha_core::EnhancedSchema>,
+) -> OpenAPIV3 {
+    generate_openapi_with_schemas_and_info(operables, extra_schemas, default_info())
+}
+
+/// Like [`generate_openapi_with_schemas`], with an explicit application-level `info` block.
+#[doc(hidden)]
+pub fn generate_openapi_with_schemas_and_info(
     operables: HashMap<(String, Method), &'static Operable>, extra_schemas: Vec<fn() -> gotcha_core::EnhancedSchema>, info: Info,
 ) -> OpenAPIV3 {
     let mut operables: Vec<_> = operables.into_iter().collect();

@@ -112,6 +112,13 @@ async fn trait_info_is_used_by_export_and_the_served_document() {
     let app = InfoApp { transform: false };
     assert_custom(&app.openapi_document().info);
 
+    // The direct-routes export path receives the hook only when passed through explicitly.
+    let routed = app.routes(GotchaRouter::default()).openapi_info(app.openapi_info()).into_openapi();
+    assert_custom(&routed.info);
+    let bare = app.routes(GotchaRouter::default()).into_openapi();
+    assert_eq!(bare.info.title, "API");
+    assert_eq!(bare.info.version, "0.1.0");
+
     let context = GotchaContext::new((), ConfigWrapper::<EmptyConfig>::default());
     let router = app.build_router(context).await.unwrap();
     let document = served_json(router).await;

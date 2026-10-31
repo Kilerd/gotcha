@@ -428,22 +428,27 @@ impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
     /// as documentation endpoints. Consuming the router allows transforms to retain
     /// their `FnOnce` captures. No application state or runtime is required.
     ///
-    /// The document's `info` block is the neutral default unless the application set one
-    /// through [`Gotcha::openapi_info`](crate::Gotcha::openapi_info) or
-    /// [`GotchaApp::openapi_info`](crate::GotchaApp::openapi_info).
+    /// The document's `info` block is the neutral default unless it was set with
+    /// [`Self::openapi_info`]. The application builder's
+    /// [`openapi_info`](crate::Gotcha::openapi_info) forwards its value here.
     #[cfg(feature = "openapi")]
     pub fn into_openapi(self) -> oas::OpenAPIV3 {
         self.into_openapi_parts().1
     }
 
     /// Set the application-level `info` block used by [`Self::into_openapi`] and documentation
-    /// endpoints. The builder's [`openapi_info`](crate::Gotcha::openapi_info) and
-    /// [`GotchaApp::openapi_info`](crate::GotchaApp::openapi_info) forward here.
+    /// endpoints.
+    ///
+    /// The application builder's [`openapi_info`](crate::Gotcha::openapi_info) forwards its value
+    /// here. Trait applications get the same block in their served document and in
+    /// [`GotchaApp::openapi_document`](crate::GotchaApp::openapi_document); when exporting from
+    /// their router directly, pass the hook value through:
+    /// `app.routes(GotchaRouter::default()).openapi_info(app.openapi_info()).into_openapi()`.
     ///
     /// `info` describes the whole application, so `nest` and `merge` keep the parent's value.
     /// It is applied before [`Self::openapi`] transforms, which can still override it.
     #[cfg(feature = "openapi")]
-    pub(crate) fn with_openapi_info(mut self, info: oas::Info) -> Self {
+    pub fn openapi_info(mut self, info: oas::Info) -> Self {
         self.openapi_info = info;
         self
     }
@@ -452,9 +457,11 @@ impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
     pub(crate) fn into_openapi_parts(mut self) -> (Router<State>, oas::OpenAPIV3, crate::extract::ExtractorConfigs) {
         // Configured handlers register their body types as components, as in HTTP assembly.
         let schemas = self.extractor_configs.schemas();
-        let spec = self
-            .openapi_transforms
-            .apply(crate::openapi::generate_openapi_with_schemas(self.operations, schemas, self.openapi_info));
+        let spec = self.openapi_transforms.apply(crate::openapi::generate_openapi_with_schemas_and_info(
+            self.operations,
+            schemas,
+            self.openapi_info,
+        ));
         let configs = std::mem::take(&mut self.extractor_configs);
         (self.router, spec, configs)
     }

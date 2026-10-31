@@ -365,9 +365,12 @@ pub trait GotchaApp: Sized + Send + Sync {
     /// # }
     /// ```
     ///
-    /// The same block is used by the served document and [`Self::openapi_document`]. `Info`
-    /// describes the whole application, so nested and merged routers do not contribute one.
-    /// `.openapi(..)` transforms run afterwards and can still override it.
+    /// The same block is used by the served document and [`Self::openapi_document`]. Exporting
+    /// directly from `routes(..)` does not see this hook: pass the value on with
+    /// [`GotchaRouter::openapi_info`], as in
+    /// `app.routes(GotchaRouter::default()).openapi_info(app.openapi_info()).into_openapi()`.
+    /// `Info` describes the whole application, so nested and merged routers do not contribute
+    /// one. `.openapi(..)` transforms run afterwards and can still override it.
     #[cfg(feature = "openapi")]
     fn openapi_info(&self) -> oas::Info {
         crate::openapi::default_info()
@@ -413,7 +416,7 @@ pub trait GotchaApp: Sized + Send + Sync {
     fn openapi_document(&self) -> oas::OpenAPIV3 {
         self.routes(GotchaRouter::default())
             .with_extractor_configs(self.extractor_configs())
-            .with_openapi_info(self.openapi_info())
+            .openapi_info(self.openapi_info())
             .into_openapi()
     }
 
@@ -445,7 +448,7 @@ pub trait GotchaApp: Sized + Send + Sync {
             let router = GotchaRouter::<GotchaContext<Self::State, Self::Config>>::default();
             let router = self.routes(router).with_extractor_configs(self.extractor_configs());
             #[cfg(feature = "openapi")]
-            let router = router.with_openapi_info(self.openapi_info());
+            let router = router.openapi_info(self.openapi_info());
             assembly::assemble(
                 router,
                 context,

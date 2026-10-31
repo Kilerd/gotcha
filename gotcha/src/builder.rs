@@ -909,7 +909,7 @@ where
     /// It is applied before [`Self::openapi`] transforms, which can still override it.
     #[cfg(feature = "openapi")]
     pub fn openapi_info(mut self, info: oas::Info) -> Self {
-        self.router = self.router.with_openapi_info(info);
+        self.router = self.router.openapi_info(info);
         self
     }
 
