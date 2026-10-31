@@ -236,20 +236,26 @@ fn nested_table(field: &WireField) -> &'static [WireField] {
 }
 
 /// Rename the keys of one struct level, recursing into nested structs and list elements.
+///
+/// Entries are processed in key order rather than `HashMap` order. Two fields can legitimately
+/// map to the same key (a flattened child and a parent field, or two `__all__` entries), and a
+/// stable order keeps the merged message list identical between requests.
 fn remap_with_table(errors: &mut ValidationErrors, table: &'static [WireField]) {
-    let original = std::mem::take(errors.errors_mut());
+    let mut original: Vec<_> = std::mem::take(errors.errors_mut()).into_iter().collect();
+    original.sort_by(|left, right| left.0.cmp(&right.0));
     let remapped = errors.errors_mut();
     for (key, kind) in original {
         // The validated value itself is a collection: the key names no field and the elements
         // are the table's type. `flatten_errors` drops the segment later.
         if key.as_ref() == "_tmp_validator" {
-            remapped.insert(key, remap_kind(kind, table));
+            merge_kind(remapped, key, remap_kind(kind, table));
             continue;
         }
         match table.iter().find(|field| field.rust == key.as_ref()) {
             None => {
-                // `__all__` and fields of unmapped types keep validator's name.
-                remapped.insert(key, kind);
+                // `__all__` and fields of unmapped types keep validator's name. Merge because a
+                // flattened child may already have produced this key.
+                merge_kind(remapped, key, kind);
             }
             Some(field) if field.flatten => match kind {
                 // A flattened struct's fields are the parent's fields; hoist them so the
@@ -261,7 +267,7 @@ fn remap_with_table(errors: &mut ValidationErrors, table: &'static [WireField]) 
                     }
                 }
                 other => {
-                    remapped.insert(key, remap_kind(other, nested_table(field)));
+                    merge_kind(remapped, key, remap_kind(other, nested_table(field)));
                 }
             },
             Some(field) => {
@@ -582,6 +588,31 @@ mod tests {
         entries: std::collections::HashMap<String, LineItem>,
     }
 
+    /// Both levels report a schema-level error under `__all__`; the flattened child's entry is
+    /// hoisted and must merge with the parent's rather than replace it.
+    #[derive(Deserialize, Schematic, Validate)]
+    #[validate(schema(function = "parent_level_fails", skip_on_field_errors = false))]
+    struct FlattenParent {
+        #[serde(flatten)]
+        #[validate(nested)]
+        child: FlattenChild,
+    }
+
+    #[derive(Deserialize, Schematic, Validate)]
+    #[validate(schema(function = "child_level_fails"))]
+    struct FlattenChild {
+        #[allow(dead_code)]
+        value: String,
+    }
+
+    fn parent_level_fails(_: &FlattenParent) -> Result<(), ValidationError> {
+        Err(ValidationError::new("parent").with_message(Cow::Borrowed("parent object is invalid")))
+    }
+
+    fn child_level_fails(_: &FlattenChild) -> Result<(), ValidationError> {
+        Err(ValidationError::new("child").with_message(Cow::Borrowed("child object is invalid")))
+    }
+
     /// The single field error recorded for `field`.
     fn field_error<'a>(errors: &'a ValidationErrors, field: &str) -> &'a ValidationError {
         match errors.0.get(field).expect("field has errors") {
@@ -664,6 +695,22 @@ mod tests {
             flatten_errors(&errors),
             BTreeMap::from([("child.__all__".to_string(), vec!["failed validation: some_custom_rule".to_string()])])
         );
+    }
+
+    #[test]
+    fn flattened_and_parent_struct_errors_merge_under_all_deterministically() {
+        // The parent's `__all__` matches no table entry and the flattened child hoists its own
+        // `__all__`; both must survive the remap. Repeating the request proves the result does
+        // not depend on `HashMap` iteration order.
+        for _ in 0..64 {
+            let parent = FlattenParent {
+                child: FlattenChild { value: "ok".into() },
+            };
+            let mut errors = parent.validate().unwrap_err();
+            remap_to_wire_names::<FlattenParent>(&mut errors);
+            let fields = flatten_errors(&errors);
+            assert_eq!(fields["__all__"], ["parent object is invalid", "child object is invalid"], "{fields:?}");
+        }
     }
 
     #[test]
