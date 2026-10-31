@@ -26,7 +26,6 @@
 
 use axum::extract::FromRequestParts;
 use axum::http::request::Parts;
-use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 
 /// A type that can be parsed from one named HTTP header.
@@ -115,14 +114,21 @@ pub enum ParamRejection {
     },
 }
 
+impl std::fmt::Display for ParamRejection {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ParamRejection::Missing { kind, name } => write!(formatter, "missing required {kind} parameter `{name}`"),
+            ParamRejection::Invalid { kind, name, message } => write!(formatter, "invalid {kind} parameter `{name}`: {message}"),
+            ParamRejection::NotText { kind, name } => write!(formatter, "{kind} parameter `{name}` is not valid UTF-8"),
+        }
+    }
+}
+
 impl IntoResponse for ParamRejection {
     fn into_response(self) -> Response {
-        let body = match self {
-            ParamRejection::Missing { kind, name } => format!("missing required {kind} parameter `{name}`"),
-            ParamRejection::Invalid { kind, name, message } => format!("invalid {kind} parameter `{name}`: {message}"),
-            ParamRejection::NotText { kind, name } => format!("{kind} parameter `{name}` is not valid UTF-8"),
-        };
-        (StatusCode::BAD_REQUEST, body).into_response()
+        // The default response for this concrete rejection. A configured `HeaderConfig` or
+        // `CookieConfig` can replace it when the extractor renders the rejection.
+        crate::error::json_response(axum::http::StatusCode::BAD_REQUEST, crate::ErrorBody { error: self.to_string() })
     }
 }
 
@@ -143,15 +149,28 @@ where
     T: HeaderParam,
     S: Send + Sync,
 {
-    type Rejection = ParamRejection;
+    type Rejection = crate::Rejected<ParamRejection>;
 
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
+        let config = crate::extract::config::configs(&parts.extensions);
         let raw = match parts.headers.get(T::NAME) {
             // A header can carry arbitrary bytes; only text can be parsed.
-            Some(value) => Some(value.to_str().map_err(|_| ParamRejection::NotText { kind: "header", name: T::NAME })?),
+            Some(value) => match value.to_str() {
+                Ok(value) => Some(value),
+                Err(_) => {
+                    let rejection = ParamRejection::NotText { kind: "header", name: T::NAME };
+                    let response = config.header.render(&rejection);
+                    return Err(crate::Rejected::new(rejection, response));
+                }
+            },
             None => None,
         };
-        resolve("header", T::NAME, T::REQUIRED, raw, T::parse, T::missing).map(Header)
+        resolve("header", T::NAME, T::REQUIRED, raw, T::parse, T::missing)
+            .map(Header)
+            .map_err(|rejection| {
+                let response = config.header.render(&rejection);
+                crate::Rejected::new(rejection, response)
+            })
     }
 }
 
@@ -160,16 +179,22 @@ where
     T: CookieParam,
     S: Send + Sync,
 {
-    type Rejection = ParamRejection;
+    type Rejection = crate::Rejected<ParamRejection>;
 
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
+        let config = crate::extract::config::configs(&parts.extensions);
         let cookies = parts
             .headers
             .get(axum::http::header::COOKIE)
             .and_then(|value| value.to_str().ok())
             .unwrap_or_default();
         let raw = cookie_value(cookies, T::NAME);
-        resolve("cookie", T::NAME, T::REQUIRED, raw, T::parse, T::missing).map(Cookie)
+        resolve("cookie", T::NAME, T::REQUIRED, raw, T::parse, T::missing)
+            .map(Cookie)
+            .map_err(|rejection| {
+                let response = config.cookie.render(&rejection);
+                crate::Rejected::new(rejection, response)
+            })
     }
 }
 
@@ -225,6 +250,9 @@ mod openapi {
 
 #[cfg(test)]
 mod tests {
+    use axum::body::to_bytes;
+    use axum::http::StatusCode;
+
     use super::*;
 
     struct RequestId(String);
@@ -283,18 +311,28 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn missing_required_header_is_rejected() {
+    async fn missing_required_header_is_rejected_with_a_json_body() {
         let mut parts = parts_with(&[]);
-        let rejection = Header::<RequestId>::from_request_parts(&mut parts, &()).await.err().expect("must be rejected");
-        assert!(matches!(rejection, ParamRejection::Missing { .. }));
-        assert_eq!(rejection.into_response().status(), StatusCode::BAD_REQUEST);
+        let rejected = Header::<RequestId>::from_request_parts(&mut parts, &()).await.err().expect("must be rejected");
+        assert!(matches!(rejected.rejection(), ParamRejection::Missing { .. }));
+        let response = rejected.into_response();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(response.headers()["content-type"], "application/json");
+        let bytes = to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(body["error"], "missing required header parameter `x-request-id`");
     }
 
     #[tokio::test]
     async fn unparseable_header_is_rejected() {
         let mut parts = parts_with(&[("x-request-id", "")]);
-        let rejection = Header::<RequestId>::from_request_parts(&mut parts, &()).await.err().expect("must be rejected");
-        assert!(matches!(rejection, ParamRejection::Invalid { .. }));
+        let rejected = Header::<RequestId>::from_request_parts(&mut parts, &()).await.err().expect("must be rejected");
+        assert!(matches!(rejected.rejection(), ParamRejection::Invalid { .. }));
+        let response = rejected.into_response();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let bytes = to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(body["error"], "invalid header parameter `x-request-id`: must not be empty");
     }
 
     #[tokio::test]

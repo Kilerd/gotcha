@@ -9,7 +9,7 @@
 
 use std::collections::BTreeMap;
 
-use axum::extract::{Extension, Json, Path, Query, Request, State};
+use axum::extract::{Extension, Form, Json, Path, Query, Request, State};
 use either::Either;
 use oas::{MediaType, Parameter, ParameterIn, RequestBody, Schema};
 
@@ -147,6 +147,30 @@ impl<T: Schematic> ParameterProvider for Json<T> {
         let schema = T::generate_schema();
         contents.insert(
             "application/json".to_owned(),
+            MediaType {
+                schema: Some(schema.schema.into()),
+                example: None,
+                examples: None,
+                encoding: None,
+                item_schema: None,
+            },
+        );
+        let req_body = RequestBody {
+            description: T::doc(),
+            required: Some(T::required()),
+            content: contents,
+        };
+        Either::Right(req_body)
+    }
+}
+
+impl<T: Schematic> ParameterProvider for Form<T> {
+    fn generate(_url: String) -> Either<Vec<Parameter>, RequestBody> {
+        let mut contents = BTreeMap::new();
+
+        let schema = T::generate_schema();
+        contents.insert(
+            "application/x-www-form-urlencoded".to_owned(),
             MediaType {
                 schema: Some(schema.schema.into()),
                 example: None,

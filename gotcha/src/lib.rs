@@ -17,7 +17,7 @@ pub use async_trait::async_trait;
 /// [`Message`] is already the message-system trait.
 pub use axum::extract::ws::{self, WebSocket, WebSocketUpgrade};
 use axum::extract::FromRef;
-pub use axum::extract::{Extension, Form, Json, Multipart, Path, Query, State};
+pub use axum::extract::{Extension, State};
 /// The request path as matched by the router (`/users/{id}`) and the URI before any nesting
 /// rewrote it. Both need axum features that this crate turns on.
 pub use axum::extract::{MatchedPath, OriginalUri};
@@ -37,11 +37,18 @@ use serde::{Deserialize, Serialize};
 use tracing::level_filters::LevelFilter;
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::{fmt, EnvFilter};
-pub use {axum, inventory, tracing};
+pub use {axum, axum_extra, inventory, tracing};
 
 pub use crate::builder::{EmptyConfig, EmptyState, Gotcha};
 pub use crate::config::GotchaConfigLoader;
-pub use crate::error::{GotchaError, GotchaResult};
+pub use crate::error::{ErrorBody, GotchaError, GotchaResult, HttpError};
+/// Extractor wrappers whose rejections are rendered by per-provider configs. Axum's originals
+/// remain available as `gotcha::axum::extract::{Json, Path, Query, Form, Multipart}` and
+/// `gotcha::axum_extra::TypedHeader`.
+pub use crate::extract::{
+    CookieConfig, ErrorBodyResponse, ExtractorConfig, ExtractorConfigs, Form, FormConfig, HeaderConfig, Json, JsonConfig, Multipart, MultipartConfig, Path,
+    PathConfig, Query, QueryConfig, Rejected, TypedHeader, TypedHeaderConfig, ValidConfig,
+};
 /// Attribute macro that makes a struct usable as `State<T>` in handlers by
 /// generating a `FromRef<GotchaContext<T, C>>` impl. See [`GotchaContext`].
 pub use gotcha_macro::{config, state};
@@ -70,10 +77,12 @@ pub use crate::message::{Message, Messager};
 #[cfg_attr(docsrs, doc(cfg(feature = "openapi")))]
 pub use crate::openapi::{OpenApiEndpoints, Operable};
 pub use crate::params::{Cookie, CookieParam, Header, HeaderParam, ParamRejection};
-pub use crate::validation::{Valid, ValidRejection};
-/// axum's typed-header extractor and the header types it works with. `TypedHeader<T>` documents
-/// itself as an OpenAPI header parameter (the name comes from `headers::Header`).
-pub use axum_extra::{headers, TypedHeader};
+pub use crate::validation::{Valid, ValidRejection, ValidationErrorsBody};
+/// The header types [`TypedHeader`] works with. `TypedHeader<T>` documents itself as an OpenAPI
+/// header parameter (the name comes from `headers::Header`).
+/// `TypedHeaderRejection` converts into [`HttpError`] for handlers that want the JSON error body.
+pub use axum_extra::headers;
+pub use axum_extra::typed_header::TypedHeaderRejection;
 /// The validation crate used by [`Valid`]. Use `#[validate(crate = "gotcha::validator")]`
 /// with [`Validate`] to avoid a separate validator dependency.
 pub use validator;
@@ -96,6 +105,7 @@ mod assembly;
 pub mod builder;
 pub mod config;
 pub mod error;
+pub mod extract;
 #[cfg(feature = "openapi")]
 #[cfg_attr(docsrs, doc(cfg(feature = "openapi")))]
 pub mod openapi;
@@ -326,6 +336,36 @@ pub trait GotchaApp: Sized + Send + Sync {
         None
     }
 
+    /// Rejection responses for the extractors this application uses.
+    ///
+    /// The default is every provider's default handler. Override it and use
+    /// [`ExtractorConfigs::set`] to replace one provider:
+    /// [`Gotcha::extractor_config`] is the builder equivalent.
+    ///
+    /// ```rust,no_run
+    /// use gotcha::{ConfigWrapper, EmptyConfig, ErrorBody, ExtractorConfigs, GotchaApp, GotchaContext, GotchaResult, GotchaRouter, JsonConfig};
+    ///
+    /// struct App;
+    /// impl GotchaApp for App {
+    ///     type State = ();
+    ///     type Config = EmptyConfig;
+    ///     fn extractor_configs(&self) -> ExtractorConfigs {
+    ///         ExtractorConfigs::default().set(JsonConfig::default().error_handler(|rejection| {
+    ///             (gotcha::axum::http::StatusCode::UNPROCESSABLE_ENTITY, ErrorBody { error: rejection.body_text() })
+    ///         }))
+    ///     }
+    ///     fn routes(&self, router: GotchaRouter<GotchaContext<(), EmptyConfig>>) -> GotchaRouter<GotchaContext<(), EmptyConfig>> {
+    ///         router
+    ///     }
+    ///     async fn state(&self, _: &ConfigWrapper<EmptyConfig>) -> GotchaResult<()> {
+    ///         Ok(())
+    ///     }
+    /// }
+    /// ```
+    fn extractor_configs(&self) -> ExtractorConfigs {
+        ExtractorConfigs::default()
+    }
+
     /// Generate the complete OpenAPI document from `routes()`, without starting the app.
     ///
     /// Does not load configuration, initialize state, bind a listener, register tasks,
@@ -334,7 +374,9 @@ pub trait GotchaApp: Sized + Send + Sync {
     /// and user transforms still execute, so their own side effects remain the caller's concern.
     #[cfg(feature = "openapi")]
     fn openapi_document(&self) -> oas::OpenAPIV3 {
-        self.routes(GotchaRouter::default()).into_openapi()
+        self.routes(GotchaRouter::default())
+            .with_extractor_configs(self.extractor_configs())
+            .into_openapi()
     }
 
     /// Apply application-wide middleware, or mount state-dependent services, after business
@@ -357,11 +399,13 @@ pub trait GotchaApp: Sized + Send + Sync {
     ///
     /// Prefer `finish_router` for whole-application middleware or services that need the
     /// application context. Overriding this method takes responsibility for the complete
-    /// assembly, including documentation and final middleware.
+    /// assembly, including documentation and final middleware. It must also apply
+    /// `self.extractor_configs().layer(router)` after every route and middleware; without that
+    /// layer, extractors fall back to the default rejection handlers.
     fn build_router(&self, context: GotchaContext<Self::State, Self::Config>) -> impl std::future::Future<Output = GotchaResult<axum::Router>> + Send {
         async move {
             let router = GotchaRouter::<GotchaContext<Self::State, Self::Config>>::default();
-            let router = self.routes(router);
+            let router = self.routes(router).with_extractor_configs(self.extractor_configs());
             assembly::assemble(
                 router,
                 context,

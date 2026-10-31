@@ -518,6 +518,70 @@ Each endpoint declares its complete error set; the same enum can be shared by en
 different errors. `body` describes the actual wire data, which may be separate from the error enum.
 `errors(...)` also supports return type aliases such as `ApiResult<T>`.
 
+Each extractor provider has its own rejection configuration. The defaults keep Axum's own status
+(`400`, `415`, `422`, ...) and send `{"error": "<message>"}` as JSON; `Valid` keeps the structured
+`422 Unprocessable Entity` `ValidationErrors` body, and `GotchaError` renders `500` with a generic
+message while logging the details. Override one provider without changing the others:
+
+```rust
+use gotcha::prelude::*;
+use gotcha::{ErrorBody, JsonConfig};
+
+let app = Gotcha::new()
+    .extractor_config(JsonConfig::default().error_handler(|rejection| {
+        (gotcha::axum::http::StatusCode::UNPROCESSABLE_ENTITY, ErrorBody { error: rejection.body_text() })
+    }))
+    .post("/items", |Json(item): Json<CreateItem>| async move { Json(item) });
+# #[derive(serde::Deserialize, serde::Serialize)] struct CreateItem { name: String }
+```
+
+The handler receives a reference to that provider's concrete rejection type and returns
+`(StatusCode, E)`. With the `openapi` feature, `E` must also implement `Schematic`, and an
+overridden body is registered as a component; defaults add no components, so existing documents
+stay unchanged. The builder and the trait API (`GotchaApp::extractor_configs`) share the same
+config types. Providers are `Json`, `Form`, `Query`, `Path`, `Multipart`, `TypedHeader`,
+`Header`, `Cookie`, and `Valid` (validation failures only; a malformed body inside
+`Valid<Json<T>>` uses the `Json` handler).
+
+Extractor rejections are `Rejected<R>`: they carry both the original rejection and the rendered
+response, so Axum's per-handler pattern still works:
+
+```rust
+use gotcha::prelude::*;
+use gotcha::axum::extract::rejection::JsonRejection;
+
+async fn create(body: Result<Json<CreateItem>, Rejected<JsonRejection>>) -> Result<String, HttpError> {
+    let Json(item) = body.map_err(|rejected| HttpError::bad_request(rejected.rejection().body_text()))?;
+    Ok(item.name)
+}
+# #[derive(serde::Deserialize)] struct CreateItem { name: String }
+```
+
+`Form`, `Multipart`, `Json`, `Path`, `Query`, and `TypedHeader` are Gotcha wrappers; `Header` and
+`Cookie` are Gotcha's named-parameter extractors. Use `gotcha::axum::extract::*` or
+`gotcha::axum_extra::TypedHeader` for Axum's originals, which keep Axum's own rejection responses.
+The configs are installed as the outermost layer of the assembled application, so routes added
+in `finish_router` and `app_layer` middleware also see them. An application that overrides
+`GotchaApp::build_router` must call `ExtractorConfigs::layer(router)` last; otherwise extractors
+fall back to the defaults, as they do in a plain Axum router. `Extension` is still Axum's
+extractor.
+
+`HttpError` remains an optional convenience type for application errors and `#[api(errors(...))]`:
+
+```rust
+use gotcha::prelude::*;
+
+#[cfg_attr(feature = "openapi", gotcha::api(errors(
+    response(status = 404, body = "HttpError", description = "Item not found")
+)))]
+async fn read_item(Path(id): Path<u32>) -> Result<Json<String>, HttpError> {
+    if id == 0 {
+        return Err(HttpError::not_found("item not found"));
+    }
+    Ok(Json(id.to_string()))
+}
+```
+
 Use `responses(...)` to add or override individual statuses while keeping response inference;
 `drop_default` explicitly removes an inferred default. Declarations only affect documentation.
 See [the migration guide](MIGRATION.md#unreleased-http-response-contracts) for media types and

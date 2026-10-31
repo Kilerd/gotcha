@@ -59,6 +59,8 @@ pub struct GotchaRouter<State = ()> {
     /// Child transforms in composition order, followed by this router's own transforms.
     #[cfg(feature = "openapi")]
     openapi_transforms: OpenApiTransforms,
+    /// Per-extractor rejection configurations, applied when the application is assembled.
+    pub(crate) extractor_configs: crate::extract::ExtractorConfigs,
     pub(crate) router: Router<State>,
 }
 impl<State: Clone + Send + Sync + 'static> Default for GotchaRouter<State> {
@@ -68,6 +70,7 @@ impl<State: Clone + Send + Sync + 'static> Default for GotchaRouter<State> {
             operations: Default::default(),
             #[cfg(feature = "openapi")]
             openapi_transforms: Default::default(),
+            extractor_configs: Default::default(),
             router: Router::new(),
         }
     }
@@ -177,6 +180,7 @@ impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
             operations: self.operations.into_iter().chain(operations).collect(),
             #[cfg(feature = "openapi")]
             openapi_transforms: self.openapi_transforms.with_child(router.openapi_transforms),
+            extractor_configs: self.extractor_configs,
             router: self.router.nest(path, router.router),
         }
     }
@@ -198,6 +202,7 @@ impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
             operations: self.operations.into_iter().chain(other.operations).collect(),
             #[cfg(feature = "openapi")]
             openapi_transforms: self.openapi_transforms.with_child(other.openapi_transforms),
+            extractor_configs: self.extractor_configs,
             router: self.router.merge(other.router),
         }
     }
@@ -229,6 +234,7 @@ impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
             operations: self.operations,
             #[cfg(feature = "openapi")]
             openapi_transforms: self.openapi_transforms,
+            extractor_configs: self.extractor_configs,
             router: self.router.layer(layer),
         }
     }
@@ -264,6 +270,7 @@ impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
             operations: self.operations,
             #[cfg(feature = "openapi")]
             openapi_transforms: self.openapi_transforms,
+            extractor_configs: self.extractor_configs,
             router: self.router.route_layer(layer),
         }
     }
@@ -279,6 +286,7 @@ impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
             operations: self.operations,
             #[cfg(feature = "openapi")]
             openapi_transforms: self.openapi_transforms,
+            extractor_configs: self.extractor_configs,
             router: self.router.fallback(handler),
         }
     }
@@ -310,6 +318,7 @@ impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
             operations: self.operations,
             #[cfg(feature = "openapi")]
             openapi_transforms: self.openapi_transforms,
+            extractor_configs: self.extractor_configs,
             router: self.router.fallback_service(service),
         }
     }
@@ -350,6 +359,7 @@ impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
             operations: self.operations,
             #[cfg(feature = "openapi")]
             openapi_transforms: self.openapi_transforms,
+            extractor_configs: self.extractor_configs,
             router: self.router.nest_service(path, service),
         }
     }
@@ -402,9 +412,27 @@ impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
     }
 
     #[cfg(feature = "openapi")]
-    pub(crate) fn into_openapi_parts(self) -> (Router<State>, oas::OpenAPIV3) {
-        let spec = self.openapi_transforms.apply(crate::openapi::generate_openapi(self.operations));
-        (self.router, spec)
+    pub(crate) fn into_openapi_parts(mut self) -> (Router<State>, oas::OpenAPIV3, crate::extract::ExtractorConfigs) {
+        // Configured handlers register their body types as components, as in HTTP assembly.
+        let schemas = self.extractor_configs.schemas();
+        let spec = self
+            .openapi_transforms
+            .apply(crate::openapi::generate_openapi_with_schemas(self.operations, schemas));
+        let configs = std::mem::take(&mut self.extractor_configs);
+        (self.router, spec, configs)
+    }
+
+    /// Replace a provider's rejection configuration. Used by the builder's
+    /// [`extractor_config`](crate::Gotcha::extractor_config) and `GotchaApp::extractor_configs`.
+    pub(crate) fn extractor_config<C: crate::extract::ExtractorConfig>(mut self, config: C) -> Self {
+        config.apply(&mut self.extractor_configs);
+        self
+    }
+
+    /// Replace all rejection configurations, then consume them during assembly.
+    pub(crate) fn with_extractor_configs(mut self, configs: crate::extract::ExtractorConfigs) -> Self {
+        self.extractor_configs = configs;
+        self
     }
 
     /// Inject state without generating or mounting documentation.
