@@ -69,8 +69,20 @@ pub struct EnhancedSchema {
 /// `anyOf` also works for references, enums, and composed schemas, whose constraints
 /// would still reject null if only their `type` keyword were widened. The referenced
 /// component is never modified. Field presence remains [`EnhancedSchema::required`].
+///
+/// Idempotent: a schema that already has a `null` branch (for example the inner schema of
+/// `Option<Option<T>>`) is returned unchanged, so nested options produce one `anyOf` with a
+/// single `null` alternative rather than nested unions.
 pub fn nullable_schema(mut schema: Schema) -> Schema {
     schema.nullable = None;
+    let already_nullable = schema.extras.get("anyOf").and_then(serde_json::Value::as_array).is_some_and(|branches| {
+        branches
+            .iter()
+            .any(|branch| branch.get("type").and_then(serde_json::Value::as_str) == Some("null"))
+    });
+    if already_nullable {
+        return schema;
+    }
     Schema {
         description: schema.description.take(),
         extras: std::collections::BTreeMap::from([("anyOf".into(), serde_json::json!([schema, {"type": "null"}]))]),
@@ -542,6 +554,15 @@ mod tests {
             );
         }
         assert_eq!(<()>::generate_schema().schema.to_value(), json!({"type": "null"}));
+    }
+
+    #[test]
+    fn nested_option_uses_a_single_null_branch() {
+        use serde_json::json;
+        assert_eq!(
+            <Option<Option<String>> as Schematic>::generate_schema().schema.to_value(),
+            json!({"anyOf": [{"type": "string"}, {"type": "null"}]})
+        );
     }
 
     #[test]

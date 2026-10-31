@@ -2,7 +2,7 @@ use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::quote;
 
 use crate::schematic::ParameterEnumVariantOpt;
-use crate::utils::{get_serde_name, parse_serde_rename, RenameAll};
+use crate::utils::{get_serde_name, parse_serde_rename, serde_field_presence, RenameAll};
 
 pub(crate) fn handler(
     core: &TokenStream2, ident_string: String, doc: TokenStream2, variants: Vec<ParameterEnumVariantOpt>, rename_all: Option<RenameAll>,
@@ -33,12 +33,19 @@ pub(crate) fn handler(
                         let (field_description, customizations) = field.schema_customizations(core);
                         let field_ty = field.ty.clone();
                         if let Some(ident) = field.ident.as_ref() {
+                            let presence = serde_field_presence(&field.ty, &field.attrs, false);
+                            let schema_ty = presence.schema_type;
+                            let required_override = match presence.required {
+                                Some(required) => quote! { field_schema.required = #required; },
+                                None => quote! {},
+                            };
                             let field_ident_str = ident.to_string();
                             let field_rename = parse_serde_rename(&field.attrs);
                             let field_name = get_serde_name(&field_ident_str, field_rename.as_deref(), None);
                             quote! {
-                                let mut field_schema = <#field_ty as #core::Schematic>::generate_schema();
+                                let mut field_schema = <#schema_ty as #core::Schematic>::generate_schema();
                                 field_schema.schema.description = #field_description;
+                                #required_override
                                 #( #customizations )*
                                 properties.insert(#field_name.to_string(), field_schema.schema.to_value());
                                 if field_schema.required {

@@ -2,7 +2,7 @@ use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::quote;
 
 use crate::schematic::ParameterEnumVariantOpt;
-use crate::utils::{get_serde_name, parse_serde_rename, RenameAll};
+use crate::utils::{get_serde_name, parse_serde_rename, serde_field_presence, RenameAll};
 
 /// Handler for adjacently tagged enums: #[serde(tag = "kind", content = "data")]
 /// JSON format: { "kind": "VariantName", "data": { ...variant fields... } }
@@ -82,11 +82,17 @@ pub(crate) fn handler(
                         let field_rename = parse_serde_rename(&field.attrs);
                         let field_name = get_serde_name(&field_ident_str, field_rename.as_deref(), None);
                         let (field_description, customizations) = field.schema_customizations(core);
-                        let field_ty = &field.ty;
+                        let presence = serde_field_presence(&field.ty, &field.attrs, false);
+                        let schema_ty = presence.schema_type;
+                        let required_override = match presence.required {
+                            Some(required) => quote! { field_schema.required = #required; },
+                            None => quote! {},
+                        };
                         Some(quote! {
                             {
-                                let mut field_schema = <#field_ty as #core::Schematic>::generate_schema();
+                                let mut field_schema = <#schema_ty as #core::Schematic>::generate_schema();
                                 field_schema.schema.description = #field_description;
+                                #required_override
                                 #( #customizations )*
                                 content_properties.insert(#field_name.to_string(), field_schema.schema.to_value());
                                 if field_schema.required {

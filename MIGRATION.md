@@ -1,5 +1,6 @@
 # Migration Guide
 
+- [Unreleased: serde-driven field presence](#unreleased-serde-driven-field-presence)
 - [Unreleased: JSON error bodies and extractors](#unreleased-json-error-bodies-and-extractors)
 - [Unreleased: OpenAPI 3.2](#unreleased-openapi-32)
 - [Unreleased: HTTP/1 is always enabled](#unreleased-http1-is-always-enabled)
@@ -22,6 +23,34 @@
 - [Unreleased: default configuration sources](#unreleased-default-configuration-sources)
 - [0.3 → 0.4](#03--04) — **every application must edit its route paths and configuration file**
 - [0.2 → 0.3: API simplification](#02--03-api-simplification)
+
+---
+
+# Unreleased: serde-driven field presence
+
+`#[derive(Schematic)]` now derives a named field's presence and nullability from the serde
+attributes already on it, so the document matches what deserialization requires and what
+serialization writes. Plain `Option<T>` and fields without these attributes keep their current
+schemas.
+
+- `#[serde(deserialize_with = "...")]` or `#[serde(with = "...")]` without a `default` makes the
+  field required, including `Option<T>`. Serde rejects a missing key before the option can
+  produce `None`, so the field is listed in `required`; an `Option<T>` field is still nullable.
+  Previously every `Option<T>` field was optional, so a struct that used `deserialize_with` to
+  require an option now documents it as required.
+- `#[serde(skip_serializing_if = "Option::is_none")]` on an `Option<T>` field remains optional
+  and now drops the `null` branch: `None` is omitted and never serialized as `null`. The
+  recognized predicates are `Option::is_none`, `std::option::Option::is_none` and
+  `core::option::Option::is_none`. Any other predicate keeps the current behavior (optional,
+  with the null branch).
+- `#[serde(default)]` on a struct container makes every field optional, matching serde.
+  Field-level `default` behaves as before.
+- `Option<Option<T>>` renders one `anyOf` with a single null branch instead of a nested `anyOf`
+  of `anyOf`. With `default` + `deserialize_with` + `skip_serializing_if = "Option::is_none"` it
+  documents the tri-state contract: optional, nullable, and never more than one null branch.
+
+Regenerate clients where a field became required or lost its null branch. No source changes are
+needed unless a type relied on the previous document shape.
 
 ---
 
