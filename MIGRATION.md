@@ -502,9 +502,10 @@ compatible `tokio-util` dependency.
 HTTP draining was previously unbounded. `http_shutdown_timeout` now defaults to 30 seconds
 (builder `.http_shutdown_timeout(duration)` or trait `http_shutdown_timeout(&self)`). Upgraded
 connections (WebSockets) are no longer tracked by axum's graceful shutdown after the upgrade, so
-the drain also waits for those tracked streams and closes them at the deadline. Remaining
-connections are closed and shutdown continues. Scheduled tasks keep their independently configured
-`task_shutdown_timeout` and drain concurrently with HTTP.
+the drain also waits for those tracked streams. At the deadline, every tracked socket is shut down
+at the OS level (so handlers blocked off-socket are disconnected too), handlers get up to one
+second to observe the closure, and shutdown continues even if some remain. Scheduled tasks keep
+their independently configured `task_shutdown_timeout` and drain concurrently with HTTP.
 
 ## Cleanup hooks
 

@@ -109,6 +109,24 @@ fn load_config<C: DeserializeOwned>(sources: Option<&ConfigBuilder>) -> GotchaRe
 /// can outlive the borrow.
 type ShutdownHook<S, C> = Box<dyn FnOnce(GotchaContext<S, C>) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> + Send>;
 
+/// Aborts a running cleanup hook if the shutdown driver is dropped before the hook finishes.
+struct CleanupTask(Option<tokio::task::JoinHandle<()>>);
+
+impl CleanupTask {
+    async fn join(mut self) -> Result<(), tokio::task::JoinError> {
+        let handle = self.0.take().expect("cleanup task handle was already taken");
+        handle.await
+    }
+}
+
+impl Drop for CleanupTask {
+    fn drop(&mut self) {
+        if let Some(handle) = self.0.take() {
+            handle.abort();
+        }
+    }
+}
+
 /// Default empty configuration for simple applications
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct EmptyConfig {}
@@ -892,8 +910,9 @@ where
     /// Set the grace period for in-flight HTTP connections (default: 30 seconds).
     ///
     /// At the deadline, remaining connections (including WebSocket upgrades, which axum does not
-    /// track after the upgrade) are closed and shutdown continues. This deadline runs
-    /// concurrently with, and independently of, `task_shutdown_timeout`.
+    /// track after the upgrade) are shut down at the OS socket level; handlers get up to one
+    /// second to observe the closure before cleanup runs. This deadline runs concurrently with,
+    /// and independently of, `task_shutdown_timeout`.
     pub fn http_shutdown_timeout(mut self, timeout: std::time::Duration) -> Self {
         self.http_shutdown_timeout = timeout;
         self
@@ -909,6 +928,7 @@ where
     /// after every hook completes. Return `()`; log inside the hook instead of returning errors.
     /// A panicking hook does not stop later hooks; the first panic is re-raised after all hooks
     /// have run. A hook that never resolves blocks shutdown; there is no cleanup timeout.
+    /// Cancelling the serving future while a hook runs aborts that hook.
     ///
     /// ```rust,no_run
     /// use gotcha::Gotcha;
@@ -1074,7 +1094,7 @@ where
                     continue;
                 }
             };
-            match tokio::spawn(future).await {
+            match CleanupTask(Some(tokio::spawn(future))).join().await {
                 Ok(()) => {}
                 Err(error) if error.is_panic() => {
                     if first_panic.is_none() {

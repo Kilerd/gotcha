@@ -2,7 +2,7 @@
 
 use std::future::{Future, IntoFuture};
 use std::io;
-use std::net::{IpAddr, SocketAddr};
+use std::net::{IpAddr, Shutdown, SocketAddr};
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
@@ -10,6 +10,7 @@ use std::time::Duration;
 
 use axum::serve::Listener;
 use axum::Router;
+use slab::Slab;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::oneshot;
@@ -19,6 +20,9 @@ use crate::{ConfigErrorPolicy, ConfigWrapper, GotchaApp, GotchaContext, GotchaEr
 
 /// How long HTTP connections may drain before their sockets are closed.
 pub(crate) const DEFAULT_HTTP_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// How long to wait for handlers to exit after their sockets have been force-closed.
+const FORCE_CLOSE_GRACE: Duration = Duration::from_secs(1);
 
 #[derive(Default)]
 pub(crate) struct ListenOptions {
@@ -87,8 +91,8 @@ impl PreparedServer {
     /// Serve until `signal`, `extra_shutdown`, or the shared shutdown token resolves, then drain
     /// HTTP up to `http_shutdown_timeout` and scheduled tasks up to their own timeout. Both
     /// deadlines run concurrently. HTTP draining also waits for upgraded connections, which axum
-    /// no longer tracks after a WebSocket upgrade; all remaining connections are closed at the
-    /// deadline.
+    /// no longer tracks after a WebSocket upgrade. At the deadline all remaining sockets are shut
+    /// down, and their handlers get a short grace period to exit before shutdown continues.
     pub(crate) async fn serve(self, signal: impl Future<Output = ()> + Send, extra_shutdown: impl Future<Output = ()> + Send) -> GotchaResult<()> {
         let shutdown = self.shutdown.clone();
         let local_addr = self.local_addr;
@@ -161,6 +165,13 @@ where
         Err(_) => {
             tracing::warn!("HTTP connections did not drain within {timeout:?}; closing remaining connections");
             tracker.force_close();
+            // Force-close wakes tasks polling their socket. Give handlers that were blocked
+            // elsewhere (for example on an application channel) a brief chance to observe it and
+            // drop the connection before cleanup runs; a handler that never polls leaks its task
+            // instead of holding shutdown forever.
+            if tokio::time::timeout(FORCE_CLOSE_GRACE, tracker.wait_empty()).await.is_err() {
+                tracing::warn!("connections still live {FORCE_CLOSE_GRACE:?} after force-close; continuing shutdown");
+            }
             Ok(())
         }
     }
@@ -279,7 +290,8 @@ where
 /// stops accepting, in-flight HTTP connections (including WebSocket upgrades) drain (bounded by
 /// [`GotchaApp::http_shutdown_timeout`] or the builder's `.http_shutdown_timeout()`), scheduled
 /// tasks drain (bounded by the task shutdown timeout), and finally cleanup hooks run. At the HTTP
-/// deadline, remaining connections are closed.
+/// deadline, remaining sockets are shut down at the OS level, their handlers get up to one second
+/// to observe the closure, and shutdown then continues.
 ///
 /// Signal handling starts only when serving starts: holding an unserved `BoundServer` does not
 /// install a signal handler, and dropping it cancels the context shutdown token (releasing tasks
@@ -385,8 +397,9 @@ pub(crate) async fn shutdown_signal() {
     }
 }
 
-/// Tracks live accepted connections and carries the force-close signal used at the drain
-/// deadline. It also covers upgraded connections (WebSockets), which axum stops tracking.
+/// Tracks live accepted connections: their OS sockets for deadline force-close, and their count
+/// for drain completion. It also covers upgraded connections (WebSockets), which axum stops
+/// tracking after the upgrade.
 #[derive(Clone, Default)]
 struct ConnectionTracker {
     state: Arc<TrackerState>,
@@ -394,19 +407,27 @@ struct ConnectionTracker {
 
 #[derive(Default)]
 struct TrackerState {
-    active: Mutex<usize>,
+    sockets: Mutex<Slab<RawSocket>>,
     empty: tokio::sync::Notify,
     close: CancellationToken,
 }
 
 impl ConnectionTracker {
     fn track(&self, stream: TcpStream) -> TrackedStream {
-        *self.state.active.lock().unwrap() += 1;
-        let cancelled = Box::pin(self.state.close.clone().cancelled_owned());
+        // A child token isolates this connection's waiter from every other connection's.
+        let cancelled = Box::pin(self.state.close.child_token().cancelled_owned());
+        let handle = raw_socket(&stream);
+        let mut sockets = self.state.sockets.lock().unwrap();
+        let slot = sockets.insert(handle);
+        // A connection accepted while the deadline is firing must not escape the close.
+        if self.state.close.is_cancelled() {
+            shutdown_socket(handle);
+        }
         TrackedStream {
             stream,
             cancelled,
             closed: false,
+            slot,
             state: self.state.clone(),
         }
     }
@@ -418,16 +439,56 @@ impl ConnectionTracker {
             tokio::pin!(notified);
             // Register before checking, so a drop between the check and the await is not missed.
             notified.as_mut().enable();
-            if *self.state.active.lock().unwrap() == 0 {
+            if self.state.sockets.lock().unwrap().is_empty() {
                 return;
             }
             notified.await;
         }
     }
 
+    /// Wake cooperative streams and shut down every tracked OS socket. The socket shutdown is
+    /// what closes a connection whose handler is not polling the socket when the deadline fires.
     fn force_close(&self) {
         self.state.close.cancel();
+        let sockets = self.state.sockets.lock().unwrap();
+        for (_, handle) in sockets.iter() {
+            shutdown_socket(*handle);
+        }
     }
+}
+
+#[cfg(unix)]
+type RawSocket = std::os::fd::RawFd;
+#[cfg(windows)]
+type RawSocket = std::os::windows::io::RawSocket;
+
+#[cfg(unix)]
+fn raw_socket(stream: &TcpStream) -> RawSocket {
+    use std::os::fd::AsRawFd;
+    stream.as_raw_fd()
+}
+
+#[cfg(windows)]
+fn raw_socket(stream: &TcpStream) -> RawSocket {
+    use std::os::windows::io::AsRawSocket;
+    stream.as_raw_socket()
+}
+
+#[cfg(unix)]
+fn shutdown_socket(handle: RawSocket) {
+    use std::os::fd::BorrowedFd;
+    // SAFETY: a registered handle stays open until `TrackedStream::drop` removes it under this
+    // same lock, and the owning stream is dropped only after removal.
+    let fd = unsafe { BorrowedFd::borrow_raw(handle) };
+    let _ = socket2::SockRef::from(&fd).shutdown(Shutdown::Both);
+}
+
+#[cfg(windows)]
+fn shutdown_socket(handle: RawSocket) {
+    use std::os::windows::io::BorrowedSocket;
+    // SAFETY: see the Unix implementation.
+    let socket = unsafe { BorrowedSocket::borrow_raw(handle) };
+    let _ = socket2::SockRef::from(&socket).shutdown(Shutdown::Both);
 }
 
 /// Accepts TCP connections and counts them until the connection future is dropped.
@@ -464,12 +525,14 @@ impl Listener for TrackingListener {
     }
 }
 
-/// A connection whose I/O fails as soon as the server force-closes it. The cancellation future is
-/// polled alongside the socket, so a task blocked on this stream wakes when the deadline fires.
+/// A connection that fails its I/O as soon as the server force-closes it. The cancellation future
+/// is polled alongside the socket, and the OS socket is shut down under the tracker lock, so a
+/// task blocked on this stream wakes even when it is not being polled at the deadline.
 struct TrackedStream {
     stream: TcpStream,
     cancelled: Pin<Box<dyn Future<Output = ()> + Send>>,
     closed: bool,
+    slot: usize,
     state: Arc<TrackerState>,
 }
 
@@ -492,9 +555,11 @@ fn connection_aborted() -> io::Error {
 
 impl Drop for TrackedStream {
     fn drop(&mut self) {
-        let mut active = self.state.active.lock().unwrap();
-        *active -= 1;
-        if *active == 0 {
+        // Remove under the lock before this stream (and its socket) is closed: fields drop after
+        // `drop` returns, so a force-close holding the lock never touches a reused descriptor.
+        let mut sockets = self.state.sockets.lock().unwrap();
+        sockets.remove(self.slot);
+        if sockets.is_empty() {
             self.state.empty.notify_waiters();
         }
     }

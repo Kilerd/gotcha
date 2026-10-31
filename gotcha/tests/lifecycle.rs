@@ -346,6 +346,8 @@ struct WsControls {
     started: mpsc::UnboundedSender<()>,
     done: mpsc::UnboundedSender<()>,
     events: Events,
+    /// Released by a test after the drain deadline, for handlers that never poll their socket.
+    release: Arc<Notify>,
 }
 
 /// Completes a WebSocket handshake and leaves the upgraded connection open.
@@ -403,6 +405,20 @@ async fn ignoring_ws(ws: WebSocketUpgrade, State(context): State<GotchaContext<W
     })
 }
 
+/// Ignores both the token and its socket: only the OS-level shutdown at the deadline can close it.
+async fn blocked_ws(ws: WebSocketUpgrade, State(context): State<GotchaContext<WsControls, ()>>) -> Response {
+    let controls = context.state.clone();
+    ws.on_upgrade(move |mut socket| async move {
+        controls.events.lock().unwrap().push("ws-start");
+        let _ = controls.started.send(());
+        // Waiting on a channel that only the test fires: nothing polls the socket here.
+        controls.release.notified().await;
+        let closed = !matches!(socket.recv().await, Some(Ok(_)));
+        controls.events.lock().unwrap().push(if closed { "ws-closed" } else { "ws-open" });
+        let _ = controls.done.send(());
+    })
+}
+
 #[tokio::test]
 async fn cleanup_waits_for_websocket_teardown() {
     let (started, mut started_rx) = mpsc::unbounded_channel();
@@ -413,6 +429,7 @@ async fn cleanup_waits_for_websocket_teardown() {
         started,
         done,
         events: events.clone(),
+        release: Arc::new(Notify::new()),
     };
     let (stop, stopped) = oneshot::channel::<()>();
     let server = Gotcha::from_context(GotchaContext::new(controls, config()))
@@ -449,6 +466,7 @@ async fn http_drain_deadline_closes_websocket_that_ignores_the_token() {
         started,
         done,
         events: Arc::default(),
+        release: Arc::new(Notify::new()),
     };
     let (stop, stopped) = oneshot::channel::<()>();
     let server = Gotcha::from_context(GotchaContext::new(controls, config()))
@@ -477,6 +495,53 @@ async fn http_drain_deadline_closes_websocket_that_ignores_the_token() {
     let mut rest = Vec::new();
     let closed = tokio::time::timeout(Duration::from_secs(2), client.read_to_end(&mut rest)).await;
     assert!(closed.is_ok(), "the upgraded connection must be closed at the drain deadline");
+}
+
+#[tokio::test]
+async fn force_close_closes_socket_that_the_handler_is_not_polling() {
+    let (started, mut started_rx) = mpsc::unbounded_channel();
+    let (done, mut done_rx) = mpsc::unbounded_channel();
+    let events: Events = Arc::default();
+    let release = Arc::new(Notify::new());
+    let controls = WsControls {
+        started,
+        done,
+        events: events.clone(),
+        release: release.clone(),
+    };
+    let (stop, stopped) = oneshot::channel::<()>();
+    let server = Gotcha::from_context(GotchaContext::new(controls, config()))
+        .get("/ws", blocked_ws)
+        .http_shutdown_timeout(Duration::from_millis(100))
+        .shutdown_signal(async move {
+            let _ = stopped.await;
+        })
+        .bind()
+        .await
+        .unwrap();
+    let address = server.local_addr();
+    let serving = tokio::spawn(server.serve());
+
+    let mut client = within(websocket(address, "/ws")).await;
+    within(started_rx.recv()).await.unwrap();
+    let started_at = std::time::Instant::now();
+    stop.send(()).unwrap();
+
+    // The handler is blocked off-socket, so only the OS-level shutdown can close the client.
+    let mut rest = Vec::new();
+    let closed = tokio::time::timeout(Duration::from_secs(2), client.read_to_end(&mut rest)).await;
+    assert!(closed.is_ok(), "the client must be closed at the deadline while the handler is idle");
+
+    within(serving).await.unwrap().unwrap();
+    let elapsed = started_at.elapsed();
+    assert!(elapsed >= Duration::from_millis(90), "the drain deadline must be honored: {elapsed:?}");
+    assert!(elapsed < Duration::from_secs(3), "shutdown must respect the force-close grace: {elapsed:?}");
+    assert_eq!(*events.lock().unwrap(), ["ws-start"]);
+
+    // Waking the handler proves the socket was shut down, not merely that the driver gave up.
+    release.notify_one();
+    within(done_rx.recv()).await.unwrap();
+    assert_eq!(*events.lock().unwrap(), ["ws-start", "ws-closed"]);
 }
 
 #[tokio::test]

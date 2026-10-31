@@ -262,8 +262,9 @@ pub trait GotchaApp: Sized + Send + Sync {
 
     /// How long to let in-flight HTTP connections drain after shutdown is requested.
     /// Defaults to 30 seconds. This includes upgraded connections (WebSockets), which axum does
-    /// not track after the upgrade. At the deadline, remaining connections are closed and shutdown
-    /// continues. This is independent of, and runs concurrently with, `task_shutdown_timeout()`.
+    /// not track after the upgrade. At the deadline, remaining sockets are shut down at the OS
+    /// level, handlers get up to one second to observe the closure, and then shutdown continues.
+    /// This is independent of, and runs concurrently with, `task_shutdown_timeout()`.
     fn http_shutdown_timeout(&self) -> std::time::Duration {
         crate::startup::DEFAULT_HTTP_SHUTDOWN_TIMEOUT
     }
@@ -277,7 +278,7 @@ pub trait GotchaApp: Sized + Send + Sync {
     ///
     /// A panicking hook is re-raised to the caller of `run()` / `serve()` after the remaining
     /// cleanup hooks have run. A hook that never resolves blocks shutdown; there is no timeout
-    /// around application cleanup.
+    /// around application cleanup. Cancelling the serving future aborts a running hook.
     fn on_shutdown(&self, _context: &GotchaContext<Self::State, Self::Config>) -> impl std::future::Future<Output = ()> + Send {
         async {}
     }

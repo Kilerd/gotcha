@@ -118,8 +118,11 @@ Both application APIs stop gracefully on Ctrl-C or Unix SIGTERM. When the signal
    default with the `task` feature; this deadline runs concurrently with HTTP draining),
 4. runs cleanup hooks in registration order.
 
-At the HTTP drain deadline, remaining connections (including upgraded ones) are closed and
-shutdown continues. A panicking cleanup hook does not skip later hooks; the first panic is
+At the HTTP drain deadline, remaining connections (including upgraded ones) are closed at the OS
+socket level, so a handler that is not polling its socket is disconnected too. Gotcha then waits
+up to one second for those handlers to exit before running cleanup; connections still alive after
+that are left to the runtime and shutdown continues. A panicking cleanup hook does not skip later
+hooks; the first panic is
 re-raised from `run()` / `serve()` after every hook has run. A hook that never resolves blocks
 shutdown, as there is no cleanup timeout. A server that is dropped or cancelled before the
 deadline skips draining and cleanup, as before. Signal handling starts only when serving starts;
