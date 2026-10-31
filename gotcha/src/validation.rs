@@ -3,16 +3,25 @@
 //! [`Valid`] wraps an extractor and validates its decoded value with [`validator::Validate`].
 //! The common case is `Valid<Json<T>>`: it extracts the JSON body like [`crate::Json`], then
 //! runs `T::validate()` and rejects with `422 Unprocessable Entity` when validation fails,
-//! carrying the errors as JSON:
+//! carrying the failures in the same [`ErrorBody`](crate::ErrorBody) shape as every other
+//! provider, with the errors flattened into `fields`:
 //!
 //! ```json
-//! { "age": [ { "code": "range", "message": "must be at least 0 and at most 150",
-//!             "params": { "value": 200, "min": 0.0, "max": 150.0 } } ] }
+//! {
+//!   "error": "validation failed",
+//!   "fields": {
+//!     "address.city": ["length must be at least 1 and at most 64"],
+//!     "items[0].name": ["length must be at least 1"]
+//!   }
+//! }
 //! ```
 //!
-//! Every error carries a readable `message`: the one declared via
-//! `#[validate(.., message = "..")]`, or a default derived from the error's code and params
-//! (`validator` itself leaves `message` null in the serialized form).
+//! Nested struct fields are joined with `.`, list elements are indexed with `[n]`, and
+//! struct-level (whole-object) validations keep validator's `__all__` key. Every message is
+//! readable: the one declared via `#[validate(.., message = "..")]`, or a default derived from
+//! the error's code and params (`validator` itself leaves `message` null in the serialized form).
+//! [`flatten_errors`] exposes the same flattening to custom [`ValidConfig`](crate::ValidConfig)
+//! handlers.
 //!
 //! `Valid<axum::Json<T>>` (using the original Axum extractor) is accepted as well and keeps
 //! Axum's original JSON rejection response, so choosing that extractor opts out of the
@@ -47,13 +56,13 @@
 //! path (for example `#[validate(crate = "web::validator")]`).
 
 use std::borrow::Cow;
+use std::collections::BTreeMap;
 
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{FromRequest, Request};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use serde::de::DeserializeOwned;
-use serde::Serialize;
 use validator::{Validate, ValidationError, ValidationErrors, ValidationErrorsKind};
 
 use crate::{Json, Rejected};
@@ -64,8 +73,8 @@ use crate::{Json, Rejected};
 /// then calls `T::validate()`. On success the handler receives `Valid(Json(value))`; otherwise
 /// the request is rejected before the handler runs. A malformed body uses the
 /// [`JsonConfig`](crate::JsonConfig) handler; a failed validation uses
-/// [`ValidConfig`](crate::ValidConfig), which defaults to `422 Unprocessable Entity` with the
-/// structured `ValidationErrors` body.
+/// [`ValidConfig`](crate::ValidConfig), which defaults to `422 Unprocessable Entity` with
+/// `{"error": "validation failed", "fields": {...}}` (see [`flatten_errors`]).
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Valid<E>(pub E);
 
@@ -82,58 +91,72 @@ impl<E> std::ops::DerefMut for Valid<E> {
     }
 }
 
-/// The default body of a [`Valid`] validation failure.
+/// Flatten [`ValidationErrors`] into a map from field path to readable messages.
 ///
-/// `validator` serializes its errors as a map from field name to a list of
-/// `{ code, message, params }` objects. The default [`ValidConfig`](crate::ValidConfig) handler
-/// sends this value with `422 Unprocessable Entity`; a custom handler may reuse it.
-#[derive(Debug, Serialize)]
-#[serde(transparent)]
-pub struct ValidationErrorsBody(pub ValidationErrors);
+/// Keys mirror validator's structure: struct fields are joined with `.` (`address.city`), list
+/// elements are indexed with `[n]` (`items[0].name`), and struct-level (whole-object) validations
+/// keep validator's own `__all__` key (`__all__` for the validated value itself, or
+/// `address.__all__` for a nested struct).
+///
+/// Any error without a user-supplied message gets the readable default that the default
+/// [`ValidConfig`](crate::ValidConfig) rejection uses, so no message is empty. The returned map is
+/// ordered by key, so responses are deterministic.
+///
+/// The default `Valid` rejection body is this map in [`ErrorBody::fields`](crate::ErrorBody).
+/// Custom [`ValidConfig::error_handler`](crate::ValidConfig::error_handler) handlers receive the
+/// original `ValidationErrors` and can reuse the same flattening:
+///
+/// ```
+/// use gotcha::validation::flatten_errors;
+/// use gotcha::validator::{ValidationError, ValidationErrors};
+/// use gotcha::{axum::http::StatusCode, ErrorBody};
+///
+/// fn handler(errors: &ValidationErrors) -> (StatusCode, ErrorBody) {
+///     (
+///         StatusCode::UNPROCESSABLE_ENTITY,
+///         ErrorBody {
+///             error: "invalid input".into(),
+///             fields: Some(flatten_errors(errors)),
+///         },
+///     )
+/// }
+///
+/// let mut errors = ValidationErrors::new();
+/// errors.add("name", ValidationError::new("required"));
+/// assert_eq!(flatten_errors(&errors)["name"], ["is required"]);
+/// ```
+pub fn flatten_errors(errors: &ValidationErrors) -> BTreeMap<String, Vec<String>> {
+    // Reuse the default-message filling so callers get the same readable text as the default
+    // rejection, without mutating the borrowed errors.
+    let mut filled = errors.clone();
+    fill_default_messages(&mut filled);
 
-#[cfg(feature = "openapi")]
-impl crate::Schematic for ValidationErrorsBody {
-    fn name() -> &'static str {
-        "ValidationErrors"
-    }
+    let mut fields = BTreeMap::new();
+    flatten_into(&filled, "", &mut fields);
+    fields
+}
 
-    fn required() -> bool {
-        true
-    }
-
-    fn type_() -> &'static str {
-        "object"
-    }
-
-    fn doc() -> Option<String> {
-        Some("Validation errors keyed by field name".to_string())
-    }
-
-    fn generate_schema() -> crate::EnhancedSchema {
-        gotcha_core::registry::schema_or_ref("ValidationErrors", true, || {
-            // Doc-only: this describes the common field-level shape. `validator` serializes
-            // nested struct/list failures as nested maps instead of this array form.
-            let schema = gotcha_core::oas::Schema {
-                _type: Some("object".into()),
-                extras: std::collections::BTreeMap::from([(
-                    "additionalProperties".into(),
-                    serde_json::json!({
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "code": {"type": "string"},
-                                "message": {"type": "string"},
-                                "params": {"type": "object"}
-                            },
-                            "required": ["code", "message", "params"]
-                        }
-                    }),
-                )]),
-                ..gotcha_core::oas::Schema::default()
-            };
-            crate::EnhancedSchema { schema, required: true }
-        })
+fn flatten_into(errors: &ValidationErrors, prefix: &str, fields: &mut BTreeMap<String, Vec<String>>) {
+    for (field, kind) in errors.0.iter() {
+        let path = if prefix.is_empty() { field.to_string() } else { format!("{prefix}.{field}") };
+        match kind {
+            ValidationErrorsKind::Field(errors) => {
+                let messages = fields.entry(path).or_default();
+                messages.extend(errors.iter().map(|error| {
+                    error
+                        .message
+                        .as_ref()
+                        .map(|message| message.to_string())
+                        .unwrap_or_else(|| default_message(error))
+                }));
+            }
+            ValidationErrorsKind::Struct(nested) => flatten_into(nested, &path, fields),
+            ValidationErrorsKind::List(items) => {
+                for (index, nested) in items {
+                    flatten_into(nested, &format!("{path}[{index}]"), fields);
+                }
+            }
+        }
     }
 }
 
@@ -158,12 +181,14 @@ impl std::fmt::Display for ValidRejection {
     }
 }
 
-/// The default `Valid` rejection: fill in readable messages and send the structured body as
-/// `422 Unprocessable Entity`.
+/// The default `Valid` rejection: send the flattened errors inside an [`ErrorBody`](crate::ErrorBody)
+/// as `422 Unprocessable Entity`.
 pub(crate) fn validation_error_response(errors: &ValidationErrors) -> Response {
-    let mut filled = errors.clone();
-    fill_default_messages(&mut filled);
-    crate::error::json_response(StatusCode::UNPROCESSABLE_ENTITY, ValidationErrorsBody(filled))
+    let body = crate::ErrorBody {
+        error: "validation failed".to_string(),
+        fields: Some(flatten_errors(errors)),
+    };
+    crate::error::json_response(StatusCode::UNPROCESSABLE_ENTITY, body)
 }
 
 /// Give every error a non-null `message`.
@@ -331,6 +356,52 @@ mod tests {
         name: String,
     }
 
+    #[derive(Deserialize, Validate)]
+    struct Address {
+        #[validate(length(min = 1, max = 64))]
+        city: String,
+    }
+
+    #[derive(Deserialize, Validate)]
+    struct LineItem {
+        #[validate(length(min = 1))]
+        name: String,
+    }
+
+    #[derive(Deserialize, Validate)]
+    #[validate(schema(function = "at_least_one_item"))]
+    struct Order {
+        #[validate(nested)]
+        address: Address,
+        #[validate(nested)]
+        items: Vec<LineItem>,
+    }
+
+    fn at_least_one_item(order: &Order) -> Result<(), ValidationError> {
+        if order.items.is_empty() {
+            Err(ValidationError::new("required").with_message(Cow::Borrowed("at least one item is required")))
+        } else {
+            Ok(())
+        }
+    }
+
+    #[derive(Deserialize, Validate)]
+    #[validate(schema(function = "nested_schema_fails"))]
+    struct NestedSchema {
+        #[allow(dead_code)]
+        value: String,
+    }
+
+    fn nested_schema_fails(_: &NestedSchema) -> Result<(), ValidationError> {
+        Err(ValidationError::new("some_custom_rule"))
+    }
+
+    #[derive(Deserialize, Validate)]
+    struct Parent {
+        #[validate(nested)]
+        child: NestedSchema,
+    }
+
     /// The single field error recorded for `field`.
     fn field_error<'a>(errors: &'a ValidationErrors, field: &str) -> &'a ValidationError {
         match errors.0.get(field).expect("field has errors") {
@@ -354,7 +425,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn invalid_body_is_rejected_with_the_structured_422_body() {
+    async fn invalid_body_is_rejected_with_the_422_error_body() {
         let rejected = Valid::<Json<Payload>>::from_request(json_request(r#"{"age": 200}"#), &())
             .await
             .err()
@@ -365,8 +436,54 @@ mod tests {
         assert_eq!(response.headers()["content-type"], "application/json");
         let bytes = to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
         let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-        assert!(body["error"].is_null(), "the default Valid body is the structured error map");
-        assert_eq!(body["age"][0]["message"], "must be at least 0 and at most 150");
+        assert_eq!(
+            body,
+            serde_json::json!({
+                "error": "validation failed",
+                "fields": {"age": ["must be at least 0 and at most 150"]}
+            })
+        );
+    }
+
+    #[test]
+    fn flatten_errors_uses_dotted_and_indexed_paths() {
+        let order = Order {
+            address: Address { city: String::new() },
+            items: vec![LineItem { name: String::new() }, LineItem { name: "ok".into() }],
+        };
+        let errors = order.validate().unwrap_err();
+        let fields = flatten_errors(&errors);
+        assert_eq!(fields.len(), 2, "{fields:?}");
+        assert_eq!(fields["address.city"], ["length must be at least 1 and at most 64"]);
+        assert_eq!(fields["items[0].name"], ["length must be at least 1"]);
+        assert!(!fields.contains_key("items[1].name"), "valid list elements contribute no entry");
+    }
+
+    #[test]
+    fn flatten_errors_keeps_struct_level_errors_under_all() {
+        // `validator` stores schema (whole-object) validations under its `__all__` key.
+        let order = Order {
+            address: Address { city: "Paris".into() },
+            items: vec![],
+        };
+        let errors = order.validate().unwrap_err();
+        let fields = flatten_errors(&errors);
+        assert_eq!(
+            fields,
+            BTreeMap::from([("__all__".to_string(), vec!["at least one item is required".to_string()])])
+        );
+    }
+
+    #[test]
+    fn flatten_errors_prefixes_nested_struct_level_errors() {
+        let parent = Parent {
+            child: NestedSchema { value: "ok".into() },
+        };
+        let errors = parent.validate().unwrap_err();
+        assert_eq!(
+            flatten_errors(&errors),
+            BTreeMap::from([("child.__all__".to_string(), vec!["failed validation: some_custom_rule".to_string()])])
+        );
     }
 
     #[tokio::test]
@@ -402,7 +519,7 @@ mod tests {
             "the Axum variant keeps Axum's rejection response"
         );
 
-        // Validation failures still use the shared structured 422 body.
+        // Validation failures still use the shared 422 error body.
         let rejected = Valid::<axum::extract::Json<Payload>>::from_request(json_request(r#"{"age": 200}"#), &())
             .await
             .err()
@@ -413,19 +530,16 @@ mod tests {
 
     #[test]
     fn errors_get_a_readable_default_message() {
-        // `validator` leaves `message: None`; the rejection fills in a description.
-        let mut errors = Payload { age: 200 }.validate().unwrap_err();
+        // `validator` leaves `message: None`; `flatten_errors` fills in a description.
+        let errors = Payload { age: 200 }.validate().unwrap_err();
         assert!(field_error(&errors, "age").message.is_none(), "validator itself leaves message unset");
-
-        fill_default_messages(&mut errors);
-        assert_eq!(field_error(&errors, "age").message.as_deref(), Some("must be at least 0 and at most 150"));
+        assert_eq!(flatten_errors(&errors)["age"], ["must be at least 0 and at most 150"]);
     }
 
     #[test]
     fn user_supplied_message_is_preserved() {
-        let mut errors = Annotated { name: "ab".to_string() }.validate().unwrap_err();
-        fill_default_messages(&mut errors);
-        assert_eq!(field_error(&errors, "name").message.as_deref(), Some("name is too short"));
+        let errors = Annotated { name: "ab".to_string() }.validate().unwrap_err();
+        assert_eq!(flatten_errors(&errors)["name"], ["name is too short"]);
     }
 
     #[test]

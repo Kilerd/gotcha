@@ -103,7 +103,13 @@ fn schema_of<E: ErrorBodyResponse>() -> fn() -> crate::EnhancedSchema {
 }
 
 fn default_error(status: StatusCode, message: impl Into<String>) -> Response {
-    json_response(status, crate::ErrorBody { error: message.into() })
+    json_response(
+        status,
+        crate::ErrorBody {
+            error: message.into(),
+            fields: None,
+        },
+    )
 }
 
 macro_rules! rejection_config {
@@ -221,6 +227,10 @@ rejection_config!(
 
 /// Configuration for [`Valid`](crate::Valid) validation failures.
 ///
+/// The default sends `422 Unprocessable Entity` with an [`ErrorBody`](crate::ErrorBody) whose
+/// `fields` map holds the flattened validation errors (see
+/// [`flatten_errors`](crate::validation::flatten_errors)).
+///
 /// A malformed JSON body inside `Valid<Json<T>>` is a [`Json`](crate::Json) rejection and uses
 /// [`JsonConfig`]; only a body that deserialized and then failed validation reaches this handler.
 pub struct ValidConfig {
@@ -231,8 +241,9 @@ impl ValidConfig {
     /// Replace the response used when validation fails.
     ///
     /// The handler receives a reference to the structured [`validator::ValidationErrors`] and
-    /// returns the status and body to send. With the `openapi` feature, the body type is
-    /// registered as a component.
+    /// returns the status and body to send. Use
+    /// [`flatten_errors`](crate::validation::flatten_errors) to render the same field map the
+    /// default body uses. With the `openapi` feature, the body type is registered as a component.
     pub fn error_handler<E>(self, handler: impl Fn(&validator::ValidationErrors) -> (StatusCode, E) + Send + Sync + 'static) -> Self
     where
         E: ErrorBodyResponse,
@@ -255,7 +266,7 @@ impl ValidConfig {
 impl Default for ValidConfig {
     fn default() -> Self {
         Self {
-            handler: ErrorHandler::default_handler::<crate::ValidationErrorsBody>(crate::validation::validation_error_response),
+            handler: ErrorHandler::default_handler::<crate::ErrorBody>(crate::validation::validation_error_response),
         }
     }
 }

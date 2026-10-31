@@ -77,7 +77,7 @@ pub use crate::message::{Message, Messager};
 #[cfg_attr(docsrs, doc(cfg(feature = "openapi")))]
 pub use crate::openapi::{OpenApiEndpoints, Operable};
 pub use crate::params::{Cookie, CookieParam, Header, HeaderParam, ParamRejection};
-pub use crate::validation::{Valid, ValidRejection, ValidationErrorsBody};
+pub use crate::validation::{flatten_errors, Valid, ValidRejection};
 /// The header types [`TypedHeader`] works with. `TypedHeader<T>` documents itself as an OpenAPI
 /// header parameter (the name comes from `headers::Header`).
 /// `TypedHeaderRejection` converts into [`HttpError`] for handlers that want the JSON error body.
@@ -351,7 +351,7 @@ pub trait GotchaApp: Sized + Send + Sync {
     ///     type Config = EmptyConfig;
     ///     fn extractor_configs(&self) -> ExtractorConfigs {
     ///         ExtractorConfigs::default().set(JsonConfig::default().error_handler(|rejection| {
-    ///             (gotcha::axum::http::StatusCode::UNPROCESSABLE_ENTITY, ErrorBody { error: rejection.body_text() })
+    ///             (gotcha::axum::http::StatusCode::UNPROCESSABLE_ENTITY, ErrorBody { error: rejection.body_text(), fields: None })
     ///         }))
     ///     }
     ///     fn routes(&self, router: GotchaRouter<GotchaContext<(), EmptyConfig>>) -> GotchaRouter<GotchaContext<(), EmptyConfig>> {

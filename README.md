@@ -573,9 +573,9 @@ different errors. `body` describes the actual wire data, which may be separate f
 `errors(...)` also supports return type aliases such as `ApiResult<T>`.
 
 Each extractor provider has its own rejection configuration. The defaults keep Axum's own status
-(`400`, `415`, `422`, ...) and send `{"error": "<message>"}` as JSON; `Valid` keeps the structured
-`422 Unprocessable Entity` `ValidationErrors` body, and `GotchaError` renders `500` with a generic
-message while logging the details. Override one provider without changing the others:
+(`400`, `415`, `422`, ...) and send `{"error": "<message>"}` as JSON; a `Valid` validation failure
+adds a `fields` map to that body, and `GotchaError` renders `500` with a generic message while
+logging the details. Override one provider without changing the others:
 
 ```rust
 use gotcha::prelude::*;
@@ -583,7 +583,10 @@ use gotcha::{ErrorBody, JsonConfig};
 
 let app = Gotcha::new()
     .extractor_config(JsonConfig::default().error_handler(|rejection| {
-        (gotcha::axum::http::StatusCode::UNPROCESSABLE_ENTITY, ErrorBody { error: rejection.body_text() })
+        (
+            gotcha::axum::http::StatusCode::UNPROCESSABLE_ENTITY,
+            ErrorBody { error: rejection.body_text(), fields: None },
+        )
     }))
     .post("/items", |Json(item): Json<CreateItem>| async move { Json(item) });
 # #[derive(serde::Deserialize, serde::Serialize)] struct CreateItem { name: String }
@@ -596,6 +599,17 @@ stay unchanged. The builder and the trait API (`GotchaApp::extractor_configs`) s
 config types. Providers are `Json`, `Form`, `Query`, `Path`, `Multipart`, `TypedHeader`,
 `Header`, `Cookie`, and `Valid` (validation failures only; a malformed body inside
 `Valid<Json<T>>` uses the `Json` handler).
+
+A `Valid` failure keeps `422 Unprocessable Entity` and also renders as `ErrorBody`:
+
+```json
+{"error": "validation failed", "fields": {"address.city": ["length must be at least 1"]}}
+```
+
+Nested struct fields use dotted paths (`address.city`), list elements are indexed
+(`items[0].name`), and struct-level validations keep validator's `__all__` key. Messages are the
+declared ones or readable defaults. A `ValidConfig` handler still receives the original
+`validator::ValidationErrors`; `gotcha::validation::flatten_errors` builds the same field map.
 
 Extractor rejections are `Rejected<R>`: they carry both the original rejection and the rendered
 response, so Axum's per-handler pattern still works:

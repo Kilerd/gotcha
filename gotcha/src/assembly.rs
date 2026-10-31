@@ -124,6 +124,7 @@ mod tests {
                     StatusCode::BAD_REQUEST,
                     ErrorBody {
                         error: format!("json: {}", rejection.body_text()),
+                        fields: None,
                     },
                 )
             })
@@ -135,6 +136,7 @@ mod tests {
                     StatusCode::BAD_REQUEST,
                     ErrorBody {
                         error: format!("query: {}", rejection.body_text()),
+                        fields: None,
                     },
                 )
             })

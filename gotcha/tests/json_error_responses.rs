@@ -5,7 +5,7 @@ use gotcha::axum::http::{Request, StatusCode};
 use gotcha::axum::response::IntoResponse;
 use gotcha::{
     ConfigWrapper, Cookie, CookieParam, EmptyConfig, ExtractorConfigs, Form, GotchaApp, GotchaContext, GotchaError, GotchaResult, GotchaRouter, Header,
-    HeaderParam, HttpError, Json, JsonConfig, Multipart, Path, Query, Rejected, TypedHeader, Valid, ValidConfig,
+    HeaderParam, HttpError, Json, JsonConfig, Multipart, Path, Query, Rejected, TypedHeader, Valid, ValidConfig, Validate,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -31,6 +31,37 @@ struct FormPayload {
 struct Validated {
     #[validate(length(min = 1))]
     name: String,
+}
+
+#[derive(Debug, Deserialize, gotcha::Validate)]
+#[validate(crate = "gotcha::validator")]
+struct Address {
+    #[validate(length(min = 1, max = 64))]
+    city: String,
+}
+
+#[derive(Debug, Deserialize, gotcha::Validate)]
+#[validate(crate = "gotcha::validator")]
+struct LineItem {
+    #[validate(length(min = 1))]
+    name: String,
+}
+
+#[derive(Debug, Deserialize, gotcha::Validate)]
+#[validate(crate = "gotcha::validator", schema(function = "at_least_one_item"))]
+struct Order {
+    #[validate(nested)]
+    address: Address,
+    #[validate(nested)]
+    items: Vec<LineItem>,
+}
+
+fn at_least_one_item(order: &Order) -> Result<(), gotcha::validator::ValidationError> {
+    if order.items.is_empty() {
+        Err(gotcha::validator::ValidationError::new("required").with_message("at least one item is required".into()))
+    } else {
+        Ok(())
+    }
 }
 
 struct RequestId(String);
@@ -89,6 +120,10 @@ async fn validate(Valid(Json(payload)): Valid<Json<Validated>>) -> Json<Validate
     Json(payload)
 }
 
+async fn validate_order(Valid(Json(order)): Valid<Json<Order>>) -> String {
+    format!("{}:{}", order.address.city, order.items.len())
+}
+
 async fn optional(body: Option<Json<Item>>) -> String {
     format!("{:?}", body.map(|Json(item)| item.id))
 }
@@ -131,6 +166,7 @@ impl GotchaApp for App {
             .get("/cookie", session)
             .get("/typed-header", host)
             .post("/valid", validate)
+            .post("/valid-order", validate_order)
             .post("/optional", optional)
             .get("/optional-path", optional_path)
             .post("/per-handler", per_handler)
@@ -216,7 +252,7 @@ async fn other_provider_defaults_keep_axums_status_with_a_json_body() {
 }
 
 #[tokio::test]
-async fn valid_default_is_422_with_the_structured_errors() {
+async fn valid_default_is_422_with_the_error_body() {
     let router = app().await;
 
     // A malformed body is a Json rejection: Axum's status with the JSON error body.
@@ -225,13 +261,54 @@ async fn valid_default_is_422_with_the_structured_errors() {
         StatusCode::BAD_REQUEST,
     );
 
-    // A validation failure keeps the structured `ValidationErrors` body.
+    // A validation failure uses the same ErrorBody shape as every other provider.
     let (status, content_type, body) = send(&router, request("POST", "/valid", Some("application/json"), r#"{"name":""}"#)).await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
     assert_eq!(content_type, "application/json");
-    let body: Value = serde_json::from_slice(&body).unwrap();
-    assert!(body.get("error").is_none(), "the structured body is not wrapped in ErrorBody: {body}");
-    assert_eq!(body["name"][0]["message"], "length must be at least 1");
+    assert_eq!(
+        serde_json::from_slice::<Value>(&body).unwrap(),
+        json!({"error": "validation failed", "fields": {"name": ["length must be at least 1"]}})
+    );
+}
+
+#[tokio::test]
+async fn valid_default_flattens_nested_list_and_struct_level_errors() {
+    let router = app().await;
+
+    let (status, content_type, body) = send(
+        &router,
+        request(
+            "POST",
+            "/valid-order",
+            Some("application/json"),
+            r#"{"address":{"city":""},"items":[{"name":""},{"name":"ok"}]}"#,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(content_type, "application/json");
+    assert_eq!(
+        serde_json::from_slice::<Value>(&body).unwrap(),
+        json!({
+            "error": "validation failed",
+            "fields": {
+                "address.city": ["length must be at least 1 and at most 64"],
+                "items[0].name": ["length must be at least 1"]
+            }
+        })
+    );
+
+    // Struct-level (schema) validations keep validator's `__all__` key.
+    let (status, _, body) = send(
+        &router,
+        request("POST", "/valid-order", Some("application/json"), r#"{"address":{"city":"Paris"},"items":[]}"#),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(
+        serde_json::from_slice::<Value>(&body).unwrap(),
+        json!({"error": "validation failed", "fields": {"__all__": ["at least one item is required"]}})
+    );
 }
 
 #[tokio::test]
@@ -356,6 +433,66 @@ async fn overriding_one_provider_changes_only_that_provider() {
     assert_eq!(serde_json::from_slice::<Value>(&body).unwrap(), json!({"id": 7}));
 }
 
+#[derive(Debug, Serialize)]
+#[cfg_attr(feature = "openapi", derive(gotcha::Schematic))]
+struct FlattenedProblem {
+    error: String,
+    fields: std::collections::BTreeMap<String, Vec<String>>,
+}
+
+struct FlatteningApp;
+
+impl GotchaApp for FlatteningApp {
+    type State = ();
+    type Config = EmptyConfig;
+
+    async fn state(&self, _: &ConfigWrapper<EmptyConfig>) -> GotchaResult<()> {
+        Ok(())
+    }
+
+    fn extractor_configs(&self) -> ExtractorConfigs {
+        ExtractorConfigs::default().set(ValidConfig::default().error_handler(|errors: &gotcha::validator::ValidationErrors| {
+            (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                FlattenedProblem {
+                    error: "custom validation".to_string(),
+                    fields: gotcha::validation::flatten_errors(errors),
+                },
+            )
+        }))
+    }
+
+    fn routes(&self, router: GotchaRouter<Context>) -> GotchaRouter<Context> {
+        router.post("/valid-order", validate_order)
+    }
+}
+
+#[tokio::test]
+async fn valid_override_receives_the_validation_errors_and_can_flatten_them() {
+    let router = FlatteningApp.build_router(context()).await.unwrap();
+    let (status, content_type, body) = send(
+        &router,
+        request(
+            "POST",
+            "/valid-order",
+            Some("application/json"),
+            r#"{"address":{"city":""},"items":[{"name":""}]}"#,
+        ),
+    )
+    .await;
+    assert_eq!((status, content_type.as_str()), (StatusCode::UNPROCESSABLE_ENTITY, "application/json"));
+    assert_eq!(
+        serde_json::from_slice::<Value>(&body).unwrap(),
+        json!({
+            "error": "custom validation",
+            "fields": {
+                "address.city": ["length must be at least 1 and at most 64"],
+                "items[0].name": ["length must be at least 1"]
+            }
+        })
+    );
+}
+
 #[cfg(feature = "openapi")]
 #[test]
 fn custom_error_bodies_are_openapi_components() {
@@ -461,6 +598,12 @@ mod documents {
         gotcha::axum::Json(payload)
     }
 
+    /// Fail with the framework error body.
+    #[api]
+    async fn failing() -> Result<Json<Payload>, HttpError> {
+        Err(HttpError::bad_request("bad"))
+    }
+
     /// Submit a form.
     #[api(id = "submit_form")]
     async fn form_gotcha(Form(payload): Form<Filter>) -> String {
@@ -532,5 +675,29 @@ mod documents {
         );
         assert!(document["paths"]["/upload"]["post"]["requestBody"]["content"]["multipart/form-data"].is_object());
         assert_eq!(document["paths"]["/host"]["get"]["parameters"][0]["in"], "header");
+    }
+
+    #[test]
+    fn error_body_component_documents_optional_fields() {
+        let document = serde_json::to_value(GotchaRouter::<()>::default().get("/failing", failing).into_openapi()).unwrap();
+        let error_body = &document["components"]["schemas"]["ErrorBody"];
+        assert_eq!(error_body["type"], "object");
+        assert_eq!(error_body["required"], json!(["error"]));
+        assert_eq!(error_body["properties"]["error"]["type"], "string");
+
+        // `skip_serializing_if = "Option::is_none"` documents an optional object with no null branch.
+        let fields = &error_body["properties"]["fields"];
+        assert!(fields.get("anyOf").is_none(), "no null branch: {fields}");
+        assert_eq!(fields["type"], "object");
+        assert_eq!(fields["additionalProperties"]["type"], "array");
+        assert_eq!(fields["additionalProperties"]["items"]["type"], "string");
+
+        // Documents that never reference ErrorBody do not gain the component.
+        let plain = serde_json::to_value(GotchaRouter::<()>::default().get("/read", read_gotcha).into_openapi()).unwrap();
+        assert!(
+            plain["components"]["schemas"].get("ErrorBody").is_none(),
+            "unrelated documents are unchanged: {}",
+            plain["components"]["schemas"]
+        );
     }
 }
