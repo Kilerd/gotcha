@@ -13,7 +13,7 @@ pub mod simple_enum;
 pub mod tagged_enum;
 pub mod untagged_enum;
 
-use crate::utils::{parse_serde_rename_all, AttributesExt, RenameAll};
+use crate::utils::{has_serde_default, parse_serde_rename_all, AttributesExt, RenameAll};
 
 #[derive(Debug, PartialEq, Eq)]
 enum SerdeTagKind {
@@ -29,6 +29,8 @@ enum SerdeTagKind {
 struct ParameterExtraField {
     tag_kind: Option<SerdeTagKind>,
     rename_all: Option<RenameAll>,
+    /// `#[serde(default)]` on a struct container makes every field optional.
+    container_default: bool,
 }
 
 impl ParameterExtraField {
@@ -76,7 +78,11 @@ impl ParameterExtraField {
             }
         };
 
-        ParameterExtraField { tag_kind, rename_all }
+        ParameterExtraField {
+            tag_kind,
+            rename_all,
+            container_default: has_serde_default(attrs),
+        }
     }
 }
 
@@ -445,7 +451,7 @@ pub(crate) fn handler(input: TokenStream2) -> Result<TokenStream2, (Span, &'stat
                     "#[derive(Schematic)] does not support multi-field tuple structs; use a named struct",
                 ));
             } else {
-                named_struct::handler(&core, schema_name.clone(), doc, fields, extra_field.rename_all)?
+                named_struct::handler(&core, schema_name.clone(), doc, fields, extra_field.rename_all, extra_field.container_default)?
             }
         }
     };

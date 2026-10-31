@@ -203,14 +203,129 @@ pub fn has_serde_skip(attrs: &[Attribute]) -> bool {
     )
 }
 
-/// Whether a field is effectively optional for serde — `default` (`default` or
-/// `default = "..."`) or `skip_serializing_if = "..."` — so it need not be present.
-pub fn is_serde_optional(attrs: &[Attribute]) -> bool {
+/// Whether serde supplies a missing value: `#[serde(default)]` or `#[serde(default = "...")]`.
+pub fn has_serde_default(attrs: &[Attribute]) -> bool {
     serde_nested_any(attrs, |meta| match meta {
         syn::Meta::Path(path) => path.is_ident("default"),
-        syn::Meta::NameValue(nv) => nv.path.is_ident("default") || nv.path.is_ident("skip_serializing_if"),
+        syn::Meta::NameValue(nv) => nv.path.is_ident("default"),
         _ => false,
     })
+}
+
+/// Whether deserialization uses a custom function or module — `#[serde(deserialize_with = "...")]`
+/// or `#[serde(with = "...")]`. Without a `default`, serde then requires the key to be present.
+pub fn has_serde_deserialize_with(attrs: &[Attribute]) -> bool {
+    serde_nested_any(attrs, |meta| match meta {
+        syn::Meta::NameValue(nv) => nv.path.is_ident("deserialize_with") || nv.path.is_ident("with"),
+        _ => false,
+    })
+}
+
+/// Whether rendering may omit the field (`#[serde(skip_serializing_if = "...")]`).
+pub fn has_serde_skip_serializing_if(attrs: &[Attribute]) -> bool {
+    serde_nested_any(
+        attrs,
+        |meta| matches!(meta, syn::Meta::NameValue(nv) if nv.path.is_ident("skip_serializing_if")),
+    )
+}
+
+/// The string literal of a `#[serde(<key> = "...")]` attribute.
+fn serde_name_value(attrs: &[Attribute], key: &str) -> Option<String> {
+    attrs.iter().filter(|attr| attr.path.is_ident("serde")).find_map(|attr| {
+        let nested = attr
+            .parse_args_with(|input: syn::parse::ParseStream| syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated(input))
+            .ok()?;
+        nested.into_iter().find_map(|meta| match meta {
+            syn::Meta::NameValue(nv) if nv.path.is_ident(key) => match nv.lit {
+                syn::Lit::Str(lit) => Some(lit.value()),
+                _ => None,
+            },
+            _ => None,
+        })
+    })
+}
+
+/// Whether `skip_serializing_if` is recognisably `Option::is_none`.
+///
+/// Deliberately conservative: only the unqualified and the `std`/`core` paths, with optional
+/// leading `::`, are recognized. An alias or a local wrapper predicate keeps the null branch.
+pub fn skips_none(attrs: &[Attribute]) -> bool {
+    let Some(predicate) = serde_name_value(attrs, "skip_serializing_if") else {
+        return false;
+    };
+    let predicate = predicate.trim();
+    let predicate = predicate.strip_prefix("::").unwrap_or(predicate);
+    matches!(predicate, "Option::is_none" | "std::option::Option::is_none" | "core::option::Option::is_none")
+}
+
+/// The `T` in an `Option<T>` type. Only a literal trailing `Option` path segment is recognized;
+/// type aliases are left to their own `Schematic` implementation.
+pub fn option_inner_type(ty: &syn::Type) -> Option<&syn::Type> {
+    let syn::Type::Path(type_path) = ty else {
+        return None;
+    };
+    let segment = type_path.path.segments.last()?;
+    if segment.ident != "Option" {
+        return None;
+    }
+    let syn::PathArguments::AngleBracketed(arguments) = &segment.arguments else {
+        return None;
+    };
+    if arguments.args.len() != 1 {
+        return None;
+    }
+    match arguments.args.first()? {
+        syn::GenericArgument::Type(inner) => Some(inner),
+        _ => None,
+    }
+}
+
+/// How serde attributes on a named field translate into schema presence.
+pub(crate) struct SerdeFieldPresence {
+    /// The type whose schema to emit. This is the inner `T` when an `Option<T>` field skips
+    /// `None`: the serialized value is then `T`, so the outer null branch is not in the contract.
+    pub schema_type: syn::Type,
+    /// `Some` when the attributes override the type's own `Schematic::required()`.
+    pub required: Option<bool>,
+}
+
+/// Translate the serde attributes already on a field into key presence and nullability.
+///
+/// - A field-level or container-level `default` makes the key optional.
+/// - Otherwise `deserialize_with` / `with` makes it required, even for `Option<T>`: serde
+///   rejects a missing key before the option can produce `None`.
+/// - Otherwise `skip_serializing_if` makes it optional, preserving the previous behavior.
+///
+/// An `Option<T>` field skipped by a recognisable `Option::is_none` predicate emits `T`'s
+/// schema, dropping the null branch that serialization never writes. For `Option<Option<T>>`
+/// the inner option's null branch remains, keeping the tri-state.
+///
+/// A custom deserializer plus such a skip and no `default` is asymmetric: input requires the
+/// key, output may omit it, and a single schema cannot express both. That combination keeps
+/// the previous optional + nullable schema.
+pub(crate) fn serde_field_presence(ty: &syn::Type, attrs: &[Attribute], container_default: bool) -> SerdeFieldPresence {
+    let has_default = has_serde_default(attrs) || container_default;
+    let deserialize_with = has_serde_deserialize_with(attrs);
+    let inner_option = option_inner_type(ty);
+    let skips_none = inner_option.is_some() && skips_none(attrs);
+    let asymmetric = deserialize_with && skips_none && !has_default;
+
+    let required = if has_default || asymmetric {
+        Some(false)
+    } else if deserialize_with {
+        Some(true)
+    } else if has_serde_skip_serializing_if(attrs) {
+        Some(false)
+    } else {
+        None
+    };
+
+    let schema_type = match inner_option {
+        Some(inner) if skips_none && !asymmetric => inner.clone(),
+        _ => ty.clone(),
+    };
+
+    SerdeFieldPresence { schema_type, required }
 }
 
 /// Parse serde rename_all attribute from container attributes

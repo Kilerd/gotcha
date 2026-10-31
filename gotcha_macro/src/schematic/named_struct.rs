@@ -2,10 +2,11 @@ use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::quote;
 
 use crate::schematic::ParameterStructFieldOpt;
-use crate::utils::{get_serde_name, has_serde_flatten, has_serde_skip, is_serde_optional, parse_serde_rename, RenameAll};
+use crate::utils::{get_serde_name, has_serde_flatten, has_serde_skip, parse_serde_rename, serde_field_presence, RenameAll};
 
 pub(crate) fn handler(
     core: &TokenStream2, ident_string: String, doc: TokenStream2, fields: darling::ast::Fields<ParameterStructFieldOpt>, rename_all: Option<RenameAll>,
+    container_default: bool,
 ) -> Result<TokenStream2, (Span, &'static str)> {
     let mut normal_fields_stream: Vec<TokenStream2> = Vec::new();
     let mut flatten_fields_stream: Vec<TokenStream2> = Vec::new();
@@ -36,12 +37,13 @@ pub(crate) fn handler(
             let ident_str = field.ident.as_ref().unwrap().to_string();
             let rename = parse_serde_rename(&field.attrs);
             let field_name = get_serde_name(&ident_str, rename.as_deref(), rename_all);
-            // `#[serde(default)]` / `skip_serializing_if` make a field optional in the payload,
-            // so it must not be listed as required even if its type is otherwise required.
-            let optional_override = if is_serde_optional(&field.attrs) {
-                quote! { field_schema.required = false; }
-            } else {
-                quote! {}
+            // Presence and nullability come from the serde attributes already on the field, so
+            // the schema matches what deserialization requires and serialization writes.
+            let presence = serde_field_presence(&field_ty, &field.attrs, container_default);
+            let schema_ty = presence.schema_type;
+            let required_override = match presence.required {
+                Some(required) => quote! { field_schema.required = #required; },
+                None => quote! {},
             };
             // Description (an explicit `#[schematic(description = ...)]` overrides the doc comment)
             // plus the `#[schematic(...)]` validation/metadata customizations.
@@ -51,9 +53,9 @@ pub(crate) fn handler(
                 (
                     #field_name,
                     {
-                        let mut field_schema = <#field_ty as #core::Schematic>::generate_schema();
+                        let mut field_schema = <#schema_ty as #core::Schematic>::generate_schema();
                         field_schema.schema.description = #field_description;
-                        #optional_override
+                        #required_override
                         #( #customizations )*
                         field_schema
                     }

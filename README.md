@@ -409,6 +409,60 @@ See [the migration guide](MIGRATION.md#unreleased-schema-identity-and-component-
 Generated documents use OpenAPI 3.2.0 and JSON Schema 2020-12 semantics. See the
 [OpenAPI migration notes](MIGRATION.md#unreleased-openapi-32) for custom schemas and tooling compatibility.
 
+#### Optional and nullable fields
+
+`#[derive(Schematic)]` reads the serde attributes already on a field, so the document follows the
+contract for the patterns below. `Option<T>` on its own is optional *and* nullable; add a serde
+attribute to choose one axis:
+
+| Field | Generated schema | Serde behavior | zod equivalent |
+| --- | --- | --- | --- |
+| `value: Option<T>` | optional, `anyOf: [T, {"type": "null"}]` | missing or `null` → `None`; `None` → `null` | `.optional().nullable()` |
+| `#[serde(deserialize_with = "Option::deserialize")] value: Option<T>` | required, same `anyOf` | missing key → error; `null` → `None` | `.nullable()` |
+| `#[serde(skip_serializing_if = "Option::is_none")] value: Option<T>` | optional, `T` (no null branch) | missing or `null` → `None`; `None` is omitted | `.optional()` |
+| `deserialize_with` or `with` **and** `skip_serializing_if = "Option::is_none"`, no `default` | optional, same `anyOf` as plain `Option<T>` | input requires the key; `null` → `None`; output omits `None` | no single equivalent |
+| `#[serde(default)]` on the struct | every direct field optional (a `#[serde(flatten)]` field keeps the inner type's requiredness) | missing direct keys use the field defaults | every direct field `.optional()` |
+
+`deserialize_with` (or `with`) without a `default` requires the key, so the field stays required
+even when its type is `Option<T>`. Only `Option::is_none`, `std::option::Option::is_none` and
+`core::option::Option::is_none` are recognized for dropping the null branch; any other
+`skip_serializing_if` predicate keeps today's behavior (optional, with the null branch).
+
+Combining a custom deserializer with `Option::is_none` and no `default` is asymmetric: input
+requires the key while output may omit it, and one schema cannot express both directions. That
+field keeps the previous optional + nullable contract. Prefer adding a `default` to make a
+missing key acceptable; for "absent, `null` or value" use the tri-state pattern below.
+
+A PATCH-style tri-state distinguishes "absent", `null` and a value with `Option<Option<T>>`. The
+document is optional and nullable with one null branch. The inner option needs a small helper to
+turn `null` into `Some(None)`:
+
+```rust
+# #[cfg(feature = "openapi")]
+# mod tri_state_example {
+use gotcha::prelude::*;
+use serde::Deserializer;
+
+fn deserialize_some<'de, T: Deserialize<'de>, D: Deserializer<'de>>(deserializer: D) -> Result<Option<Option<T>>, D::Error> {
+    Option::<T>::deserialize(deserializer).map(Some)
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+struct Attributes {
+    theme: String,
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+struct Patch {
+    #[serde(default, deserialize_with = "deserialize_some", skip_serializing_if = "Option::is_none")]
+    attributes: Option<Option<Attributes>>,
+}
+# }
+```
+
+Missing `attributes` deserializes to `None`, `null` to `Some(None)`, and an object to
+`Some(Some(...))`; serializing omits `None` and writes `null` for `Some(None)`.
+
 Documentation HTTP endpoints are disabled by default. Enable them explicitly with
 `Gotcha::with_openapi()`, or return `Some(OpenApiEndpoints::default())` from
 `GotchaApp::openapi_endpoints()`. The default paths are:
