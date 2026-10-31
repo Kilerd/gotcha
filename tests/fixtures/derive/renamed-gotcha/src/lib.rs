@@ -23,3 +23,11 @@ fn library_types_satisfy_the_application_trait() {
     assert_eq!(fields[1].1.schema.to_value()["type"], "object");
     assert!(schema::Validate::validate(&Request { name: String::new() }).is_err());
 }
+
+#[test]
+fn cargo_info_resolves_through_a_renamed_dependency() {
+    let info = schema::cargo_info!();
+    assert_eq!(info.title, "renamed-derive-application");
+    assert_eq!(info.version, "0.0.0");
+    assert_eq!(info.description, None);
+}

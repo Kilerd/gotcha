@@ -32,6 +32,11 @@
 //! Generated documents use OpenAPI 3.2.0. The default endpoints are `/openapi.json` and `/scalar`.
 //! The legacy Redoc UI is disabled by default because it does not support 3.2.
 //! Use [`crate::GotchaRouter::into_openapi`] to export the document without HTTP.
+//!
+//! The document's `info` block defaults to neutral values (`title: "API"`, `version: "0.1.0"`,
+//! no description). Set the application's identity with [`crate::Gotcha::openapi_info`],
+//! [`crate::GotchaApp::openapi_info`], or [`crate::cargo_info!`]; `.openapi(..)` transforms still
+//! run afterwards and can override it.
 
 use std::collections::{BTreeMap, HashMap};
 
@@ -162,20 +167,77 @@ impl Operable {
 
 inventory::collect!(Operable);
 
+/// The neutral [`Info`] used when an application does not configure one.
+///
+/// It carries no framework branding: `title` is `"API"`, `version` is `"0.1.0"`, and every
+/// optional field, including `description`, is `None`. Applications set their own identity with
+/// [`Gotcha::openapi_info`](crate::Gotcha::openapi_info) or
+/// [`GotchaApp::openapi_info`](crate::GotchaApp::openapi_info), commonly through
+/// [`cargo_info!`](crate::cargo_info).
+pub(crate) fn default_info() -> Info {
+    Info {
+        title: "API".to_string(),
+        description: None,
+        terms_of_service: None,
+        contact: None,
+        license: None,
+        version: "0.1.0".to_string(),
+    }
+}
+
+/// Builds an [`oas::Info`] from the calling crate's Cargo package metadata.
+///
+/// `title` comes from `CARGO_PKG_NAME`, `version` from `CARGO_PKG_VERSION`, and `description`
+/// from `CARGO_PKG_DESCRIPTION`, omitting the description when it is empty. Every other field is
+/// `None`. The macro expands in the caller's crate, so it reports the application's package
+/// rather than gotcha's.
+///
+/// Pass it to [`Gotcha::openapi_info`](crate::Gotcha::openapi_info) or return it from
+/// [`GotchaApp::openapi_info`](crate::GotchaApp::openapi_info):
+///
+/// ```
+/// # #[cfg(feature = "openapi")]
+/// # {
+/// let app = gotcha::Gotcha::new().openapi_info(gotcha::cargo_info!());
+/// assert_eq!(app.into_openapi().info.title, env!("CARGO_PKG_NAME"));
+/// # }
+/// ```
+#[macro_export]
+macro_rules! cargo_info {
+    () => {
+        $crate::oas::Info {
+            title: env!("CARGO_PKG_NAME").to_string(),
+            description: {
+                let description: &str = env!("CARGO_PKG_DESCRIPTION");
+                if description.is_empty() {
+                    None
+                } else {
+                    Some(description.to_string())
+                }
+            },
+            terms_of_service: None,
+            contact: None,
+            license: None,
+            version: env!("CARGO_PKG_VERSION").to_string(),
+        }
+    };
+}
+
 /// Assemble the spec from the routes' [`Operable`] descriptors.
 ///
 /// Every operation is generated inside a single [`registry::collect`](gotcha_core::registry::collect)
 /// scope, so each named schema is emitted once under `components/schemas` and referenced by `$ref`
 /// at its use sites (which is also what lets recursive types produce a finite spec).
 pub fn generate_openapi(operables: HashMap<(String, Method), &'static Operable>) -> OpenAPIV3 {
-    generate_openapi_with_schemas(operables, Vec::new())
+    generate_openapi_with_schemas(operables, Vec::new(), default_info())
 }
 
 /// Like [`generate_openapi`], also registering the schemas of configured extractor error bodies.
 /// Each function is called inside the collection scope, so its type becomes a component.
+/// `info` is the application-level metadata block placed in the document.
 #[doc(hidden)]
 pub fn generate_openapi_with_schemas(
-    operables: HashMap<(String, Method), &'static Operable>, extra_schemas: Vec<fn() -> gotcha_core::EnhancedSchema>,
+    operables: HashMap<(String, Method), &'static Operable>, extra_schemas: Vec<fn() -> gotcha_core::EnhancedSchema>, info: Info,
 ) -> OpenAPIV3 {
     let mut operables: Vec<_> = operables.into_iter().collect();
     operables.sort_by(|((path_a, method_a), _), ((path_b, method_b), _)| (path_a, method_a.as_str()).cmp(&(path_b, method_b.as_str())));
@@ -203,14 +265,7 @@ pub fn generate_openapi_with_schemas(
     });
 
     let mut spec = OpenAPIV3 {
-        info: Info {
-            title: "Gotcha".to_string(),
-            description: Some("Gotcha is a framework for building microservices".to_string()),
-            terms_of_service: None,
-            contact: None,
-            license: None,
-            version: "1.0.0".to_string(),
-        },
+        info,
         paths: BTreeMap::default(),
         servers: None,
         components,

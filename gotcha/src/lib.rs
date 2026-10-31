@@ -336,6 +336,43 @@ pub trait GotchaApp: Sized + Send + Sync {
         None
     }
 
+    /// The [`oas::Info`] block of the generated OpenAPI document.
+    ///
+    /// The default is neutral rather than gotcha's own identity: `title: "API"`,
+    /// `version: "0.1.0"`, no description, and every optional field `None`. Override it to
+    /// publish the application's identity; [`cargo_info!`](crate::cargo_info) builds the block
+    /// from the calling crate's Cargo metadata:
+    ///
+    /// ```rust,no_run
+    /// # #[cfg(feature = "openapi")]
+    /// # {
+    /// use gotcha::{ConfigWrapper, EmptyConfig, GotchaApp, GotchaResult};
+    ///
+    /// struct App;
+    /// impl GotchaApp for App {
+    ///     type State = ();
+    ///     type Config = EmptyConfig;
+    ///     fn openapi_info(&self) -> gotcha::oas::Info {
+    ///         gotcha::cargo_info!()
+    ///     }
+    ///     fn routes(&self, router: gotcha::GotchaRouter<gotcha::GotchaContext<(), EmptyConfig>>) -> gotcha::GotchaRouter<gotcha::GotchaContext<(), EmptyConfig>> {
+    ///         router
+    ///     }
+    ///     async fn state(&self, _: &ConfigWrapper<EmptyConfig>) -> GotchaResult<()> {
+    ///         Ok(())
+    ///     }
+    /// }
+    /// # }
+    /// ```
+    ///
+    /// The same block is used by the served document and [`Self::openapi_document`]. `Info`
+    /// describes the whole application, so nested and merged routers do not contribute one.
+    /// `.openapi(..)` transforms run afterwards and can still override it.
+    #[cfg(feature = "openapi")]
+    fn openapi_info(&self) -> oas::Info {
+        crate::openapi::default_info()
+    }
+
     /// Rejection responses for the extractors this application uses.
     ///
     /// The default is every provider's default handler. Override it and use
@@ -376,6 +413,7 @@ pub trait GotchaApp: Sized + Send + Sync {
     fn openapi_document(&self) -> oas::OpenAPIV3 {
         self.routes(GotchaRouter::default())
             .with_extractor_configs(self.extractor_configs())
+            .with_openapi_info(self.openapi_info())
             .into_openapi()
     }
 
@@ -406,6 +444,8 @@ pub trait GotchaApp: Sized + Send + Sync {
         async move {
             let router = GotchaRouter::<GotchaContext<Self::State, Self::Config>>::default();
             let router = self.routes(router).with_extractor_configs(self.extractor_configs());
+            #[cfg(feature = "openapi")]
+            let router = router.with_openapi_info(self.openapi_info());
             assembly::assemble(
                 router,
                 context,

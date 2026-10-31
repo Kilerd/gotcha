@@ -59,6 +59,10 @@ pub struct GotchaRouter<State = ()> {
     /// Child transforms in composition order, followed by this router's own transforms.
     #[cfg(feature = "openapi")]
     openapi_transforms: OpenApiTransforms,
+    /// Application-level `info` block for the generated document. `Info` describes the whole
+    /// application, so `nest` and `merge` keep the parent's value rather than merging children.
+    #[cfg(feature = "openapi")]
+    openapi_info: oas::Info,
     /// Per-extractor rejection configurations, applied when the application is assembled.
     pub(crate) extractor_configs: crate::extract::ExtractorConfigs,
     pub(crate) router: Router<State>,
@@ -70,6 +74,8 @@ impl<State: Clone + Send + Sync + 'static> Default for GotchaRouter<State> {
             operations: Default::default(),
             #[cfg(feature = "openapi")]
             openapi_transforms: Default::default(),
+            #[cfg(feature = "openapi")]
+            openapi_info: crate::openapi::default_info(),
             extractor_configs: Default::default(),
             router: Router::new(),
         }
@@ -180,6 +186,8 @@ impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
             operations: self.operations.into_iter().chain(operations).collect(),
             #[cfg(feature = "openapi")]
             openapi_transforms: self.openapi_transforms.with_child(router.openapi_transforms),
+            #[cfg(feature = "openapi")]
+            openapi_info: self.openapi_info,
             extractor_configs: self.extractor_configs,
             router: self.router.nest(path, router.router),
         }
@@ -202,6 +210,8 @@ impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
             operations: self.operations.into_iter().chain(other.operations).collect(),
             #[cfg(feature = "openapi")]
             openapi_transforms: self.openapi_transforms.with_child(other.openapi_transforms),
+            #[cfg(feature = "openapi")]
+            openapi_info: self.openapi_info,
             extractor_configs: self.extractor_configs,
             router: self.router.merge(other.router),
         }
@@ -234,6 +244,8 @@ impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
             operations: self.operations,
             #[cfg(feature = "openapi")]
             openapi_transforms: self.openapi_transforms,
+            #[cfg(feature = "openapi")]
+            openapi_info: self.openapi_info,
             extractor_configs: self.extractor_configs,
             router: self.router.layer(layer),
         }
@@ -270,6 +282,8 @@ impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
             operations: self.operations,
             #[cfg(feature = "openapi")]
             openapi_transforms: self.openapi_transforms,
+            #[cfg(feature = "openapi")]
+            openapi_info: self.openapi_info,
             extractor_configs: self.extractor_configs,
             router: self.router.route_layer(layer),
         }
@@ -286,6 +300,8 @@ impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
             operations: self.operations,
             #[cfg(feature = "openapi")]
             openapi_transforms: self.openapi_transforms,
+            #[cfg(feature = "openapi")]
+            openapi_info: self.openapi_info,
             extractor_configs: self.extractor_configs,
             router: self.router.fallback(handler),
         }
@@ -318,6 +334,8 @@ impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
             operations: self.operations,
             #[cfg(feature = "openapi")]
             openapi_transforms: self.openapi_transforms,
+            #[cfg(feature = "openapi")]
+            openapi_info: self.openapi_info,
             extractor_configs: self.extractor_configs,
             router: self.router.fallback_service(service),
         }
@@ -359,6 +377,8 @@ impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
             operations: self.operations,
             #[cfg(feature = "openapi")]
             openapi_transforms: self.openapi_transforms,
+            #[cfg(feature = "openapi")]
+            openapi_info: self.openapi_info,
             extractor_configs: self.extractor_configs,
             router: self.router.nest_service(path, service),
         }
@@ -367,8 +387,9 @@ impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
     /// Customize the generated OpenAPI document when it is exported or served.
     ///
     /// The transform receives the fully-generated [`oas::OpenAPIV3`] (with every route's
-    /// operation already filled in) and returns the spec to serve, so you can set the
-    /// title/version, add servers, security schemes, components, and so on.
+    /// operation already filled in and its `info` block set) and returns the spec to serve, so
+    /// you can add servers, security schemes, components, and so on — or override any `info`
+    /// field set by [`Gotcha::openapi_info`](crate::Gotcha::openapi_info).
     ///
     /// Repeated calls append transforms in registration order. At assembly, child subtrees
     /// run in `nest`/`merge` insertion order, then this router's own transforms run, even if
@@ -406,9 +427,25 @@ impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
     /// Generates schemas and applies every transform once, using the same pipeline
     /// as documentation endpoints. Consuming the router allows transforms to retain
     /// their `FnOnce` captures. No application state or runtime is required.
+    ///
+    /// The document's `info` block is the neutral default unless the application set one
+    /// through [`Gotcha::openapi_info`](crate::Gotcha::openapi_info) or
+    /// [`GotchaApp::openapi_info`](crate::GotchaApp::openapi_info).
     #[cfg(feature = "openapi")]
     pub fn into_openapi(self) -> oas::OpenAPIV3 {
         self.into_openapi_parts().1
+    }
+
+    /// Set the application-level `info` block used by [`Self::into_openapi`] and documentation
+    /// endpoints. The builder's [`openapi_info`](crate::Gotcha::openapi_info) and
+    /// [`GotchaApp::openapi_info`](crate::GotchaApp::openapi_info) forward here.
+    ///
+    /// `info` describes the whole application, so `nest` and `merge` keep the parent's value.
+    /// It is applied before [`Self::openapi`] transforms, which can still override it.
+    #[cfg(feature = "openapi")]
+    pub(crate) fn with_openapi_info(mut self, info: oas::Info) -> Self {
+        self.openapi_info = info;
+        self
     }
 
     #[cfg(feature = "openapi")]
@@ -417,7 +454,7 @@ impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
         let schemas = self.extractor_configs.schemas();
         let spec = self
             .openapi_transforms
-            .apply(crate::openapi::generate_openapi_with_schemas(self.operations, schemas));
+            .apply(crate::openapi::generate_openapi_with_schemas(self.operations, schemas, self.openapi_info));
         let configs = std::mem::take(&mut self.extractor_configs);
         (self.router, spec, configs)
     }

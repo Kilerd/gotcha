@@ -1,5 +1,6 @@
 # Migration Guide
 
+- [Unreleased: neutral OpenAPI info defaults](#unreleased-neutral-openapi-info-defaults)
 - [Unreleased: serde-driven field presence](#unreleased-serde-driven-field-presence)
 - [Unreleased: JSON error bodies and extractors](#unreleased-json-error-bodies-and-extractors)
 - [Unreleased: OpenAPI 3.2](#unreleased-openapi-32)
@@ -23,6 +24,28 @@
 - [Unreleased: default configuration sources](#unreleased-default-configuration-sources)
 - [0.3 → 0.4](#03--04) — **every application must edit its route paths and configuration file**
 - [0.2 → 0.3: API simplification](#02--03-api-simplification)
+
+---
+
+# Unreleased: neutral OpenAPI info defaults
+
+**Generated documents no longer identify themselves as gotcha.** The default `info` block is now
+neutral: `title: "API"`, `version: "0.1.0"`, and no description (every other optional field is
+absent). Previously every application's document said `title: "Gotcha"`,
+`description: "Gotcha is a framework for building microservices"`, and `version: "1.0.0"`.
+
+Set the application's own identity with `.openapi_info(..)` on the builder, or by overriding
+`GotchaApp::openapi_info`. Both feed the served document and every offline export
+(`Gotcha::into_openapi`, `GotchaRouter::into_openapi`, `GotchaApp::openapi_document`) with the same
+block. `gotcha::cargo_info!()` fills it from the calling crate's Cargo metadata:
+
+```rust,no_run
+let app = gotcha::Gotcha::new().openapi_info(gotcha::cargo_info!());
+```
+
+An existing `.openapi(|spec| ..)` transform still runs afterwards and can override the block, which
+is the migration path for applications that relied on the old branding. Regenerate or republish
+checked-in documents if clients or tooling read `info`.
 
 ---
 

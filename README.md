@@ -493,6 +493,26 @@ Use builder `app_layer` or the trait's `finish_router` hook for authentication t
 documentation is mounted, regardless of when `with_openapi()` was called. Keeping authentication
 on business routes leaves explicitly enabled documentation public.
 
+#### Document metadata
+
+Generated documents default to a neutral `info` block: `title: "API"`, `version: "0.1.0"`, and no
+description. Set the application's identity with `.openapi_info(..)` on the builder, or by
+returning it from `GotchaApp::openapi_info`. Both apply to the served document and to the offline
+export. `gotcha::cargo_info!()` builds the block from the calling crate's Cargo metadata:
+`CARGO_PKG_NAME` becomes the title, `CARGO_PKG_VERSION` the version, and a non-empty
+`CARGO_PKG_DESCRIPTION` the description.
+
+```rust,no_run
+# #[cfg(feature = "openapi")]
+# {
+use gotcha::Gotcha;
+let app = Gotcha::new().openapi_info(gotcha::cargo_info!());
+# }
+```
+
+The info block is application-level: nested and merged routers do not contribute one.
+`.openapi(..)` transforms run afterwards and can still override any field.
+
 Export the complete document with `Gotcha::into_openapi()`, `GotchaRouter::into_openapi()`, or
 `GotchaApp::openapi_document()`. Export needs no listener or runtime and does not initialize
 application state, load configuration, register tasks, or install application layers:
