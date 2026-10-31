@@ -168,9 +168,22 @@ inventory::collect!(Operable);
 /// scope, so each named schema is emitted once under `components/schemas` and referenced by `$ref`
 /// at its use sites (which is also what lets recursive types produce a finite spec).
 pub fn generate_openapi(operables: HashMap<(String, Method), &'static Operable>) -> OpenAPIV3 {
+    generate_openapi_with_schemas(operables, Vec::new())
+}
+
+/// Like [`generate_openapi`], also registering the schemas of configured extractor error bodies.
+/// Each function is called inside the collection scope, so its type becomes a component.
+#[doc(hidden)]
+pub fn generate_openapi_with_schemas(
+    operables: HashMap<(String, Method), &'static Operable>, extra_schemas: Vec<fn() -> gotcha_core::EnhancedSchema>,
+) -> OpenAPIV3 {
     let mut operables: Vec<_> = operables.into_iter().collect();
     operables.sort_by(|((path_a, method_a), _), ((path_b, method_b), _)| (path_a, method_a.as_str()).cmp(&(path_b, method_b.as_str())));
     let (operations, schemas) = gotcha_core::registry::collect(|| {
+        // Custom rejection bodies are not attached to operations, but their components must exist.
+        for schema in &extra_schemas {
+            let _ = schema();
+        }
         operables
             .iter()
             .map(|((path, _), operable)| operable.generate(path.clone()))

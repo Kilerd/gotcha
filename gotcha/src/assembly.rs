@@ -5,21 +5,29 @@ use axum::Router;
 use crate::{GotchaResult, GotchaRouter};
 
 pub(crate) fn assemble<State: Clone + Send + Sync + 'static>(
-    router: GotchaRouter<State>, state: State, #[cfg(feature = "openapi")] endpoints: Option<crate::OpenApiEndpoints>,
+    mut router: GotchaRouter<State>, state: State, #[cfg(feature = "openapi")] endpoints: Option<crate::OpenApiEndpoints>,
     finish: impl FnOnce(Router, &State) -> Router,
 ) -> GotchaResult<Router> {
     // `with_state` consumes the state, so keep the context the finish hook should observe.
     let context = state.clone();
+    // Extractors read their rejection configs from these extensions. The layer covers business
+    // routes (nested ones included) and documentation, but not services mounted by `finish`,
+    // which are added after it. Without assembly, extractors fall back to the defaults.
     #[cfg(feature = "openapi")]
-    let router = if let Some(endpoints) = endpoints {
+    let (router, extractor_configs) = if let Some(endpoints) = endpoints {
         endpoints.validate()?;
-        let (router, spec) = router.into_openapi_parts();
-        endpoints.mount(router.with_state(state), spec)
+        let (router, spec, configs) = router.into_openapi_parts();
+        (endpoints.mount(router.with_state(state), spec), std::sync::Arc::new(configs))
     } else {
-        router.into_axum_router(state)
+        let configs = std::mem::take(&mut router.extractor_configs);
+        (router.into_axum_router(state), std::sync::Arc::new(configs))
     };
     #[cfg(not(feature = "openapi"))]
-    let router = router.into_axum_router(state);
+    let (router, extractor_configs) = {
+        let configs = std::mem::take(&mut router.extractor_configs);
+        (router.into_axum_router(state), std::sync::Arc::new(configs))
+    };
+    let router = router.layer(axum::Extension(extractor_configs));
 
     Ok(finish(router, &context))
 }

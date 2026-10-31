@@ -1,5 +1,6 @@
 # Migration Guide
 
+- [Unreleased: JSON error bodies and extractors](#unreleased-json-error-bodies-and-extractors)
 - [Unreleased: OpenAPI 3.2](#unreleased-openapi-32)
 - [Unreleased: HTTP/1 is always enabled](#unreleased-http1-is-always-enabled)
 - [Unreleased: derive dependency paths](#unreleased-derive-dependency-paths)
@@ -21,6 +22,66 @@
 - [Unreleased: default configuration sources](#unreleased-default-configuration-sources)
 - [0.3 → 0.4](#03--04) — **every application must edit its route paths and configuration file**
 - [0.2 → 0.3: API simplification](#02--03-api-simplification)
+
+---
+
+# Unreleased: JSON error bodies and extractors
+
+**Every extractor provider now has its own rejection configuration.** The defaults keep Axum's
+own status for that rejection (`400`, `415`, `422`, ...) and send `{"error": "<message>"}` with
+`Content-Type: application/json`.
+
+`gotcha::Json`, `gotcha::Path`, `gotcha::Query`, `gotcha::Form`, `gotcha::Multipart`, and
+`gotcha::TypedHeader` — at the crate root, and the first five in the prelude — are now Gotcha's
+wrappers around Axum's extractors rather than re-exports. Pattern destructuring, `Deref`,
+`Json`/`Form` responses, and `Option<Json<T>>`, `Option<Path<T>>`, and `Option<Multipart>`
+extraction keep working. `Header` and `Cookie` were already Gotcha extractors; their rejections
+now use the same JSON body with `400`.
+
+Default behavior by provider:
+
+- `Json`, `Form`, `Query`, `Path`, `Multipart`, `TypedHeader`: Axum's status
+  (`rejection.status()`) and `{"error": rejection.body_text()}`. For `TypedHeader` the status is
+  `400`.
+- `Header`, `Cookie`: `400` with the same JSON body.
+- `Valid`: validation failures keep today's `422 Unprocessable Entity` with the structured
+  `ValidationErrors` body. A malformed body inside `Valid<Json<T>>` is a `Json` rejection and
+  uses the `Json` handler.
+
+Override one provider on the builder with
+`.extractor_config(JsonConfig::default().error_handler(|rejection| (status, body)))`, or in the
+trait API by overriding `GotchaApp::extractor_configs` and calling
+`ExtractorConfigs::default().set(...)`. The handler receives that provider's concrete rejection
+type and returns `(StatusCode, E)`. `E` must be `Serialize`, and with `openapi` also `Schematic`;
+an overridden body is registered as an OpenAPI component (defaults add none, so existing
+documents are unchanged). Configurations reach extractors through
+request extensions inserted during assembly; extractors used without that assembly (a plain Axum
+router, or a direct `from_request` call) use the defaults.
+
+`ValidRejection` is removed. `Valid<Json<T>>` and `Valid<axum::extract::Json<T>>` now return a
+rendered response as their rejection; the latter still keeps Axum's original JSON rejection
+response. Extractor rejection types keep their `From<_> for HttpError` conversions.
+
+Use Axum's originals to opt out of the wrappers and their configured handlers:
+
+```rust
+use gotcha::axum::extract::{Form, Json, Multipart, Path, Query};
+use gotcha::axum_extra::TypedHeader;
+```
+
+**New `HttpError` and `ErrorBody`.** `HttpError` holds a status and a message and renders the
+same JSON body; constructors are `new`, `bad_request`, `not_found`, `conflict`, and `internal`.
+It implements `IntoResponse`, `Schematic`, and `Responsible`, so it can be returned from handlers
+and declared in `#[api(errors(response(status = 404, body = "HttpError")))]` or
+`#[api(responses(...))]`. The registered component is `ErrorBody { error: String }`; either type
+name can be used in a declaration.
+
+**`GotchaError` no longer leaks its message.** It still renders `500 Internal Server Error`, but
+the body is now `{"error": "internal server error"}`. The full error (including configuration
+paths, addresses, and I/O failures) is sent to `tracing::error!` only.
+
+**`json_response!` expands to `gotcha::Json`** and to gotcha's re-exported `serde_json` instead
+of naming `axum::Json` at the call site, so callers need neither dependency directly.
 
 ---
 

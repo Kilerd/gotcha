@@ -1,7 +1,7 @@
 //! Request-body validation via the [`validator`](https://docs.rs/validator) crate.
 //!
 //! [`Valid`] wraps an extractor and validates its decoded value with [`validator::Validate`].
-//! The common case is `Valid<Json<T>>`: it extracts the JSON body like [`axum::Json`], then
+//! The common case is `Valid<Json<T>>`: it extracts the JSON body like [`crate::Json`], then
 //! runs `T::validate()` and rejects with `422 Unprocessable Entity` when validation fails,
 //! carrying the errors as JSON:
 //!
@@ -13,6 +13,10 @@
 //! Every error carries a readable `message`: the one declared via
 //! `#[validate(.., message = "..")]`, or a default derived from the error's code and params
 //! (`validator` itself leaves `message` null in the serialized form).
+//!
+//! `Valid<axum::Json<T>>` (using the original Axum extractor) is accepted as well and keeps
+//! Axum's original JSON rejection response, so choosing that extractor opts out of the
+//! framework's JSON error body.
 //!
 //! Wrapping the extractor (rather than the bare `T`) keeps `Json<T>` unchanged for callers that
 //! don't want validation, and leaves room to validate other extractors later. A blanket
@@ -44,19 +48,23 @@
 
 use std::borrow::Cow;
 
-use axum::extract::rejection::JsonRejection;
 use axum::extract::{FromRequest, Request};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use axum::Json;
 use serde::de::DeserializeOwned;
+use serde::Serialize;
 use validator::{Validate, ValidationError, ValidationErrors, ValidationErrorsKind};
+
+use crate::Json;
 
 /// Extractor that validates another extractor's decoded value with [`validator::Validate`].
 ///
-/// Use `Valid<Json<T>>` to extract and validate a JSON body: it behaves like [`axum::Json`],
+/// Use `Valid<Json<T>>` to extract and validate a JSON body: it behaves like [`crate::Json`],
 /// then calls `T::validate()`. On success the handler receives `Valid(Json(value))`; otherwise
-/// the request is rejected with [`ValidRejection`] before the handler runs.
+/// the request is rejected before the handler runs. A malformed body uses the
+/// [`JsonConfig`](crate::JsonConfig) handler; a failed validation uses
+/// [`ValidConfig`](crate::ValidConfig), which defaults to `422 Unprocessable Entity` with the
+/// structured `ValidationErrors` body.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Valid<E>(pub E);
 
@@ -73,28 +81,66 @@ impl<E> std::ops::DerefMut for Valid<E> {
     }
 }
 
-/// Rejection produced by the [`Valid`] extractor.
-#[derive(Debug)]
-pub enum ValidRejection {
-    /// The body could not be deserialized; delegates to axum's JSON rejection response.
-    Json(JsonRejection),
-    /// The body deserialized but failed validation. Rendered as `422 Unprocessable Entity` with
-    /// the errors as JSON.
-    Invalid(ValidationErrors),
+/// The default body of a [`Valid`] validation failure.
+///
+/// `validator` serializes its errors as a map from field name to a list of
+/// `{ code, message, params }` objects. The default [`ValidConfig`](crate::ValidConfig) handler
+/// sends this value with `422 Unprocessable Entity`; a custom handler may reuse it.
+#[derive(Debug, Serialize)]
+#[serde(transparent)]
+pub struct ValidationErrorsBody(pub ValidationErrors);
+
+#[cfg(feature = "openapi")]
+impl crate::Schematic for ValidationErrorsBody {
+    fn name() -> &'static str {
+        "ValidationErrors"
+    }
+
+    fn required() -> bool {
+        true
+    }
+
+    fn type_() -> &'static str {
+        "object"
+    }
+
+    fn doc() -> Option<String> {
+        Some("Validation errors keyed by field name".to_string())
+    }
+
+    fn generate_schema() -> crate::EnhancedSchema {
+        gotcha_core::registry::schema_or_ref("ValidationErrors", true, || {
+            // Doc-only: this describes the common field-level shape. `validator` serializes
+            // nested struct/list failures as nested maps instead of this array form.
+            let schema = gotcha_core::oas::Schema {
+                _type: Some("object".into()),
+                extras: std::collections::BTreeMap::from([(
+                    "additionalProperties".into(),
+                    serde_json::json!({
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "code": {"type": "string"},
+                                "message": {"type": "string"},
+                                "params": {"type": "object"}
+                            },
+                            "required": ["code", "message", "params"]
+                        }
+                    }),
+                )]),
+                ..gotcha_core::oas::Schema::default()
+            };
+            crate::EnhancedSchema { schema, required: true }
+        })
+    }
 }
 
-impl IntoResponse for ValidRejection {
-    fn into_response(self) -> Response {
-        match self {
-            ValidRejection::Json(rejection) => rejection.into_response(),
-            ValidRejection::Invalid(mut errors) => {
-                // The body is syntactically valid JSON that failed semantic validation, so `422`
-                // is a better fit than `400` (which axum already uses for malformed bodies).
-                fill_default_messages(&mut errors);
-                (StatusCode::UNPROCESSABLE_ENTITY, Json(errors)).into_response()
-            }
-        }
-    }
+/// The default `Valid` rejection: fill in readable messages and send the structured body as
+/// `422 Unprocessable Entity`.
+pub(crate) fn validation_error_response(mut errors: ValidationErrors) -> Response {
+    fill_default_messages(&mut errors);
+    crate::error::json_response(StatusCode::UNPROCESSABLE_ENTITY, ValidationErrorsBody(errors))
 }
 
 /// Give every error a non-null `message`.
@@ -177,13 +223,33 @@ where
     T: DeserializeOwned + Validate,
     S: Send + Sync,
 {
-    type Rejection = ValidRejection;
+    type Rejection = Response;
 
     async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
-        let json = Json::<T>::from_request(req, state).await.map_err(ValidRejection::Json)?;
-        // `Json<T>` derefs to `T`, so this resolves to `T::validate`.
-        json.validate().map_err(ValidRejection::Invalid)?;
-        Ok(Valid(json))
+        // A malformed body is a `Json` rejection and is rendered by `JsonConfig`.
+        let config = crate::extract::config::configs(req.extensions());
+        let Json(value) = <Json<T> as FromRequest<S>>::from_request(req, state).await?;
+        // Only a body that deserialized and failed validation reaches `ValidConfig`.
+        value.validate().map_err(|errors| config.valid.render(errors))?;
+        Ok(Valid(Json(value)))
+    }
+}
+
+impl<S, T> FromRequest<S> for Valid<axum::extract::Json<T>>
+where
+    T: DeserializeOwned + Validate,
+    S: Send + Sync,
+{
+    type Rejection = Response;
+
+    async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
+        // Choosing the Axum original keeps its own rejection response.
+        let config = crate::extract::config::configs(req.extensions());
+        let axum::extract::Json(value) = <axum::extract::Json<T> as FromRequest<S>>::from_request(req, state)
+            .await
+            .map_err(|rejection| rejection.into_response())?;
+        value.validate().map_err(|errors| config.valid.render(errors))?;
+        Ok(Valid(axum::extract::Json(value)))
     }
 }
 
@@ -198,9 +264,19 @@ where
     }
 }
 
+#[cfg(feature = "openapi")]
+impl<T> crate::ParameterProvider for Valid<axum::extract::Json<T>>
+where
+    T: crate::Schematic,
+{
+    fn generate(url: String) -> crate::Either<Vec<oas::Parameter>, oas::RequestBody> {
+        <axum::extract::Json<T> as crate::ParameterProvider>::generate(url)
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use axum::body::Body;
+    use axum::body::{to_bytes, Body};
     use serde::Deserialize;
 
     use super::*;
@@ -240,17 +316,54 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn invalid_body_is_rejected_with_422() {
-        let extracted = Valid::<Json<Payload>>::from_request(json_request(r#"{"age": 200}"#), &()).await;
-        let rejection = extracted.err().expect("out-of-range age must be rejected");
-        assert!(matches!(rejection, ValidRejection::Invalid(_)));
-        assert_eq!(rejection.into_response().status(), StatusCode::UNPROCESSABLE_ENTITY);
+    async fn invalid_body_is_rejected_with_the_structured_422_body() {
+        let response = Valid::<Json<Payload>>::from_request(json_request(r#"{"age": 200}"#), &())
+            .await
+            .err()
+            .expect("out-of-range age must be rejected");
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(response.headers()["content-type"], "application/json");
+        let bytes = to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert!(body["error"].is_null(), "the default Valid body is the structured error map");
+        assert_eq!(body["age"][0]["message"], "must be at least 0 and at most 150");
     }
 
     #[tokio::test]
-    async fn malformed_json_delegates_to_json_rejection() {
-        let extracted = Valid::<Json<Payload>>::from_request(json_request("not json"), &()).await;
-        assert!(matches!(extracted, Err(ValidRejection::Json(_))));
+    async fn malformed_json_keeps_axums_status_with_a_json_body() {
+        let response = Valid::<Json<Payload>>::from_request(json_request("not json"), &())
+            .await
+            .err()
+            .expect("malformed JSON must be rejected");
+        // The default Json handler keeps Axum's status (400 for a syntax error).
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(response.headers()["content-type"], "application/json");
+        let bytes = to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert!(body["error"].is_string());
+    }
+
+    #[tokio::test]
+    async fn axum_json_variant_extracts_and_keeps_axum_rejections() {
+        let extracted = Valid::<axum::extract::Json<Payload>>::from_request(json_request(r#"{"age": 30}"#), &()).await;
+        assert!(matches!(extracted, Ok(Valid(axum::extract::Json(Payload { age: 30 })))));
+
+        let response = Valid::<axum::extract::Json<Payload>>::from_request(json_request("not json"), &())
+            .await
+            .err()
+            .expect("malformed JSON must be rejected");
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert!(
+            response.headers()["content-type"].to_str().unwrap().starts_with("text/plain"),
+            "the Axum variant keeps Axum's rejection response"
+        );
+
+        // Validation failures still use the shared structured 422 body.
+        let response = Valid::<axum::extract::Json<Payload>>::from_request(json_request(r#"{"age": 200}"#), &())
+            .await
+            .err()
+            .expect("out-of-range age must be rejected");
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
     }
 
     #[test]

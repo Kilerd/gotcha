@@ -728,6 +728,28 @@ where
         self
     }
 
+    /// Replace one extractor provider's rejection response.
+    ///
+    /// Configurations default to the framework's handlers (the original status with a JSON
+    /// `{"error": "..."}` body, or `422` with the structured validation errors for
+    /// [`ValidConfig`](crate::ValidConfig)). Each provider is configured independently; this
+    /// method is the builder equivalent of
+    /// [`GotchaApp::extractor_configs`](crate::GotchaApp::extractor_configs).
+    ///
+    /// ```rust,no_run
+    /// use gotcha::{Gotcha, JsonConfig};
+    ///
+    /// let app = Gotcha::new()
+    ///     .extractor_config(JsonConfig::default().error_handler(|rejection| {
+    ///         (gotcha::axum::http::StatusCode::BAD_REQUEST, gotcha::ErrorBody { error: rejection.body_text() })
+    ///     }))
+    ///     .post("/items", || async { "created" });
+    /// ```
+    pub fn extractor_config<Cfg: crate::extract::ExtractorConfig>(mut self, config: Cfg) -> Self {
+        self.router = self.router.extractor_config(config);
+        self
+    }
+
     /// Apply a layer to business routes already registered, following Axum's ordering.
     /// Documentation endpoints are not covered. Use [`Self::app_layer`] for every endpoint.
     pub fn layer<L>(mut self, layer: L) -> Self
