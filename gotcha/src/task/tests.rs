@@ -1,6 +1,7 @@
 use super::*;
 use crate::ConfigWrapper;
 use std::cell::Cell;
+use std::error::Error;
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
     Arc, Mutex,
@@ -29,7 +30,19 @@ fn registration_is_inert_and_can_be_discarded_without_a_runtime() {
     });
     scheduler.cron("invalid", "not a schedule".into(), |_| async {});
     scheduler.interval("zero", Duration::ZERO, |_| async {});
-    drop(scheduler);
+    let Err(error) = scheduler.into_tasks() else {
+        panic!("invalid registrations must be registration errors");
+    };
+    let message = error.to_string();
+    assert!(message.contains("\"invalid\"") && message.contains("\"not a schedule\""), "{message}");
+    assert!(message.contains("\"zero\"") && message.contains("zero interval"), "{message}");
+    // The top layer names the registrations; the parser's own text belongs to the source layer.
+    assert!(!message.contains("Invalid expression"), "{message}");
+    let GotchaError::Other(inner) = error else {
+        panic!("registration errors must keep their source");
+    };
+    let source = inner.source().expect("the cron parse error must stay in the error chain");
+    assert!(source.to_string().contains("Invalid expression"), "{source}");
     assert_eq!(drops.try_recv(), Ok(()));
 }
 

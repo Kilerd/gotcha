@@ -145,6 +145,8 @@ async fn rejected(body: Result<Valid<Json<User>>, Rejected<ValidRejection>>) -> 
                 fields.keys().cloned().collect::<Vec<_>>().join(",")
             }
             ValidRejection::Json(_) => "json".to_string(),
+            // `ValidRejection` is `#[non_exhaustive]`; a later release may add a variant.
+            _ => "other".to_string(),
         },
     }
 }

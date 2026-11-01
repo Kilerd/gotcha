@@ -1,5 +1,9 @@
 # Migration Guide
 
+- [Unreleased: invalid task registrations fail startup](#unreleased-invalid-task-registrations-fail-startup)
+- [Unreleased: non-exhaustive extractor enums](#unreleased-non-exhaustive-extractor-enums)
+- [Unreleased: shared configuration](#unreleased-shared-configuration)
+- [Unreleased: removed unused public items](#unreleased-removed-unused-public-items)
 - [Unreleased: duplicate operation ids are suffixed](#unreleased-duplicate-operation-ids-are-suffixed)
 - [Unreleased: data-type Schematic impls are features](#unreleased-data-type-schematic-impls-are-features)
 - [Unreleased: validation `length` keywords follow the schema type](#unreleased-validation-length-keywords-follow-the-schema-type)
@@ -30,6 +34,101 @@
 - [Unreleased: default configuration sources](#unreleased-default-configuration-sources)
 - [0.3 → 0.4](#03--04) — **every application must edit its route paths and configuration file**
 - [0.2 → 0.3: API simplification](#02--03-api-simplification)
+
+---
+
+# Unreleased: invalid task registrations fail startup
+
+**An application that registers an invalid cron expression or a zero interval no longer starts.**
+`TaskScheduler::cron` and `interval` previously logged the problem and dropped the task, so
+`bind()` and `run()` succeeded with a silently missing schedule. Registration problems are now
+returned from preparation as a `GotchaError`: the message names the task and, for cron, the
+expression, and the parse error stays available through the error's source chain. The listener is
+released and no pending task starts.
+
+Standalone `TaskScheduler::start()` callers keep the previous behaviour: recorded registrations are
+logged and skipped, and the valid tasks still start. Fix the expression or interval before
+upgrading.
+
+---
+
+# Unreleased: non-exhaustive extractor enums
+
+**`gotcha::ExtractorKind` (with the `openapi` feature), `gotcha_core::ExtractorKind` (with
+`axum`), `gotcha::validation::ValidRejection`, and `gotcha::ParamRejection` are now
+`#[non_exhaustive]`,** so a later release can add an extractor provider, a validation-failure
+variant, or a header/cookie rejection variant without a breaking change.
+
+- A `match` on any of these types outside the crate that defines it needs a wildcard arm
+  (`_ => ..`); a `matches!(..)` with a single variant keeps compiling.
+- Constructing the existing variants is unchanged: `ExtractorKind::Json`, the `ValidRejection`
+  variants, and `ParamRejection::Missing`/`Invalid`/`NotText` remain usable.
+
+---
+
+# Unreleased: shared configuration
+
+`GotchaContext::config` is now an `Arc<ConfigWrapper<C>>` rather than a `ConfigWrapper<C>`. axum
+clones the state passed through `with_state` for every request, so the previous representation
+deep-cloned the whole application configuration on each request; a request now clones the `Arc`
+instead. How much this saves grows with the configuration: string fields dominate.
+
+- `GotchaContext::new(state, config)` keeps its signature and wraps the configuration in an `Arc`.
+- Reading is unchanged: `context.config.server.port` and `context.config.field` still work through
+  `Arc`'s `Deref`, `&*context.config` yields `&ConfigWrapper<C>`, and extractors such as
+  `State<ConfigWrapper<C>>`, `State<ServerConfig>`, and the `#[config]` types are unaffected. Deref
+  coercion also keeps `let config: &ConfigWrapper<C> = &context.config;` compiling.
+- Writing through the field no longer compiles (`context.config.app.field = ..` is E0594: the
+  `Arc` only hands out shared access). Use `Arc::make_mut(&mut context.config).app.field = ..`
+  while the configuration implements `Clone`, or `Arc::get_mut(&mut context.config)` while the
+  `Arc` is unique (no `Clone` needed). For a shared, non-`Clone` configuration, rebuild a
+  `ConfigWrapper` from its parts and assign `context.config = Arc::new(config)`.
+- Serializing the field needs a dereference: `serde_json::to_string(&context.config)` and
+  `Json(context.config.clone())` stop compiling because serde's `rc` feature is off by default. Use
+  `serde_json::to_string(&*context.config)` and `Json((*context.config).clone())`.
+- Cloning a context no longer requires `Config: Clone`: the shared configuration is only refcounted.
+- `GotchaContext` is `Send`/`Sync` only when the stored `ConfigWrapper<C>` is `Send + Sync`, because
+  `Arc<T>` requires both; a hand-built context whose configuration was only `Send` is no longer
+  `Send`. Application configurations are normally `Send + Sync`.
+- `Gotcha::from_context` reuses the supplied configuration without cloning when nothing else
+  shares it.
+
+```rust,ignore
+// Before
+fn app_config(context: &GotchaContext<AppState, AppConfig>) -> ConfigWrapper<AppConfig> {
+    context.config.clone()
+}
+
+// After
+fn app_config(context: &GotchaContext<AppState, AppConfig>) -> ConfigWrapper<AppConfig> {
+    (*context.config).clone()
+}
+```
+# Unreleased: removed unused public items
+
+Several public items that nothing in the framework, examples, or documentation used are gone.
+Each had a direct replacement:
+
+| Removed | Replacement |
+| --- | --- |
+| `Gotcha::quick_start()` | `Gotcha::new()`, plus logging setup if you need it |
+| `quick_server!` | `Gotcha::new()` followed by the same route method calls |
+| `handler!` | write the closure directly, for example an `async move` block |
+| `gotcha::Lazy` | `once_cell::sync::Lazy` (or `std::sync::LazyLock`) with a direct dependency |
+| `GotchaConfig` | name the bounds directly: `Clone + Send + Sync + 'static + Serialize + for<'de> Deserialize<'de> + Default` |
+| `gotcha::prelude::Result` | write `Result<T, Box<dyn std::error::Error + Send + Sync>>`; standard `Result` is no longer shadowed |
+| `gotcha::openapi::replace_path_variable` | nothing: axum 0.8 routes already use OpenAPI's `{name}` syntax |
+| `gotcha::openapi::path_variable_names` | `axum::extract::MatchedPath`, or iterate the `{name}` segments yourself |
+
+`Gotcha::quick_start` panicked when called twice because it installed the tracing subscriber
+globally; logging is left to the application. `quick_server!` was documented as starting a server
+but only returned a builder. `prelude::Result` shadowed the standard library's `Result` on glob
+import, so `Result<T>` in a module using the prelude failed to mean `std::result::Result`.
+
+gotcha's direct `regex` dependency is gone with `path_variable_names` (`gotcha_core` still uses
+its own `regex` dependency). `EmptyState` stays: it appears in the builder's default type
+parameters and public signatures, and replacing it with `()` would churn call sites without
+removing a concept.
 
 ---
 
@@ -587,8 +686,30 @@ private business routes and public documentation, keep authentication on those b
 Use `.app_layer(auth_layer)` on the builder for authentication, CORS, or other middleware that must
 cover every application endpoint and fallback. It applies after routes and documentation are
 assembled, even when registered before them. Repeated calls wrap in Axum order: the last registered
-application layer sees incoming requests first. `with_cors()` retains its existing `layer` scope;
-use `app_layer(CorsLayer::permissive())` when CORS should also cover documentation.
+application layer sees incoming requests first. `with_cors()` installs
+`CorsLayer::permissive()` as an application layer too, so it covers the complete application
+regardless of the order in which it is called. This changes behaviour compared with the previous
+business-route scope:
+
+- Documentation endpoints and `/metrics` now send `Access-Control-Allow-Origin: *`; an `OPTIONS`
+  preflight to `/metrics` returns `200` instead of `405`.
+- Routes registered after the call are covered: `.get("/public").with_cors().get("/admin")` also
+  allows cross-origin requests to `/admin`.
+- Application layers keep their usual order (the last one registered runs first). With
+  `.app_layer(auth).with_cors()`, or `.with_cors().layer(auth)` for a business layer, the preflight
+  is answered with `200` before authentication runs: auth, rate limiting, and audit logging no
+  longer observe `OPTIONS` preflight requests. Registering auth with
+  `.with_cors().app_layer(auth)` keeps auth outside CORS, as for any other application layer.
+- The Prometheus metric layer no longer observes `OPTIONS` preflight requests in any call order,
+  because CORS answers them before request metrics are recorded.
+- Preflights for paths that match no route already returned `200` on main in three of the four
+  call orders; only `.with_cors()` before a custom `.fallback(..)` left them at `404`, and they now
+  return `200` in that order too.
+
+To keep the old business-route-only scope, register the routes first and then call
+`.layer(CorsLayer::permissive())`; `with_cors()` is now equivalent to
+`.app_layer(CorsLayer::permissive())`. As on main, that layer still covers the fallback, so
+unmatched paths keep receiving CORS headers.
 
 The corresponding trait hook is
 `fn finish_router(&self, router: axum::Router, context: &GotchaContext<Self::State, Self::Config>) -> axum::Router`.
@@ -596,8 +717,8 @@ Return `router.layer(auth_layer)` from it to cover the complete application. Thi
 documentation is mounted, without requiring an override of `build_router`. An existing custom
 `build_router` still owns its whole assembly and must invoke any desired finalization itself.
 The builder's `.finish_router(|router, context| ..)` is the equivalent hook; it receives a clone
-of the application context (configuration duplicated, state shared behind an `Arc` still the same
-value), and `app_layer` middleware remains outermost around whatever the hook mounts.
+of the application context (configuration shared behind an `Arc`, state shared behind an `Arc`
+still the same value), and `app_layer` middleware remains outermost around whatever the hook mounts.
 Routes added through these native Axum hooks do not contribute OpenAPI metadata.
 
 ## Export without HTTP
@@ -684,8 +805,8 @@ responses: <String as Responsible>::response,
 
 Capturing closures cannot be stored in the new function-pointer fields. Apply configuration-dependent
 changes through the existing `.openapi(move |spec| ...)` transform instead. User transforms still
-support captured state. `ParameterProvider::generate`, `ParamType`, and the public `gotcha::Lazy`
-and `gotcha::Either` re-exports retain their existing interfaces.
+support captured state. `ParameterProvider::generate`, `ParamType`, and the public `gotcha::Either`
+re-export retain their existing interfaces.
 
 Static constructor storage does not cache generated parameters, responses, schemas, or complete
 OpenAPI documents. Constructors still run inside each document's schema collection scope, preserving
@@ -764,7 +885,8 @@ already-due tick once when it finishes and then resumes at the next period bound
 (tokio's `MissedTickBehavior::Skip`), and cron tasks compute the next trigger from the current
 time, anchored to the last trigger that fired so a wall-clock step back cannot repeat it. The
 low-level `cron_proc_macro_wrapper` and `interval_proc_macro_wrapper` drivers share these rules.
-Invalid cron expressions and zero intervals are logged and skipped during registration.
+Invalid cron expressions and zero intervals are registration errors that fail application startup;
+see [invalid task registrations fail startup](#unreleased-invalid-task-registrations-fail-startup).
 
 ---
 
@@ -862,9 +984,6 @@ require `Self::Config: DeserializeOwned`, because their contract includes config
 This method bound applies even when `config()` is overridden; use an explicit context if the
 configuration cannot be deserialized. Generic callers of these methods must now state that bound
 explicitly. `Serialize` and `Default` are no longer required by trait-based loading.
-
-The existing `GotchaConfig` marker retains its original bounds for compatibility with user generic
-code. Runtime containers and the extraction macros no longer require it.
 
 Explicit configuration still wins over registered sources. See [shared startup](#unreleased-shared-startup)
 for the unified strict loading policy, explicit fallback, and listener address precedence.

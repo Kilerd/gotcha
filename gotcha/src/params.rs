@@ -115,7 +115,11 @@ impl<T> std::ops::Deref for Cookie<T> {
 }
 
 /// Rejection produced by [`Header`] and [`Cookie`].
+///
+/// This enum is `#[non_exhaustive]`: a later release may add a variant, so a `match` outside this
+/// crate needs a wildcard arm.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum ParamRejection {
     /// A required parameter was absent.
     Missing {
