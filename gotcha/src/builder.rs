@@ -1032,11 +1032,26 @@ where
         self
     }
 
-    /// Add CORS support (requires "cors" feature)
+    /// Allow cross-origin requests to the whole application (requires the "cors" feature).
+    ///
+    /// Installs [`CorsLayer::permissive`](crate::layers::CorsLayer) as an application layer, so
+    /// the call site is irrelevant: it covers routes registered before and after it, nested
+    /// routers and services, the fallback, documentation endpoints, and the metrics endpoint.
+    /// Preflight requests are answered by the layer itself, including on paths that match no
+    /// route. Because it is an application layer, it also covers handlers and services mounted in
+    /// [`finish_router`](Self::finish_router), and it follows [`app_layer`](Self::app_layer)
+    /// ordering relative to other application layers (the last one registered runs first).
+    ///
+    /// The permissive policy allows any origin, method, and header; build a
+    /// [`CorsLayer`](crate::layers::CorsLayer) and pass it to
+    /// [`app_layer`](Self::app_layer) instead for a restricted policy. To keep CORS off
+    /// documentation and the metrics endpoint as before, register the business routes first and
+    /// then call [`layer`](Self::layer) with `CorsLayer::permissive()`; the fallback and unmatched
+    /// paths were already covered by that layer.
     #[cfg(feature = "cors")]
     pub fn with_cors(self) -> Self {
         use crate::layers::CorsLayer;
-        self.layer(CorsLayer::permissive())
+        self.app_layer(CorsLayer::permissive())
     }
 
     /// Enable the default OpenAPI JSON and Scalar endpoints.
@@ -1440,6 +1455,106 @@ mod tests {
         assert_eq!((status, body.as_slice()), (StatusCode::OK, b"proxied 3".as_slice()));
         assert_eq!(headers.get("x-app-layer").unwrap(), "applied", "app_layer covers finish-hook services");
         assert_eq!(calls.load(Ordering::SeqCst), 4, "the finish hook built the proxy from application state");
+    }
+
+    #[cfg(feature = "cors")]
+    #[tokio::test]
+    async fn with_cors_covers_the_whole_application_regardless_of_call_order() {
+        use axum::{
+            body::Body,
+            http::{header, StatusCode},
+        };
+        use tower::ServiceExt;
+
+        use crate::startup::Application;
+
+        fn context() -> GotchaContext<EmptyState, EmptyConfig> {
+            GotchaContext::new(EmptyState::default(), ConfigWrapper::default())
+        }
+
+        fn application(cors_first: bool) -> Gotcha<EmptyState, EmptyConfig> {
+            let mut app = Gotcha::from_context(context());
+            if cors_first {
+                app = app.with_cors();
+            }
+            app = app
+                .get("/hello", || async { "hello" })
+                .nest("/nested", GotchaRouter::default().get("/inside", || async { "nested" }))
+                .fallback(|| async { (StatusCode::NOT_FOUND, "fallback") })
+                .finish_router(|router, _context| {
+                    router.nest_service(
+                        "/assets",
+                        tower::service_fn(|_: axum::extract::Request| async { Ok::<_, std::convert::Infallible>("asset") }),
+                    )
+                });
+            #[cfg(feature = "openapi")]
+            {
+                app = app.with_openapi();
+            }
+            #[cfg(feature = "prometheus")]
+            {
+                app = app.metrics(crate::MetricsEndpoint::default());
+            }
+            if !cors_first {
+                app = app.with_cors();
+            }
+            app
+        }
+
+        async fn call(router: &axum::Router, method: &str, path: &str, preflight: bool) -> (StatusCode, axum::http::HeaderMap) {
+            let mut request = axum::http::Request::builder()
+                .method(method)
+                .uri(path)
+                .header(header::ORIGIN, "http://example.com");
+            if preflight {
+                request = request.header(header::ACCESS_CONTROL_REQUEST_METHOD, "GET");
+            }
+            let response = router.clone().oneshot(request.body(Body::empty()).unwrap()).await.unwrap();
+            (response.status(), response.headers().clone())
+        }
+
+        fn allows_origin(headers: &axum::http::HeaderMap) -> bool {
+            headers.get(header::ACCESS_CONTROL_ALLOW_ORIGIN).is_some_and(|value| value == "*")
+        }
+
+        for cors_first in [true, false] {
+            let mut app = application(cors_first);
+            let router = app.router(context()).await.unwrap();
+
+            let (status, headers) = call(&router, "GET", "/hello", false).await;
+            assert_eq!(status, StatusCode::OK);
+            assert!(allows_origin(&headers), "business route, cors first: {cors_first}");
+
+            let (status, headers) = call(&router, "GET", "/missing", false).await;
+            assert_eq!(status, StatusCode::NOT_FOUND);
+            assert!(allows_origin(&headers), "fallback, cors first: {cors_first}");
+
+            let (status, headers) = call(&router, "GET", "/nested/inside", false).await;
+            assert_eq!(status, StatusCode::OK);
+            assert!(allows_origin(&headers), "nested router, cors first: {cors_first}");
+
+            let (status, headers) = call(&router, "GET", "/assets/file", false).await;
+            assert_eq!(status, StatusCode::OK);
+            assert!(allows_origin(&headers), "finish_router service, cors first: {cors_first}");
+
+            // The layer answers preflight itself, so an unmatched path still gets CORS headers.
+            let (status, headers) = call(&router, "OPTIONS", "/missing", true).await;
+            assert_eq!(status, StatusCode::OK);
+            assert!(allows_origin(&headers), "preflight on an unknown path, cors first: {cors_first}");
+
+            #[cfg(feature = "openapi")]
+            for path in ["/openapi.json", "/scalar"] {
+                let (status, headers) = call(&router, "GET", path, false).await;
+                assert_eq!(status, StatusCode::OK);
+                assert!(allows_origin(&headers), "documentation at {path}, cors first: {cors_first}");
+            }
+            #[cfg(feature = "prometheus")]
+            {
+                let (status, headers) = call(&router, "GET", "/metrics", false).await;
+                assert_eq!(status, StatusCode::OK);
+                assert!(allows_origin(&headers), "metrics endpoint, cors first: {cors_first}");
+            }
+        }
     }
 
     #[cfg(feature = "openapi")]
