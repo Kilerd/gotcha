@@ -4,6 +4,7 @@
 - [Unreleased: neutral OpenAPI info defaults](#unreleased-neutral-openapi-info-defaults)
 - [Unreleased: serde-driven field presence](#unreleased-serde-driven-field-presence)
 - [Unreleased: validation error bodies](#unreleased-validation-error-bodies)
+- [Unreleased: Schematic in every build and wire-name validation errors](#unreleased-schematic-in-every-build-and-wire-name-validation-errors)
 - [Unreleased: JSON error bodies and extractors](#unreleased-json-error-bodies-and-extractors)
 - [Unreleased: OpenAPI 3.2](#unreleased-openapi-32)
 - [Unreleased: HTTP/1 is always enabled](#unreleased-http1-is-always-enabled)
@@ -217,10 +218,9 @@ framework-wide `ErrorBody` instead of validator's raw `ValidationErrors` structu
 - Values of a nested map (`HashMap`/`BTreeMap` with `#[validate(nested)]`) appear as
   `entries[<index>].name`. Validator indexes them by map iteration order and drops the key, so
   the original key cannot be recovered and the index may differ between requests.
-- Field segments are Rust field names. Validator keys errors by the Rust identifier and ignores
-  `#[serde(rename = "..")]` / `#[serde(rename_all = "..")]`, so a `first_name` field serialized
-  as `firstName` is reported as `first_name`. Until a follow-up maps wire names, remap the keys
-  in a `ValidConfig::error_handler` if clients need the JSON names.
+- Field segments are serde wire names, not Rust identifiers: `first_name` sent as `firstName` is
+  reported as `firstName`. See
+  [Schematic in every build and wire-name validation errors](#unreleased-schematic-in-every-build-and-wire-name-validation-errors).
 - The unreleased `ValidationErrorsBody` type is removed. A custom
   `ValidConfig::error_handler` still receives `&validator::ValidationErrors`; use
   `gotcha::validation::flatten_errors(&errors)` to build the same field map (or any other
@@ -231,6 +231,58 @@ framework-wide `ErrorBody` instead of validator's raw `ValidationErrors` structu
   unchanged.
 
 Clients that parsed the raw `ValidationErrors` structure must move to the `fields` map.
+
+---
+
+# Unreleased: Schematic in every build and wire-name validation errors
+
+**`Schematic` no longer requires the `openapi` feature, and `Valid` reports failures under the
+names serde reads.**
+
+- `gotcha_core` is now a required dependency of `gotcha`. The `openapi` feature only enables
+  document generation and its axum-facing glue: `oas`, `#[api]`, `ParameterProvider`,
+  `Responsible`, `gotcha_core/axum`, and the documentation endpoints. A build with no features
+  gains `gotcha_core`, `oas`, `serde_with`, and `serde_with_macros`; chrono, uuid, bigdecimal,
+  and rust_decimal were already dependencies of `gotcha`.
+- `Schematic`, `#[derive(Schematic)]`, `EnhancedSchema`, and the new `WireField` are re-exported
+  at the crate root and in the prelude in every build. `gotcha::gotcha_core` is always available
+  too, so the derive's generated paths resolve without `openapi`.
+- `Valid<Json<T>>` and `Valid<axum::extract::Json<T>>` require `T: Schematic` (container types
+  such as `Vec<T>` implement it by delegating). Add `#[derive(Schematic)]` to the validated type
+  if it only derived `Validate` before. A hand-written `Schematic` implementation keeps
+  compiling; add `wire_fields` when its fields are renamed on the wire. A hand-written wrapper
+  must forward to its inner type (`T::wire_fields()`): the default returns no mapping, so a
+  generic wrapper such as `Paged<T>` that forgets to delegate hides every renamed field below it.
+- The new blanket `impl<T: Schematic> Schematic for Box<T>` conflicts with a downstream
+  `impl Schematic for Box<LocalType>` when `LocalType` also implements `Schematic`. `Box` is
+  `#[fundamental]`, so the orphan rules already allowed that manual implementation and the
+  compiler now reports E0119. Delete it: `Box<T>` delegates to `T` automatically. The other new
+  container implementations (`Arc`, `Rc`, `Cow`, sets, `VecDeque`, arrays) are not fundamental,
+  so a downstream implementation for them was never allowed and cannot conflict.
+- Validation error paths now use serde's *deserialize* names at every segment:
+  `#[serde(rename = "..")]`, `#[serde(rename_all = "..")]`, and the
+  `rename(deserialize = "..")` / `rename_all(deserialize = "..")` forms. A `first_name` field
+  sent as `firstName` is reported as `firstName`. `__all__` and the fields of a type without a
+  `Schematic` table keep their names, and nested maps keep their index-only paths. A
+  `#[serde(skip_serializing)]` field is renamed, but the fields below it keep their Rust names,
+  because its type is not required to implement `Schematic`.
+- A `#[serde(flatten)]` struct field contributes no path segment: its fields are reported at the
+  parent level, matching the payload shape.
+- The rewrite happens before rendering, so the default `ErrorBody`, a custom
+  `ValidConfig::error_handler`, and `Rejected<ValidRejection>` all see wire names. Code that calls
+  `validate()` itself can apply the same mapping with
+  `gotcha::validation::remap_to_wire_names::<T>(&mut errors)`.
+- `#[schematic(as = "Type")]` describes a field as another type for the schema, requiredness,
+  nullability, and nested wire mapping; the declared type no longer needs `Schematic`. Serde
+  presence rules still apply on top; an `Option<MyUrl>` field with `as = "Option<String>"`
+  keeps its nullable schema.
+- New `Schematic` implementations: `Box<T>`, `Arc<T>`, `Rc<T>`, `Cow<'_, T>`, `str`, `char`,
+  `i128`/`u128`, the `NonZero*` integers (`minimum: 1` for unsigned), `IpAddr`/`Ipv4Addr`/
+  `Ipv6Addr`, `DateTime<FixedOffset>`, `DateTime<Local>`, `NaiveTime`, `BTreeSet<T>`,
+  `VecDeque<T>`, and `[T; N]` (with `minItems`/`maxItems` set to `N`).
+
+Documents for applications that do not use `#[schematic(as = "..")]` are unchanged. Clients that
+read `fields` keys may see renamed keys; regenerate clients that pinned the Rust names.
 
 ---
 

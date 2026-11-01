@@ -26,14 +26,14 @@ struct FormPayload {
     name: String,
 }
 
-#[derive(Debug, Deserialize, Serialize, gotcha::Validate)]
+#[derive(Debug, Deserialize, Serialize, gotcha::Schematic, gotcha::Validate)]
 #[validate(crate = "gotcha::validator")]
 struct Validated {
     #[validate(length(min = 1))]
     name: String,
 }
 
-#[derive(Debug, Deserialize, gotcha::Validate)]
+#[derive(Debug, Deserialize, gotcha::Schematic, gotcha::Validate)]
 #[serde(rename_all = "camelCase")]
 #[validate(crate = "gotcha::validator")]
 struct Renamed {
@@ -41,21 +41,21 @@ struct Renamed {
     first_name: String,
 }
 
-#[derive(Debug, Deserialize, gotcha::Validate)]
+#[derive(Debug, Deserialize, gotcha::Schematic, gotcha::Validate)]
 #[validate(crate = "gotcha::validator")]
 struct Address {
     #[validate(length(min = 1, max = 64))]
     city: String,
 }
 
-#[derive(Debug, Deserialize, gotcha::Validate)]
+#[derive(Debug, Deserialize, gotcha::Schematic, gotcha::Validate)]
 #[validate(crate = "gotcha::validator")]
 struct LineItem {
     #[validate(length(min = 1))]
     name: String,
 }
 
-#[derive(Debug, Deserialize, gotcha::Validate)]
+#[derive(Debug, Deserialize, gotcha::Schematic, gotcha::Validate)]
 #[validate(crate = "gotcha::validator", schema(function = "at_least_one_item"))]
 struct Order {
     #[validate(nested)]
@@ -335,16 +335,15 @@ async fn valid_default_flattens_nested_list_and_struct_level_errors() {
 }
 
 #[tokio::test]
-async fn valid_field_keys_use_rust_names_not_serde_names() {
-    // validator keys errors by the Rust identifier and ignores `#[serde(rename_all)]`, so the
-    // wire name `firstName` is reported as `first_name`. A follow-up wire-name mapping in the
-    // `Schematic` derive will flip this expectation to `firstName`.
+async fn valid_field_keys_use_serde_wire_names() {
+    // validator keys errors by the Rust identifier, but `Valid` rewrites them through the
+    // `Schematic` wire-name table, so the client sees the key it sent.
     let router = app().await;
     let (status, content_type, body) = send(&router, request("POST", "/valid-renamed", Some("application/json"), r#"{"firstName":""}"#)).await;
     assert_eq!((status, content_type.as_str()), (StatusCode::UNPROCESSABLE_ENTITY, "application/json"));
     assert_eq!(
         serde_json::from_slice::<Value>(&body).unwrap(),
-        json!({"error": "validation failed", "fields": {"first_name": ["length must be at least 1"]}})
+        json!({"error": "validation failed", "fields": {"firstName": ["length must be at least 1"]}})
     );
 }
 

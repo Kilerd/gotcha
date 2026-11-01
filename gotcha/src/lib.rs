@@ -54,8 +54,6 @@ pub use crate::extract::{
 pub use gotcha_macro::{config, state};
 
 pub mod message;
-#[cfg(feature = "openapi")]
-#[cfg_attr(docsrs, doc(cfg(feature = "openapi")))]
 /// Schema core, also usable directly by libraries without the web framework.
 pub use gotcha_core;
 #[cfg(feature = "openapi")]
@@ -68,7 +66,14 @@ pub use gotcha_core::Responsible;
 
 #[cfg(feature = "openapi")]
 #[cfg_attr(docsrs, doc(cfg(feature = "openapi")))]
-pub use crate::openapi::schematic::{ExtractorKind, ParameterProvider, Schematic};
+pub use crate::openapi::schematic::{ExtractorKind, ParameterProvider};
+/// The schema trait and its derive macro, with [`EnhancedSchema`] and [`WireField`].
+///
+/// These are available in every build, not only with `openapi`: [`Valid`] uses the wire-name
+/// table to report validation errors under the names serde reads, and a library can derive
+/// `Schematic` without pulling in document generation. The `openapi` feature adds `#[api]`,
+/// `ParameterProvider`, and document endpoints on top.
+pub use gotcha_core::{EnhancedSchema, Schematic, WireField};
 #[cfg(feature = "openapi")]
 #[cfg_attr(docsrs, doc(cfg(feature = "openapi")))]
 pub use gotcha_macro::api;
@@ -147,10 +152,6 @@ pub mod layers {
     #[cfg(feature = "cors")]
     pub use tower_http::cors::{self, CorsLayer};
 }
-
-#[cfg(feature = "openapi")]
-#[cfg_attr(docsrs, doc(cfg(feature = "openapi")))]
-pub use crate::openapi::schematic::EnhancedSchema;
 
 pub use serde_json;
 #[cfg(feature = "task")]

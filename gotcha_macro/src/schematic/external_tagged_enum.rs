@@ -20,7 +20,7 @@ pub(crate) fn handler(
             let is_newtype = matches!(variant.fields.style, darling::ast::Style::Tuple) && variant.fields.fields.len() == 1;
 
             let content_expr: TokenStream2 = if is_newtype {
-                let inner_ty = variant.fields.fields[0].ty.clone();
+                let inner_ty = variant.fields.fields[0].schema_type().clone();
                 quote! {
                     <#inner_ty as #core::Schematic>::generate_schema().schema.to_value()
                 }
@@ -31,9 +31,9 @@ pub(crate) fn handler(
                     .into_iter()
                     .map(|field| {
                         let (field_description, customizations) = field.schema_customizations(core);
-                        let field_ty = field.ty.clone();
+                        let field_ty = field.schema_type().clone();
                         if let Some(ident) = field.ident.as_ref() {
-                            let presence = serde_field_presence(&field.ty, &field.attrs, false);
+                            let presence = serde_field_presence(&field_ty, &field.attrs, false);
                             let schema_ty = presence.schema_type;
                             let required_override = match presence.required {
                                 Some(required) => quote! { field_schema.required = #required; },

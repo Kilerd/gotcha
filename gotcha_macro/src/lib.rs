@@ -164,9 +164,10 @@ pub fn api(args: TokenStream, input_stream: TokenStream) -> TokenStream {
 /// ## Dependencies
 ///
 /// `Schematic` is defined in `gotcha_core`. Libraries can depend on that crate alone
-/// and use `#[derive(gotcha_core::Schematic)]`; applications with the `openapi` feature
-/// can use `#[derive(gotcha::Schematic)]` without adding a separate core dependency.
-/// Neither form requires importing the trait into scope.
+/// and use `#[derive(gotcha_core::Schematic)]`; applications can use
+/// `#[derive(gotcha::Schematic)]` without adding a separate core dependency. Neither form
+/// requires importing the trait into scope, and neither requires gotcha's `openapi`
+/// feature: `Schematic` is available in every build.
 ///
 /// Generated paths prefer a direct `gotcha_core` dependency, then the core re-export
 /// in `gotcha`. Cargo dependency renames are recognized for both. For a custom facade,
@@ -194,11 +195,30 @@ pub fn api(args: TokenStream, input_stream: TokenStream) -> TokenStream {
 ///
 /// Individual fields can be annotated with `#[schematic(...)]` to enrich the
 /// generated schema with *documentation* metadata. All keys are optional:
-/// `title`, `description`, `example`, `default`, `format`.
+/// `title`, `description`, `example`, `default`, `format`, and `as`.
 ///
 /// An explicit `description` overrides the field's doc comment, and `example` /
 /// `default` preserve their JSON type (`example = 42` stays a number, not `"42"`).
 /// The `example` attribute emits an OpenAPI 3.2 schema `examples` array.
+///
+/// `#[schematic(as = "Type")]` describes the field as `Type` without changing its Rust type.
+/// `Type` supplies the schema and the requiredness/nullability, and it is also the source of
+/// nested validation wire names, so the original field type need not implement `Schematic`.
+/// The serde presence rules below still apply on top: an optional field keeps its nullable
+/// schema by describing it as an optional type, for example a custom URL type that serializes
+/// to a string:
+///
+/// ```rust,ignore
+/// struct MyUrl(String); // no `Schematic` implementation
+///
+/// #[derive(Schematic)]
+/// struct Link {
+///     #[schematic(as = "String")]
+///     url: MyUrl,
+///     #[schematic(as = "Option<String>")]
+///     title: Option<MyUrl>,
+/// }
+/// ```
 ///
 /// Validation constraints belong in `#[validate(...)]` (the validator crate), not `#[schematic]`,
 /// so a rule is written once. Where they map cleanly they are also reflected in the schema:

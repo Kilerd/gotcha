@@ -23,7 +23,7 @@ doctest = true
 [features]
 default = []
 prometheus = ["dep:axum-prometheus"]
-openapi = ["dep:oas", "dep:gotcha_core", "gotcha_core/axum"]
+openapi = ["dep:oas", "gotcha_core/axum"]
 # These enable only their own half of `tower-http`. That matters: `tower-http/cors` has no
 # dependencies at all, while `tower-http/fs` pulls in mime_guess, httpdate, percent-encoding and a
 # dozen more, so a CORS-only application should not pay for the static file machinery.
@@ -35,7 +35,9 @@ task = ["dep:cron", "dep:futures-util", "tokio/time"]
 [dependencies]
 async-trait = "0.1.60"
 gotcha_macro = { version = "0.4.1", path = "../gotcha_macro" }
-gotcha_core = { version = "0.4.1", path = "../gotcha_core", optional = true }
+# Always compiled: `Schematic` is the source of `Valid`'s wire-name mapping even when document
+# generation (`openapi`) is off. That feature only adds the axum-facing schema glue.
+gotcha_core = { version = "0.4.1", path = "../gotcha_core" }
 serde = {version = "1", features = ["derive"]}
 # `rt` also supports the always-available message system; macros and signals drive server shutdown.
 tokio = {version = "1", features = ["rt", "macros", "signal"]}

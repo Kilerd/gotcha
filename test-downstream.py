@@ -10,7 +10,7 @@ def main():
     root = Path(__file__).resolve().parent
     fixtures = root / "tests" / "fixtures" / "derive"
     env = dict(os.environ, CARGO_TARGET_DIR=str(root / "target" / "macro-dependencies"))
-    for name in ("core-only", "gotcha-only", "renamed-core", "renamed-gotcha", "facade-only"):
+    for name in ("core-only", "gotcha-only", "renamed-core", "renamed-gotcha", "renamed-gotcha-no-openapi", "facade-only"):
         manifest = str(fixtures / name / "Cargo.toml")
         print(f"Testing standalone macro dependencies: {name}", flush=True)
         subprocess.run(["cargo", "fmt", "--manifest-path", manifest, "--", "--check"], check=True, env=env)

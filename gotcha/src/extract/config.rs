@@ -316,6 +316,8 @@ rejection_config!(
 ///
 /// A malformed JSON body inside `Valid<Json<T>>` is a [`Json`](crate::Json) rejection and uses
 /// [`JsonConfig`]; only a body that deserialized and then failed validation reaches this handler.
+/// The errors are already keyed by serde wire names, so a handler can report them without
+/// translating Rust identifiers.
 pub struct ValidConfig {
     handler: ErrorHandler<validator::ValidationErrors>,
     /// Statuses declared by the application's handler; `None` uses this provider's defaults.
@@ -330,8 +332,9 @@ impl ValidConfig {
     /// Replace the response used when validation fails.
     ///
     /// The handler receives a reference to the structured [`validator::ValidationErrors`] and
-    /// returns the status and body to send. Use
-    /// [`flatten_errors`](crate::validation::flatten_errors) to render the same field map the
+    /// returns the status and body to send. Its keys are the serde wire names, already remapped
+    /// through [`Schematic::wire_fields`](crate::Schematic::wire_fields) by [`Valid`](crate::Valid).
+    /// Use [`flatten_errors`](crate::validation::flatten_errors) to render the same field map the
     /// default body uses. With the `openapi` feature, the body type is registered as a component.
     pub fn error_handler<E>(self, handler: impl Fn(&validator::ValidationErrors) -> (StatusCode, E) + Send + Sync + 'static) -> Self
     where

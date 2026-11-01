@@ -56,9 +56,12 @@ pub use crate::async_trait;
 /// A `Result` whose error defaults to a boxed `std::error::Error`, for `main` and quick handlers.
 pub type Result<T, E = Box<dyn std::error::Error + Send + Sync>> = std::result::Result<T, E>;
 
+// The schema trait and derive macro exist in every build; `Valid` needs them for wire names.
+pub use crate::Schematic;
+
 // Feature-specific exports
 #[cfg(feature = "openapi")]
-pub use crate::{api, OpenApiEndpoints, Responsible, Schematic};
+pub use crate::{api, OpenApiEndpoints, Responsible};
 
 #[cfg(feature = "prometheus")]
 pub use crate::MetricsEndpoint;
