@@ -1023,6 +1023,175 @@ fn component_references_resolve() {
     assert!(document["components"]["schemas"].as_object().is_some_and(|schemas| !schemas.is_empty()));
 }
 
+/// Raw identifiers are written without their prefix.
+#[derive(Schematic, Serialize, Deserialize)]
+struct RawFields {
+    r#type: String,
+    r#match: u8,
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RawFieldsCamelCase {
+    r#some_type: u8,
+}
+
+/// `snake_case` leaves field names alone, so `userID` does not collide with `user_id`.
+#[allow(non_snake_case)]
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+struct SnakeCaseAcronym {
+    userID: u8,
+    user_id: u8,
+}
+
+/// `camelCase` only joins on underscores: `userID` keeps its capitals.
+#[allow(non_snake_case)]
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CamelCaseAcronym {
+    userID: u8,
+}
+
+#[allow(non_snake_case)]
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+struct SnakeCaseUnderscores {
+    _leading: u8,
+    trailing_: u8,
+    double__underscore: u8,
+}
+
+/// `lowercase` and `UPPERCASE` keep the separators of a field name.
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+struct LowercaseWords {
+    user_name: u8,
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(rename_all = "UPPERCASE")]
+struct UppercaseWords {
+    user_name: u8,
+}
+
+/// Variant conventions insert a separator before every capital, so an acronym is not one word.
+#[allow(clippy::upper_case_acronyms)]
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum AcronymSimple {
+    HTTPServer,
+    Other,
+}
+
+#[allow(clippy::upper_case_acronyms)]
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+enum AcronymExternal {
+    HTTPServer(u8),
+    Other,
+}
+
+#[allow(clippy::upper_case_acronyms)]
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+enum AcronymInternal {
+    HTTPServer { value: u8 },
+}
+
+#[allow(clippy::upper_case_acronyms)]
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "data", rename_all = "SCREAMING_SNAKE_CASE")]
+enum AcronymAdjacent {
+    HTTPServer(u8),
+}
+
+#[allow(non_camel_case_types)]
+#[derive(Schematic, Serialize, Deserialize)]
+enum RawVariant {
+    r#match,
+    Other(u8),
+}
+
+/// Struct-variant fields take the same rules.
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(rename_all_fields = "UPPERCASE")]
+enum VariantFieldNames {
+    Named { user_name: u8, r#type: u8 },
+}
+
+#[test]
+fn raw_identifiers_lose_their_prefix() {
+    assert_serialization_matches(&RawFields {
+        r#type: "x".into(),
+        r#match: 1,
+    });
+}
+
+#[test]
+fn raw_identifiers_lose_their_prefix_under_a_convention() {
+    assert_serialization_matches(&RawFieldsCamelCase { r#some_type: 1 });
+}
+
+#[test]
+fn snake_case_does_not_split_an_acronym_into_a_colliding_name() {
+    assert_serialization_matches(&SnakeCaseAcronym { userID: 1, user_id: 2 });
+}
+
+#[test]
+fn camel_case_keeps_the_capitals_of_a_field() {
+    assert_serialization_matches(&CamelCaseAcronym { userID: 1 });
+}
+
+#[test]
+fn snake_case_keeps_underscores() {
+    assert_serialization_matches(&SnakeCaseUnderscores {
+        _leading: 1,
+        trailing_: 2,
+        double__underscore: 3,
+    });
+}
+
+#[test]
+fn lowercase_keeps_separators() {
+    assert_serialization_matches(&LowercaseWords { user_name: 1 });
+}
+
+#[test]
+fn uppercase_keeps_separators() {
+    assert_serialization_matches(&UppercaseWords { user_name: 1 });
+}
+
+#[test]
+fn snake_case_variants_split_every_capital() {
+    assert_serialization_matches(&AcronymSimple::HTTPServer);
+}
+
+#[test]
+fn camel_case_variants_only_lower_the_first_letter() {
+    assert_serialization_matches(&AcronymExternal::HTTPServer(1));
+}
+
+#[test]
+fn kebab_case_variants_split_every_capital() {
+    assert_serialization_matches(&AcronymInternal::HTTPServer { value: 1 });
+}
+
+#[test]
+fn screaming_snake_case_variants_split_every_capital() {
+    assert_serialization_matches(&AcronymAdjacent::HTTPServer(1));
+}
+
+#[test]
+fn raw_variants_lose_their_prefix() {
+    assert_serialization_matches(&RawVariant::r#match);
+}
+
+#[test]
+fn struct_variant_fields_follow_the_same_rules() {
+    assert_serialization_matches(&VariantFieldNames::Named { user_name: 1, r#type: 2 });
+}
+
 // Known mismatches, deliberately not asserted (follow-up work; arch review A4/A14):
 //
 // - A flattened externally tagged enum's unit variant: serde writes `{"A": null}` next to the

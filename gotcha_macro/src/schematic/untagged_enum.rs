@@ -1,21 +1,18 @@
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 
-use crate::schematic::{ParameterEnumVariantOpt, VariantNaming};
+use crate::schematic::ParameterEnumVariantOpt;
 
-pub(crate) fn handler(
-    core: &TokenStream2, ident_string: String, doc: TokenStream2, variants: Vec<ParameterEnumVariantOpt>, naming: VariantNaming,
-) -> syn::Result<TokenStream2> {
+pub(crate) fn handler(core: &TokenStream2, ident_string: String, doc: TokenStream2, variants: Vec<ParameterEnumVariantOpt>) -> syn::Result<TokenStream2> {
     let variants_codegen: Vec<TokenStream2> = variants
         .into_iter()
         .map(|variant| {
-            let variant_string = variant.serde_name(naming);
-            let field_rename_all = variant.field_rename_all(naming);
+            let variant_string = variant.serde_name();
             let variant_annotations = variant.variant_customizations(core);
 
             match variant.fields.style {
                 darling::ast::Style::Struct => {
-                    let object = crate::schematic::named_variant_object(core, None, variant.fields.fields, field_rename_all);
+                    let object = crate::schematic::named_variant_object(core, None, variant.fields.fields);
                     quote! {
                         {
                             let mut variant_object = #object;
