@@ -15,6 +15,9 @@ use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
+use tracing::level_filters::LevelFilter;
+use tracing_subscriber::prelude::*;
+use tracing_subscriber::{fmt, EnvFilter};
 
 use crate::{ConfigErrorPolicy, ConfigWrapper, GotchaApp, GotchaContext, GotchaError, GotchaResult, ServerConfig};
 
@@ -63,7 +66,8 @@ pub(crate) trait Application: Send {
     }
     fn task_shutdown_timeout(&self) -> std::time::Duration;
     fn config(&mut self) -> impl Future<Output = GotchaResult<ConfigWrapper<Self::Config>>> + Send;
-    fn state(&mut self, config: &ConfigWrapper<Self::Config>) -> impl Future<Output = GotchaResult<Self::State>> + Send;
+    /// Build the state from the loaded configuration, which the context then shares.
+    fn state(&mut self, config: &Arc<ConfigWrapper<Self::Config>>) -> impl Future<Output = GotchaResult<Self::State>> + Send;
     fn router(&mut self, context: GotchaContext<Self::State, Self::Config>) -> impl Future<Output = GotchaResult<Router>> + Send;
     fn tasks(&mut self, scheduler: &mut crate::TaskScheduler<Self::State, Self::Config>) -> impl Future<Output = GotchaResult<()>> + Send;
 }
@@ -194,9 +198,10 @@ pub(crate) async fn prepare_with_context<A: Application>(
     // Anything initialized below can capture the token through the context. If a later step
     // fails, cancel it so those waiters do not stay pending forever.
     let cancel_on_failure = shutdown.clone().drop_guard();
+    let config = Arc::new(config);
     let state = app.state(&config).await?;
     let context = GotchaContext {
-        config: std::sync::Arc::new(config),
+        config,
         state,
         shutdown: shutdown.clone(),
     };
@@ -361,6 +366,22 @@ impl Drop for BoundLifecycle {
             self.shutdown.cancel();
         }
     }
+}
+
+/// The default tracing subscriber: formatted output filtered by `RUST_LOG`, at `INFO` when it is
+/// unset. A subscriber that is already installed is kept, so calling this twice is harmless.
+pub(crate) fn default_logger() -> GotchaResult<()> {
+    tracing_subscriber::registry()
+        .with(fmt::layer())
+        .with(
+            EnvFilter::builder()
+                .with_default_directive(LevelFilter::INFO.into())
+                .with_env_var("RUST_LOG")
+                .from_env_lossy(),
+        )
+        .try_init()
+        .ok();
+    Ok(())
 }
 
 pub(crate) async fn shutdown_signal() {
@@ -638,7 +659,7 @@ where
         A::config(self).await
     }
 
-    async fn state(&mut self, config: &ConfigWrapper<Self::Config>) -> GotchaResult<Self::State> {
+    async fn state(&mut self, config: &Arc<ConfigWrapper<Self::Config>>) -> GotchaResult<Self::State> {
         A::state(self, config).await
     }
 
@@ -691,7 +712,7 @@ where
         A::config(&self.0).await
     }
 
-    async fn state(&mut self, config: &ConfigWrapper<Self::Config>) -> GotchaResult<Self::State> {
+    async fn state(&mut self, config: &Arc<ConfigWrapper<Self::Config>>) -> GotchaResult<Self::State> {
         A::state(&self.0, config).await
     }
 
