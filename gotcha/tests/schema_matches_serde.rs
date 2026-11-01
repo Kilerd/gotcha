@@ -495,6 +495,53 @@ enum VariantWithMap {
     },
 }
 
+/// An untagged struct variant flattening a map: flattening the enum must strip the branch's
+/// `additionalProperties`, or it would constrain the parent's own `name` field.
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(untagged)]
+enum UntaggedVariantWithMap {
+    Mapped {
+        id: u32,
+        #[serde(flatten)]
+        extra: HashMap<String, u32>,
+    },
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+struct FlattensUntaggedMapVariant {
+    name: String,
+    #[serde(flatten)]
+    variant: UntaggedVariantWithMap,
+}
+
+/// A different type with the same name as [`Audit`], to make component names collide.
+mod other {
+    use gotcha::Schematic;
+    use serde::{Deserialize, Serialize};
+
+    #[derive(Schematic, Serialize, Deserialize)]
+    pub struct Audit {
+        pub source: String,
+    }
+}
+
+/// An internally tagged newtype variant over a map of the local [`Audit`].
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(tag = "t")]
+enum MapOfAudit {
+    W(BTreeMap<String, Audit>),
+}
+
+/// Flattening `MapOfAudit` next to a field of the same-named `other::Audit` must not collect the
+/// map's value type: the flattened branch is stripped, so that component would be an orphan and
+/// its name would collide with `other::Audit`, renaming both.
+#[derive(Schematic, Serialize, Deserialize)]
+struct Outer {
+    audit: other::Audit,
+    #[serde(flatten)]
+    m: MapOfAudit,
+}
+
 /// Untagged branches that accept the same value: `anyOf` accepts it, `oneOf` did not.
 #[derive(Schematic, Serialize, Deserialize)]
 #[serde(untagged)]
@@ -817,6 +864,41 @@ fn a_flattened_map_variant_does_not_constrain_the_parent() {
 }
 
 #[test]
+fn a_flattened_untagged_map_variant_does_not_constrain_the_parent() {
+    // Loose validation on purpose: strict mode rejects the undocumented map entry, which is the
+    // known limitation of flattening an untagged map variant.
+    let document = schema_document::<FlattensUntaggedMapVariant>();
+    let instance = serde_json::to_value(FlattensUntaggedMapVariant {
+        name: "x".into(),
+        variant: UntaggedVariantWithMap::Mapped {
+            id: 1,
+            extra: HashMap::from([("a".to_owned(), 2)]),
+        },
+    })
+    .expect("sample serializes");
+    let validator = jsonschema::validator_for(&document).expect("generated schema is a valid JSON Schema");
+    assert!(
+        validator.validate(&instance).is_ok(),
+        "the untagged branch map constraint must not apply to the parent's fields: {instance} vs {document}"
+    );
+}
+
+#[test]
+fn a_flattened_map_variant_collects_no_component_for_its_value_type() {
+    // The flattened branch's `additionalProperties` is stripped, so the map's value type is
+    // never documented there. Building it anyway (the tagged newtype-variant path before #178's
+    // `collect_additional` guard) registered an orphan component and, as here, forced both
+    // same-named `Audit` types to be renamed. Without the flatten, only `other::Audit` and the
+    // root are collected.
+    let (_, components) = gotcha::gotcha_core::registry::collect(|| Outer::generate_schema());
+    let names = components.keys().cloned().collect::<Vec<_>>();
+    assert_eq!(names, ["Audit", "Outer"], "flattening must not collect the map's value type: {names:?}");
+
+    let audit = components["Audit"].to_value();
+    assert!(audit["properties"].get("source").is_some(), "the surviving `Audit` is `other::Audit`: {audit}");
+}
+
+#[test]
 fn flattened_tagged_enums_match_serde() {
     assert_serialization_matches(&FlattensInternallyTagged {
         id: 1,
@@ -922,7 +1004,13 @@ fn component_references_resolve() {
 //   schema still requires one item per declared field.
 // - Flattening an internally tagged enum whose newtype variant wraps a map omits the map's
 //   `additionalProperties` from the composed schema: keeping it would constrain the parent's own
-//   declared fields (the variant branch is composed through `allOf`).
+//   declared fields (the variant branch is composed through `allOf`), so strict validation
+//   rejects the map entries.
+// - Flattening an enum whose struct variant flattens a map (in any tag form) is stripped the
+//   same way, for the same reason: the entries stay undocumented and strict validation rejects
+//   them.
+// - Flattening an untagged enum whose newtype variant wraps a map strips the branch's
+//   `additionalProperties`; the entries stay undocumented and strict validation rejects them.
 // - Flattening an untagged enum whose newtype variant wraps a struct that itself flattens a map
 //   composes through that struct's `$ref`, so the map's `additionalProperties` still constrains
 //   the parent's fields.

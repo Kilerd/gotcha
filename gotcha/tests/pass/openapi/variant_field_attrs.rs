@@ -83,7 +83,7 @@ fn main() {
     let doc_fields = serde_json::to_value(DocFields::generate_schema().schema).unwrap();
     let branches = doc_fields["oneOf"].as_array().expect("oneOf branches");
     let tuple = branches.iter().find(|branch| branch["title"] == "Tuple").expect("Tuple branch");
-    assert!(tuple["properties"]["id"].get("description").is_none(), "a tuple field's doc comment is not a description");
+    assert!(tuple.get("description").is_none(), "a tuple field's doc comment must not become the branch description");
     let named = branches.iter().find(|branch| branch["title"] == "Named").expect("Named branch");
     assert_eq!(named["properties"]["id"]["description"], "named field docs", "a named struct-variant field keeps its doc comment");
 

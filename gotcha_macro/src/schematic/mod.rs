@@ -342,9 +342,9 @@ impl ParameterStructFieldOpt {
         self.schema_customizations_with(core, true)
     }
 
-    /// Customizations for a field used as a *value* (a variant field or a newtype's inner
-    /// field). Doc comments do not become descriptions here: they were never part of the
-    /// document for these shapes, so turning them on would change documents that are correct.
+    /// Customizations for a field used as a *value* (a tuple/newtype variant field or a
+    /// newtype's inner field). Doc comments do not become descriptions here: they were never
+    /// part of the document for these shapes, so turning them on would change correct documents.
     pub(crate) fn value_schema_customizations(&self, core: &TokenStream2) -> (TokenStream2, Vec<TokenStream2>) {
         self.schema_customizations_with(core, false)
     }
