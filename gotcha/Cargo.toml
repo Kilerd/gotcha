@@ -81,6 +81,10 @@ validator = { version = "0.20", features = ["derive"] }
 tempfile = "3"
 trybuild = "1.0"
 assert-json-diff = "2"
+# Validates serde's real output against the schemas the derive generates. Dev-only, and without
+# default features so the test does not pull in HTTP/rustls reference resolution: the schemas
+# only reference components inside the same document.
+jsonschema = { version = "0.49", default-features = false }
 # Multiple-worker runtimes, paused-clock task tests, and socket-based lifecycle checks.
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "test-util", "io-util"] }
 futures-core = "0.3.33"
