@@ -1,5 +1,3 @@
-#![cfg(feature = "task")]
-
 use gotcha::{ConfigWrapper, Gotcha, GotchaApp, GotchaContext, GotchaError, GotchaResult, GotchaRouter, ServerConfig, State, TaskScheduler};
 use std::future::Future;
 use std::net::SocketAddr;
@@ -98,6 +96,7 @@ enum Registration {
     Normal,
     Fail,
     Wait,
+    #[cfg(feature = "task")]
     InvalidCron,
 }
 
@@ -146,6 +145,7 @@ impl GotchaApp for App {
         match self.registration {
             Registration::Fail => Err(GotchaError::message("registration failed")),
             Registration::Wait => std::future::pending().await,
+            #[cfg(feature = "task")]
             Registration::InvalidCron => {
                 scheduler.cron("bad-cron", "not a schedule".into(), |_| async {});
                 Ok(())
@@ -305,6 +305,7 @@ async fn failed_or_cancelled_registration_discards_tasks_and_releases_the_listen
     }
 }
 
+#[cfg(feature = "task")]
 #[tokio::test]
 async fn invalid_registrations_fail_startup_and_release_the_listener() {
     let (app_controls, mut addresses, _starts, mut drops) = controls();
@@ -336,8 +337,11 @@ async fn invalid_registrations_fail_startup_and_release_the_listener() {
     .expect("an invalid cron expression must fail bind");
     let message = error.to_string();
     assert!(message.contains("bad-cron") && message.contains("not a schedule"), "{message}");
+}
 
-    // A zero interval is the same class of silently dropped registration.
+/// A zero interval is the same class of silently dropped registration as an invalid cron.
+#[tokio::test]
+async fn zero_interval_fails_startup() {
     let (zero_controls, _addresses, _starts, _drops) = controls();
     let error = within(
         Gotcha::from_context(GotchaContext::new(zero_controls, config()))

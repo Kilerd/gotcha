@@ -14,7 +14,7 @@ An enhanced web framework built on top of Axum, providing additional features an
 - 🌐 **CORS Support** - Cross-origin resource sharing
 - 🔌 **WebSocket & SSE** - Real-time endpoints, re-exported and ready
 - 📁 **Static Files** - Serve static content effortlessly
-- ⏰ **Task Scheduling** - Cron and interval-based background tasks
+- ⏰ **Background Work** - Owned consumers and watchers, intervals, and cron schedules, drained at shutdown
 - 💌 **Typed Commands** - Reusable messages with application state and configuration
 - ⚙️ **Smart Configuration** - Environment-based config with variable resolution
 - 🏗️ **Two APIs** - Choose between simple builder API or advanced trait-based API
@@ -111,12 +111,26 @@ for behavior changes and the trait example.
 Both application APIs stop gracefully on Ctrl-C or Unix SIGTERM. When the signal resolves, gotcha:
 
 1. cancels the shutdown token in `GotchaContext` and stops accepting connections,
-2. drains in-flight HTTP connections, bounded by `http_shutdown_timeout` (30 seconds by default).
-   This also waits for upgraded connections such as WebSockets, which axum no longer tracks after
-   the upgrade,
-3. waits for running scheduled executions, bounded by `task_shutdown_timeout` (30 seconds by
-   default with the `task` feature; this deadline runs concurrently with HTTP draining),
-4. runs cleanup hooks in registration order.
+2. drains two things at the same time, each with its own deadline:
+   - in-flight HTTP connections, bounded by `http_shutdown_timeout` (30 seconds by default). This
+     also waits for upgraded connections such as WebSockets, which axum no longer tracks after the
+     upgrade,
+   - background tasks and running scheduled executions, bounded by `task_shutdown_timeout` (30
+     seconds by default),
+3. runs cleanup hooks in registration order, once both drains have finished.
+
+Neither drain waits for the other, so a task can finish while a handler is still running; see
+[Background Work](#background-work) for what that means for a queue. At the task deadline, remaining
+tasks are aborted and get up to one second to stop. An abort takes effect when a task yields, so a
+task blocking its thread is named in a warning and left behind, and the runtime waits for that
+thread when it is dropped. Cleanup hooks do not wait for what is left behind, so they can overlap a
+`Drop` that takes longer than that second.
+
+These deadlines only help while the runtime makes progress. A task that blocks right after a timer
+woke it (after a `sleep`, or on an interval's second tick) can stall the runtime itself: HTTP stops
+responding, the shutdown signal goes unhandled, and cleanup does not run until it stops blocking.
+Move blocking work to `tokio::task::spawn_blocking`, which keeps serving and cleanup going; the
+process still waits for that work before it exits.
 
 At the HTTP drain deadline, remaining connections (including upgraded ones) are closed at the OS
 socket level, so a handler that is not polling its socket is disconnected too. Gotcha then waits
@@ -188,7 +202,7 @@ while cleanup hooks still run. The trait API offers `bind()`, `http_shutdown_tim
 
 Override the HTTP drain period with builder `.http_shutdown_timeout(duration)` or trait
 `http_shutdown_timeout(&self)`; see the [migration guide](MIGRATION.md#unreleased-bound-servers-and-shutdown-lifecycle).
-Scheduled executions keep their independent grace period (builder `.task_shutdown_timeout(duration)`
+Background tasks keep their independent grace period (builder `.task_shutdown_timeout(duration)`
 or trait `task_shutdown_timeout(&self)`); see the [task migration notes](MIGRATION.md#unreleased-owned-scheduled-tasks).
 
 ### Advanced Trait API (For complex applications)
@@ -274,7 +288,7 @@ Available features:
 - `prometheus` - Opt-in Prometheus metrics endpoint (`/metrics` by default) and `metrics` re-exports
 - `cors` - Cross-Origin Resource Sharing support
 - `static_files` - Static file serving capabilities
-- `task` - Background task scheduling with cron support
+- `task` - Cron schedules (`scheduler.cron`). Background work (`scheduler.spawn`, `scheduler.interval`) needs no feature.
 
 ## 📖 Documentation & Examples
 
@@ -1249,9 +1263,57 @@ execution. See the [message example](examples/message/src/main.rs) for nested co
 a spawned result, and the [migration guide](MIGRATION.md#unreleased-message-task-handles) for the
 changed `spawn` return type.
 
+### Background Work
+
+`scheduler.spawn(name, |ctx| async move { .. })` runs a queue consumer, a watcher, or any other
+future under the application's ownership. It needs no feature flag.
+
+```rust,no_run
+use gotcha::Gotcha;
+use tokio::sync::mpsc;
+
+let (jobs, mut queue) = mpsc::channel::<String>(16);
+let app = Gotcha::new().tasks(move |scheduler| {
+    scheduler.spawn("consumer", |ctx| async move {
+        let shutdown = ctx.shutdown();
+        loop {
+            tokio::select! {
+                _ = shutdown.cancelled() => break,
+                Some(job) = queue.recv() => println!("{job}"),
+            }
+        }
+        // Refuse new jobs and finish the queued ones; cleanup hooks run after this returns.
+        queue.close();
+        while let Some(job) = queue.recv().await {
+            println!("{job}");
+        }
+    });
+});
+# drop(jobs);
+```
+
+A spawned future starts when serving starts, like every other task, and does not start at all if
+a registration fails. At shutdown `ctx.shutdown()` fires and the future has until
+`task_shutdown_timeout` to return; at the deadline it is aborted. Returning early is not an error
+and the future does not run again. A panic is logged and ends only that task: other tasks and the
+server keep running. Use `GotchaApp::tasks` the same way in the trait API. A plain `tokio::spawn`
+stays outside all of this.
+
+HTTP connections drain at the same time as tasks, not first, and cleanup hooks run after both. So
+the consumer can stop while a handler is still running, and a job that handler enqueues afterwards
+is never consumed. That is why the example closes the queue before its last drain: `send` fails from
+then on, and every `send` that succeeded is handled unless the deadline aborts the consumer first.
+A handler has to check that result and refuse the work, for example with `503`. Ignoring it and
+answering `200` loses the job.
+
+This covers one queue. Stages that feed each other are not covered: if a later stage closes first,
+it refuses jobs the stage before it had already accepted, and no client is left to tell. Stop such
+stages in order yourself, so that each one keeps receiving until the stage before it has finished.
+
 ### Task Scheduling
 
-Requires the `task` feature. Registration collects work; execution starts after all application
+`scheduler.interval` needs no feature flag; `scheduler.cron` requires the `task` feature, which adds
+the `cron` crate. Registration collects work; execution starts after all application
 initialization succeeds. The application retains ownership until shutdown completes. Standalone
 users call `scheduler.start()`, retain the returned `RunningTasks`, and call
 `running.shutdown(timeout).await` to stop and join their tasks. Dropping the owner aborts its tasks.

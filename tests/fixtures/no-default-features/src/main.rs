@@ -35,4 +35,9 @@ fn main() {
     drop(Gotcha::new().listen("127.0.0.1:0"));
     drop(Gotcha::new().listen_on("127.0.0.1:0".parse().unwrap()));
     drop(App.run());
+    // Background work and intervals need no feature; only cron is behind `task`.
+    drop(Gotcha::new().tasks(|scheduler| {
+        scheduler.spawn("consumer", |ctx| async move { ctx.shutdown().cancelled().await });
+        scheduler.interval("heartbeat", std::time::Duration::from_secs(60), |_| async {});
+    }));
 }

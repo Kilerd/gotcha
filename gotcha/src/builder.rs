@@ -39,7 +39,6 @@ use crate::GotchaContext;
 
 /// A one-shot closure that registers background tasks on the scheduler when the
 /// server starts.
-#[cfg(feature = "task")]
 type TaskRegistrar<S, C> = Box<dyn FnOnce(&mut crate::TaskScheduler<S, C>) + Send>;
 
 type AppLayer = Box<dyn FnOnce(axum::Router) -> axum::Router + Send>;
@@ -157,9 +156,7 @@ where
     http_shutdown_timeout: std::time::Duration,
     state: StateSource<S>,
     config: Configuration<C>,
-    #[cfg(feature = "task")]
     tasks: Vec<TaskRegistrar<S, C>>,
-    #[cfg(feature = "task")]
     task_shutdown_timeout: std::time::Duration,
 }
 
@@ -325,9 +322,7 @@ where
             http_shutdown_timeout: startup::DEFAULT_HTTP_SHUTDOWN_TIMEOUT,
             state,
             config,
-            #[cfg(feature = "task")]
             tasks: Vec::new(),
-            #[cfg(feature = "task")]
             task_shutdown_timeout: crate::task::DEFAULT_SHUTDOWN_TIMEOUT,
         }
     }
@@ -726,9 +721,7 @@ where
     ///
     /// ```compile_fail
     /// use gotcha::Gotcha;
-    /// let child = Gotcha::new();
-    /// # #[cfg(feature = "task")]
-    /// let child = child.tasks(|_scheduler| {});
+    /// let child = Gotcha::new().tasks(|_scheduler| {});
     /// let app = Gotcha::new().merge(child);
     /// ```
     pub fn merge(mut self, router: GotchaRouter<GotchaContext<S, C>>) -> Self {
@@ -941,12 +934,13 @@ where
         self
     }
 
-    /// Register background tasks (requires the `task` feature).
+    /// Register background tasks.
     ///
     /// The closure receives a [`TaskScheduler`](crate::TaskScheduler) when the
-    /// server starts, on which you can register `cron` / `interval` jobs. This
-    /// brings the builder to parity with `GotchaApp::tasks`. Jobs start only after all
-    /// registrations succeed and are owned by the application until shutdown.
+    /// server starts, on which you can register `spawn` / `interval` / `cron` jobs (`cron`
+    /// requires the `task` feature). This brings the builder to parity with `GotchaApp::tasks`.
+    /// Jobs start only after all registrations succeed and are owned by the application until
+    /// shutdown.
     /// Register module tasks here on the top-level application; `nest` and `merge` accept
     /// only route modules and cannot accept another application's task registrations.
     ///
@@ -961,7 +955,6 @@ where
     ///     });
     /// });
     /// ```
-    #[cfg(feature = "task")]
     pub fn tasks<F>(mut self, register: F) -> Self
     where
         F: FnOnce(&mut crate::TaskScheduler<S, C>) + Send + 'static,
@@ -1025,10 +1018,10 @@ where
         self
     }
 
-    /// Set the grace period for in-flight scheduled executions (default: 30 seconds).
-    /// Remaining tasks are aborted and joined at the deadline. This runs concurrently with
-    /// HTTP draining; see [`Self::http_shutdown_timeout`].
-    #[cfg(feature = "task")]
+    /// Set the grace period for background tasks and in-flight scheduled executions (default: 30
+    /// seconds). At the deadline, remaining tasks are aborted and get up to one second to stop; see
+    /// [`RunningTasks::shutdown`](crate::RunningTasks::shutdown). This runs concurrently with HTTP
+    /// draining; see [`Self::http_shutdown_timeout`].
     pub fn task_shutdown_timeout(mut self, timeout: std::time::Duration) -> Self {
         self.task_shutdown_timeout = timeout;
         self
@@ -1229,7 +1222,6 @@ where
         }
     }
 
-    #[cfg(feature = "task")]
     fn task_shutdown_timeout(&self) -> std::time::Duration {
         self.task_shutdown_timeout
     }
@@ -1260,7 +1252,6 @@ where
         )
     }
 
-    #[cfg(feature = "task")]
     async fn tasks(&mut self, scheduler: &mut crate::TaskScheduler<S, C>) -> GotchaResult<()> {
         for register in std::mem::take(&mut self.tasks) {
             register(scheduler);

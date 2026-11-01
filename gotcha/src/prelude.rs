@@ -65,7 +65,6 @@ pub use crate::MetricsEndpoint;
 #[cfg(feature = "cors")]
 pub use crate::layers::CorsLayer;
 
-#[cfg(feature = "task")]
 pub use crate::{RunningTasks, TaskScheduler};
 
 // Utility macros for common patterns

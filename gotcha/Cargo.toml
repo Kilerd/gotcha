@@ -36,7 +36,9 @@ openapi = ["dep:oas", "gotcha_core/axum"]
 # dozen more, so a CORS-only application should not pay for the static file machinery.
 cors = ["dep:tower-http", "tower-http/cors"]
 static_files = ["dep:tower-http", "tower-http/fs"]
-task = ["dep:cron", "dep:futures-util", "tokio/time"]
+# Only cron parsing is optional. The scheduler itself (`spawn`, `interval`, and the shutdown drain)
+# is always compiled.
+task = ["dep:cron"]
 
 
 [dependencies]
@@ -47,10 +49,12 @@ gotcha_macro = { version = "0.4.1", path = "../gotcha_macro" }
 # impls are forwarded by this crate's own default features.
 gotcha_core = { version = "0.4.1", path = "../gotcha_core", default-features = false }
 serde = {version = "1", features = ["derive"]}
-# `rt` also supports the always-available message system; macros and signals drive server shutdown.
-tokio = {version = "1", features = ["rt", "macros", "signal"]}
+# `rt` also supports the always-available message system and owned background tasks; macros, signals
+# and `time` drive server shutdown and interval tasks.
+tokio = {version = "1", features = ["rt", "macros", "signal", "time"]}
 tokio-util = { version = "0.7", features = ["rt"] }
-futures-util = { version = "0.3", optional = true, default-features = false, features = ["std", "async-await"] }
+# Isolates panics in background tasks. Already in the graph through axum, multer and tungstenite.
+futures-util = { version = "0.3", default-features = false, features = ["std", "async-await"] }
 tracing = "0.1"
 tracing-subscriber = {version="0.3", features=["env-filter"]}
 log = "0.4"

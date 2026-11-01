@@ -1,7 +1,6 @@
 use super::*;
 use crate::ConfigWrapper;
 use std::cell::Cell;
-use std::error::Error;
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
     Arc, Mutex,
@@ -28,14 +27,32 @@ fn registration_is_inert_and_can_be_discarded_without_a_runtime() {
         let _ = &resource;
         panic!("registration must not call the task");
     });
-    scheduler.cron("invalid", "not a schedule".into(), |_| async {});
+    let (spawn_dropped, mut spawn_drops) = mpsc::unbounded_channel();
+    let spawn_resource = Dropped(spawn_dropped);
+    scheduler.spawn("not-spawned", move |_| -> std::future::Ready<()> {
+        let _ = &spawn_resource;
+        panic!("registration must not call the task");
+    });
     scheduler.interval("zero", Duration::ZERO, |_| async {});
     let Err(error) = scheduler.into_tasks() else {
         panic!("invalid registrations must be registration errors");
     };
     let message = error.to_string();
-    assert!(message.contains("\"invalid\"") && message.contains("\"not a schedule\""), "{message}");
     assert!(message.contains("\"zero\"") && message.contains("zero interval"), "{message}");
+    assert_eq!(drops.try_recv(), Ok(()));
+    assert_eq!(spawn_drops.try_recv(), Ok(()));
+}
+
+#[cfg(feature = "task")]
+#[test]
+fn invalid_cron_is_a_registration_error_with_the_parse_error_as_source() {
+    let mut scheduler = scheduler();
+    scheduler.cron("invalid", "not a schedule".into(), |_| async {});
+    let Err(error) = scheduler.into_tasks() else {
+        panic!("invalid registrations must be registration errors");
+    };
+    let message = error.to_string();
+    assert!(message.contains("\"invalid\"") && message.contains("\"not a schedule\""), "{message}");
     // The top layer names the registrations; the parser's own text belongs to the source layer.
     assert!(!message.contains("Invalid expression"), "{message}");
     let GotchaError::Other(inner) = error else {
@@ -43,7 +60,6 @@ fn registration_is_inert_and_can_be_discarded_without_a_runtime() {
     };
     let source = inner.source().expect("the cron parse error must stay in the error chain");
     assert!(source.to_string().contains("Invalid expression"), "{source}");
-    assert_eq!(drops.try_recv(), Ok(()));
 }
 
 #[tokio::test(start_paused = true)]
@@ -172,6 +188,7 @@ async fn interval_skips_ticks_missed_by_a_slow_execution() {
     );
 }
 
+#[cfg(feature = "task")]
 #[test]
 fn cron_trigger_is_strictly_after_now() {
     let schedule = Schedule::from_str("* * * * * * *").unwrap();
@@ -184,6 +201,7 @@ fn cron_trigger_is_strictly_after_now() {
     assert!(next_cron_trigger(&schedule, now, None).unwrap() > now);
 }
 
+#[cfg(feature = "task")]
 #[test]
 fn cron_trigger_does_not_repeat_after_a_clock_step_back() {
     let schedule = Schedule::from_str("* * * * * * *").unwrap();
@@ -194,6 +212,7 @@ fn cron_trigger_does_not_repeat_after_a_clock_step_back() {
     assert_eq!(next_cron_trigger(&schedule, now, Some(fired)), Some(fired + chrono::Duration::seconds(1)));
 }
 
+#[cfg(feature = "task")]
 #[tokio::test]
 async fn cron_skips_triggers_missed_by_a_slow_execution() {
     let mut scheduler = scheduler();
@@ -233,7 +252,11 @@ async fn cron_skips_triggers_missed_by_a_slow_execution() {
 
 #[tokio::test(start_paused = true)]
 async fn timeout_drop_and_cancelled_shutdown_release_in_flight_executions() {
-    for cron in [false, true] {
+    let mut kinds = vec!["interval", "spawn"];
+    if cfg!(feature = "task") {
+        kinds.push("cron");
+    }
+    for kind in kinds {
         for mode in ["timeout", "drop", "cancel-shutdown"] {
             let mut scheduler = scheduler();
             let (started, mut starts) = mpsc::unbounded_channel();
@@ -247,10 +270,11 @@ async fn timeout_drop_and_cancelled_shutdown_release_in_flight_executions() {
                     std::future::pending::<()>().await;
                 }
             };
-            if cron {
-                scheduler.cron("blocked-cron", "* * * * * * *".into(), task);
-            } else {
-                scheduler.interval("blocked-interval", Duration::from_secs(1), task);
+            match kind {
+                #[cfg(feature = "task")]
+                "cron" => scheduler.cron("blocked-cron", "* * * * * * *".into(), task),
+                "spawn" => scheduler.spawn("blocked-spawn", task),
+                _ => scheduler.interval("blocked-interval", Duration::from_secs(1), task),
             }
             let running = scheduler.start();
             starts.recv().await.unwrap();
@@ -296,6 +320,8 @@ async fn construction_and_polling_panics_are_logged_and_the_schedule_continues()
     use tracing::instrument::WithSubscriber;
     let mut scheduler = scheduler();
     let (completed, mut completions) = mpsc::unbounded_channel();
+    // Registered first, so it has panicked by the time the interval task reports.
+    scheduler.spawn("spawned", |_| async { panic!("spawned panic") });
     let attempts = Cell::new(0); // The callback is Send but deliberately not Sync.
     scheduler.interval("recovering", Duration::from_secs(1), move |_| {
         let attempt = attempts.get();
@@ -319,7 +345,10 @@ async fn construction_and_polling_panics_are_logged_and_the_schedule_continues()
     scheduler.tasks = scheduler
         .tasks
         .into_iter()
-        .map(|task| Box::pin(task.with_subscriber(dispatch.clone())) as ScheduledTask)
+        .map(|task| ScheduledTask {
+            name: task.name,
+            future: Box::pin(task.future.with_subscriber(dispatch.clone())),
+        })
         .collect();
     let running = scheduler.start();
     assert_eq!(completions.recv().await, Some(2));
@@ -329,4 +358,66 @@ async fn construction_and_polling_panics_are_logged_and_the_schedule_continues()
         logs.contains("recovering") && logs.contains("construction panic") && logs.contains("polling panic"),
         "{logs}"
     );
+    assert!(logs.contains("spawned") && logs.contains("spawned panic"), "{logs}");
+}
+
+#[tokio::test(start_paused = true)]
+async fn spawned_future_uses_the_standalone_child_token() {
+    let context = GotchaContext::new((), ConfigWrapper::<()>::default());
+    let token = context.shutdown();
+
+    // A standalone shutdown releases the future without cancelling the context's token.
+    let mut first = TaskScheduler::new(context.clone());
+    let (finished, mut finishes) = mpsc::unbounded_channel();
+    let first_finished = finished.clone();
+    first.spawn("consumer", move |ctx| async move {
+        ctx.shutdown().cancelled().await;
+        first_finished.send("standalone").unwrap();
+    });
+    let running = first.start();
+    tokio::time::timeout(Duration::from_secs(1), running.shutdown(Duration::from_secs(60)))
+        .await
+        .expect("shutdown must release a future waiting on the scheduler token");
+    assert_eq!(finishes.try_recv(), Ok("standalone"));
+    assert!(!token.is_cancelled());
+
+    // Cancelling the context's token reaches the future through the child token.
+    let mut second = TaskScheduler::new(context);
+    second.spawn("consumer", move |ctx| async move {
+        ctx.shutdown().cancelled().await;
+        finished.send("context").unwrap();
+    });
+    let running = second.start();
+    tokio::task::yield_now().await;
+    token.cancel();
+    assert_eq!(finishes.recv().await, Some("context"));
+    running.shutdown(Duration::from_secs(1)).await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn spawned_future_runs_once_and_finishing_early_does_not_stop_the_others() {
+    let mut scheduler = scheduler();
+    let runs = Arc::new(AtomicUsize::new(0));
+    let (finished, mut finishes) = mpsc::unbounded_channel();
+    scheduler.spawn("one-off", {
+        let runs = runs.clone();
+        move |_| async move {
+            runs.fetch_add(1, Ordering::SeqCst);
+            finished.send(()).unwrap();
+        }
+    });
+    let (ticked, mut ticks) = mpsc::unbounded_channel();
+    scheduler.interval("tick", Duration::from_secs(1), move |_| {
+        ticked.send(()).unwrap();
+        async {}
+    });
+    let running = scheduler.start();
+    finishes.recv().await.unwrap();
+    for _ in 0..3 {
+        ticks.recv().await.expect("a finished future must not stop other tasks");
+    }
+    assert_eq!(runs.load(Ordering::SeqCst), 1, "a finished future must not restart");
+    let before = tokio::time::Instant::now();
+    running.shutdown(Duration::from_secs(60)).await;
+    assert!(before.elapsed() < Duration::from_secs(1), "a finished future must not hold the drain");
 }

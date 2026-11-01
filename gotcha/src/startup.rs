@@ -61,12 +61,10 @@ pub(crate) trait Application: Send {
     fn on_shutdown(&mut self, _context: &GotchaContext<Self::State, Self::Config>) -> impl Future<Output = ()> + Send {
         async {}
     }
-    #[cfg(feature = "task")]
     fn task_shutdown_timeout(&self) -> std::time::Duration;
     fn config(&mut self) -> impl Future<Output = GotchaResult<ConfigWrapper<Self::Config>>> + Send;
     fn state(&mut self, config: &ConfigWrapper<Self::Config>) -> impl Future<Output = GotchaResult<Self::State>> + Send;
     fn router(&mut self, context: GotchaContext<Self::State, Self::Config>) -> impl Future<Output = GotchaResult<Router>> + Send;
-    #[cfg(feature = "task")]
     fn tasks(&mut self, scheduler: &mut crate::TaskScheduler<Self::State, Self::Config>) -> impl Future<Output = GotchaResult<()>> + Send;
 }
 
@@ -76,9 +74,7 @@ pub(crate) struct PreparedServer {
     local_addr: SocketAddr,
     pub(crate) router: Router,
     shutdown: CancellationToken,
-    #[cfg(feature = "task")]
     tasks: Vec<crate::task::ScheduledTask>,
-    #[cfg(feature = "task")]
     task_shutdown_timeout: std::time::Duration,
     http_shutdown_timeout: Duration,
 }
@@ -102,9 +98,7 @@ impl PreparedServer {
         // Connections keep the existing cancellation semantics: graceful shutdown is signalled,
         // but force-closing happens only at the HTTP drain deadline.
         let _shutdown_on_drop = shutdown.clone().drop_guard();
-        #[cfg(feature = "task")]
         let tasks = crate::RunningTasks::start(self.tasks, shutdown.clone());
-        #[cfg(feature = "task")]
         let task_shutdown_timeout = self.task_shutdown_timeout;
         let tracker = ConnectionTracker::default();
         let listener = TrackingListener::new(self.listener, tracker.clone());
@@ -134,18 +128,13 @@ impl PreparedServer {
             shutdown.cancel();
             result.map_err(GotchaError::Io)
         };
-        #[cfg(feature = "task")]
-        {
-            let drain_tasks = async {
-                shutdown.cancelled().await;
-                tasks.shutdown(task_shutdown_timeout).await;
-            };
-            // Start the task deadline when shutdown is requested, independently of HTTP draining.
-            let (result, ()) = tokio::join!(serving, drain_tasks);
-            result
-        }
-        #[cfg(not(feature = "task"))]
-        serving.await
+        let drain_tasks = async {
+            shutdown.cancelled().await;
+            tasks.shutdown(task_shutdown_timeout).await;
+        };
+        // Start the task deadline when shutdown is requested, independently of HTTP draining.
+        let (result, ()) = tokio::join!(serving, drain_tasks);
+        result
     }
 }
 
@@ -212,7 +201,6 @@ pub(crate) async fn prepare_with_context<A: Application>(
         shutdown: shutdown.clone(),
     };
     let router = app.router(context.clone()).await?;
-    #[cfg(feature = "task")]
     let tasks = {
         let mut scheduler = crate::TaskScheduler::with_shutdown(context.clone(), shutdown.clone());
         app.tasks(&mut scheduler).await?;
@@ -223,9 +211,7 @@ pub(crate) async fn prepare_with_context<A: Application>(
         local_addr: bound,
         router,
         shutdown,
-        #[cfg(feature = "task")]
         tasks,
-        #[cfg(feature = "task")]
         task_shutdown_timeout: app.task_shutdown_timeout(),
         http_shutdown_timeout: app.http_shutdown_timeout(),
     };
@@ -293,12 +279,15 @@ where
 /// An application whose listener is bound, with the effective local address available before
 /// serving starts. Binding can use port 0; [`Self::local_addr`] then reports the assigned port.
 ///
-/// Shutdown order: the signal resolves, the context shutdown token is cancelled and the listener
-/// stops accepting, in-flight HTTP connections (including WebSocket upgrades) drain (bounded by
-/// [`GotchaApp::http_shutdown_timeout`] or the builder's `.http_shutdown_timeout()`), scheduled
-/// tasks drain (bounded by the task shutdown timeout), and finally cleanup hooks run. At the HTTP
-/// deadline, remaining sockets are shut down at the OS level, their handlers get up to one second
-/// to observe the closure, and shutdown then continues.
+/// Shutdown order: the signal resolves, and the context shutdown token is cancelled and the
+/// listener stops accepting. Then two drains run at the same time: in-flight HTTP connections
+/// (including WebSocket upgrades, bounded by [`GotchaApp::http_shutdown_timeout`] or the builder's
+/// `.http_shutdown_timeout()`) and background tasks (bounded by the task shutdown timeout). Neither
+/// waits for the other, so a task can finish while a handler is still running. Cleanup hooks run
+/// once both have finished. At the HTTP deadline, remaining sockets are shut down at the OS level,
+/// their handlers get up to one second to observe the closure, and shutdown then continues. At the
+/// task deadline, remaining tasks are aborted and get up to one second to stop, with the same
+/// result; see [`RunningTasks::shutdown`](crate::RunningTasks::shutdown).
 ///
 /// Signal handling starts only when serving starts: holding an unserved `BoundServer` does not
 /// install a signal handler, and dropping it cancels the context shutdown token (releasing tasks
@@ -641,7 +630,6 @@ where
         A::on_shutdown(self, context).await;
     }
 
-    #[cfg(feature = "task")]
     fn task_shutdown_timeout(&self) -> std::time::Duration {
         A::task_shutdown_timeout(self)
     }
@@ -658,7 +646,6 @@ where
         A::build_router(self, context).await
     }
 
-    #[cfg(feature = "task")]
     async fn tasks(&mut self, scheduler: &mut crate::TaskScheduler<Self::State, Self::Config>) -> GotchaResult<()> {
         A::tasks(self, scheduler).await
     }
@@ -696,7 +683,6 @@ where
         A::on_shutdown(&self.0, context).await;
     }
 
-    #[cfg(feature = "task")]
     fn task_shutdown_timeout(&self) -> std::time::Duration {
         A::task_shutdown_timeout(&self.0)
     }
@@ -713,7 +699,6 @@ where
         A::build_router(&self.0, context).await
     }
 
-    #[cfg(feature = "task")]
     async fn tasks(&mut self, scheduler: &mut crate::TaskScheduler<Self::State, Self::Config>) -> GotchaResult<()> {
         A::tasks(&self.0, scheduler).await
     }

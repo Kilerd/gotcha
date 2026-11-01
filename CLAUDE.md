@@ -67,7 +67,7 @@ The framework uses Cargo features for modular functionality:
 - `prometheus` - Metrics integration with `axum-prometheus`
 - `cors` - CORS layer via `tower-http` (no extra dependencies)
 - `static_files` - Static file serving via `tower-http`
-- `task` - Background task scheduling with cron support
+- `task` - Cron schedules; `TaskScheduler` with `spawn` and `interval` is always available
 
 ### Configuration System
 - Uses `mofa` crate for advanced configuration loading

@@ -126,7 +126,6 @@ impl GotchaApp for TraitApp {
         Ok(self.routes(GotchaRouter::default()).into_axum_router(context))
     }
 
-    #[cfg(feature = "task")]
     async fn tasks(&self, _: &mut crate::TaskScheduler<(), Settings>) -> GotchaResult<()> {
         self.stage("tasks")
     }
@@ -164,11 +163,7 @@ async fn both_apis_serve_the_loaded_config_and_actual_bound_address() {
     let prepared = prepare(&mut &app, None).await.unwrap();
     assert_eq!(*app.bound.lock().unwrap(), Some(prepared.local_addr()));
     assert_http(prepared, "loaded").await;
-    let mut expected = vec!["logger", "config", "state", "router"];
-    if cfg!(feature = "task") {
-        expected.push("tasks");
-    }
-    assert_eq!(*app.events.lock().unwrap(), expected);
+    assert_eq!(*app.events.lock().unwrap(), ["logger", "config", "state", "router", "tasks"]);
 }
 
 #[tokio::test]
@@ -180,9 +175,9 @@ async fn run_uses_configured_address_and_does_not_initialize_after_bind_failure(
     std::fs::write(&path, format!("label = 'occupied'\n[server]\nhost = '127.0.0.1'\nport = {}", address.port())).unwrap();
     let app = TraitApp::new(&path);
     let events = app.events.clone();
-    let builder = Gotcha::with_config::<Settings>().with_file_config(&path);
-    #[cfg(feature = "task")]
-    let builder = builder.tasks(|_| panic!("must bind before task registration"));
+    let builder = Gotcha::with_config::<Settings>()
+        .with_file_config(&path)
+        .tasks(|_| panic!("must bind before task registration"));
     let builder_error = tokio::time::timeout(Duration::from_secs(2), builder.run()).await.unwrap().unwrap_err();
     let trait_error = tokio::time::timeout(Duration::from_secs(2), GotchaApp::run(app)).await.unwrap().unwrap_err();
     for error in [builder_error, trait_error] {
@@ -220,11 +215,7 @@ async fn initialization_errors_release_the_listener_and_stop_later_stages() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("config.toml");
     std::fs::write(&path, "label = 'ready'\n[server]\nhost = '127.0.0.1'\nport = 0").unwrap();
-    let mut stages = vec!["state", "router"];
-    if cfg!(feature = "task") {
-        stages.push("tasks");
-    }
-    for stage in stages {
+    for stage in ["state", "router", "tasks"] {
         let mut app = TraitApp::new(&path);
         app.fail_at = Some(stage);
         app.fallback = true; // A config fallback must not swallow errors from other stages.

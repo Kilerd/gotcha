@@ -114,17 +114,15 @@ async fn runtime_context_supports_extractors_messages_and_http_without_loading_b
 fn initialized_builders_can_reach_every_serving_entry_point() {
     fn assert_send<T: Send>(_: T) {}
     fn app() -> Gotcha<RuntimeState, RuntimeConfig> {
-        let app = Gotcha::from_context(context())
+        Gotcha::from_context(context())
             .state(context().state)
             .config(std::sync::Arc::try_unwrap(context().config).unwrap_or_else(|config| (*config).clone()))
-            .get("/context", read);
-        #[cfg(feature = "task")]
-        let app = app.tasks(|scheduler| {
-            scheduler.interval("read-config", std::time::Duration::from_secs(60), |context| async move {
-                let _ = context.config.label;
-            });
-        });
-        app
+            .get("/context", read)
+            .tasks(|scheduler| {
+                scheduler.interval("read-config", std::time::Duration::from_secs(60), |context| async move {
+                    let _ = context.config.label;
+                });
+            })
     }
     // Type-check the public startup futures without opening a listener.
     assert_send(app().listen("127.0.0.1:0"));
