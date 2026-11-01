@@ -89,9 +89,17 @@ async fn composed_routes_keep_http_handlers_and_documentation_together() {
         let paths = spec["paths"].as_object().unwrap();
         assert_eq!(paths.len(), 3, "the annotated raw handler must remain undocumented");
         assert!(!paths.contains_key("/raw/{id}"));
-        for path in ["/api/items/{id}", "/api/copies/{id}"] {
-            assert_eq!(paths[path]["get"], paths["/shortcut/{id}"]["get"]);
+        // `read` is mounted at three paths, so the document order (`/api/copies`, `/api/items`,
+        // `/shortcut`) gives it unique operation ids; everything else is identical.
+        let mut operations = vec![];
+        for (path, id) in [("/api/copies/{id}", "read"), ("/api/items/{id}", "read_2"), ("/shortcut/{id}", "read_3")] {
+            let mut operation = paths[path]["get"].as_object().unwrap().clone();
+            assert_eq!(operation.remove("operationId").unwrap(), json!(id));
             assert!(paths[path]["head"].is_null(), "implicit HEAD does not create an operation");
+            operations.push(Value::Object(operation));
+        }
+        assert!(operations.windows(2).all(|pair| pair[0] == pair[1]));
+        for path in ["/api/copies/{id}", "/api/items/{id}"] {
             assert_eq!(paths[path]["post"]["parameters"][0]["name"], "id");
             assert_eq!(
                 paths[path]["post"]["requestBody"]["content"]["application/json"]["schema"]["$ref"],

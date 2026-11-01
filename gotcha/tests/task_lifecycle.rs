@@ -98,6 +98,7 @@ enum Registration {
     Normal,
     Fail,
     Wait,
+    InvalidCron,
 }
 
 struct App {
@@ -145,6 +146,10 @@ impl GotchaApp for App {
         match self.registration {
             Registration::Fail => Err(GotchaError::message("registration failed")),
             Registration::Wait => std::future::pending().await,
+            Registration::InvalidCron => {
+                scheduler.cron("bad-cron", "not a schedule".into(), |_| async {});
+                Ok(())
+            }
             Registration::Normal => unreachable!(),
         }
     }
@@ -298,6 +303,54 @@ async fn failed_or_cancelled_registration_discards_tasks_and_releases_the_listen
         assert_eq!(controls.executions.load(Ordering::SeqCst), 0);
         let _rebound = tokio::net::TcpListener::bind(address).await.unwrap();
     }
+}
+
+#[tokio::test]
+async fn invalid_registrations_fail_startup_and_release_the_listener() {
+    let (app_controls, mut addresses, _starts, mut drops) = controls();
+    let app = App {
+        controls: app_controls.clone(),
+        timeout: Duration::from_secs(30),
+        registration: Registration::InvalidCron,
+    };
+    let server = tokio::spawn(app.run());
+    let address = within(addresses.recv()).await.unwrap();
+    let error = within(server).await.unwrap().unwrap_err();
+    let message = error.to_string();
+    assert!(message.contains("bad-cron") && message.contains("not a schedule"), "{message}");
+    assert_eq!(drops.try_recv(), Ok(()));
+    assert_eq!(app_controls.executions.load(Ordering::SeqCst), 0);
+    let _rebound = tokio::net::TcpListener::bind(address).await.unwrap();
+
+    // The builder path reports the same registration error from `bind()`.
+    let (builder_controls, _addresses, _starts, _drops) = controls();
+    let error = within(
+        Gotcha::from_context(GotchaContext::new(builder_controls, config()))
+            .tasks(|scheduler| {
+                scheduler.cron("bad-cron", "not a schedule".into(), |_| async {});
+            })
+            .bind(),
+    )
+    .await
+    .err()
+    .expect("an invalid cron expression must fail bind");
+    let message = error.to_string();
+    assert!(message.contains("bad-cron") && message.contains("not a schedule"), "{message}");
+
+    // A zero interval is the same class of silently dropped registration.
+    let (zero_controls, _addresses, _starts, _drops) = controls();
+    let error = within(
+        Gotcha::from_context(GotchaContext::new(zero_controls, config()))
+            .tasks(|scheduler| {
+                scheduler.interval("bad-interval", Duration::ZERO, |_| async {});
+            })
+            .bind(),
+    )
+    .await
+    .err()
+    .expect("a zero interval must fail bind");
+    let message = error.to_string();
+    assert!(message.contains("bad-interval") && message.contains("zero interval"), "{message}");
 }
 
 #[tokio::test]

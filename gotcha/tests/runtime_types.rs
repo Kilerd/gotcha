@@ -37,6 +37,30 @@ fn context() -> GotchaContext<RuntimeState, RuntimeConfig> {
     )
 }
 
+#[test]
+fn cloning_the_context_shares_the_configuration() {
+    let context = context();
+    let clone = context.clone();
+    // axum clones the state per request; the configuration must not be deep-cloned with it.
+    assert!(Arc::ptr_eq(&context.config, &clone.config));
+    assert_eq!(clone.config.server.port, 8123);
+    assert_eq!(clone.config.label, "ready");
+}
+
+#[test]
+fn cloning_a_context_does_not_require_the_configuration_to_be_clone() {
+    struct NotClone;
+    let context = GotchaContext::new(
+        (),
+        ConfigWrapper {
+            app: NotClone,
+            server: ServerConfig::default(),
+        },
+    );
+    let clone = context.clone();
+    assert!(Arc::ptr_eq(&context.config, &clone.config));
+}
+
 struct ReadConfig;
 #[gotcha::async_trait]
 impl Message<RuntimeState, RuntimeConfig> for ReadConfig {
@@ -92,7 +116,7 @@ fn initialized_builders_can_reach_every_serving_entry_point() {
     fn app() -> Gotcha<RuntimeState, RuntimeConfig> {
         let app = Gotcha::from_context(context())
             .state(context().state)
-            .config(context().config)
+            .config(std::sync::Arc::try_unwrap(context().config).unwrap_or_else(|config| (*config).clone()))
             .get("/context", read);
         #[cfg(feature = "task")]
         let app = app.tasks(|scheduler| {

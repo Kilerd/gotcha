@@ -351,7 +351,7 @@ let app = Gotcha::from_state(())
 The builder's `finish_router` mirrors the trait's
 `GotchaApp::finish_router(&self, router, context)` hook. Hooks run once at startup after business
 routes, fallback, and documentation are mounted, and receive a clone of the application's
-`GotchaContext` — configuration is duplicated, while state shared behind `Arc` is the same value
+`GotchaContext` — the configuration is shared behind an `Arc`, so hooks observe the same values
 the routes see. `app_layer` middleware is installed after these hooks, so it covers whatever they
 mount. `finish_router` is not called during document export.
 
