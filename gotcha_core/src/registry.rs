@@ -3,7 +3,7 @@
 //! A collection scope prevents recursive expansion. Names are assigned only after every type
 //! is known, so collisions cannot make the result depend on registration order.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::hash::Hash;
 
@@ -11,10 +11,12 @@ use convert_case::{Case, Casing};
 use oas::{Schema, SchemaValue};
 use serde_json::Value;
 
-use crate::EnhancedSchema;
+use crate::{EnhancedSchema, Schematic};
 
 thread_local! {
     static ACTIVE: RefCell<Option<Registry>> = const { RefCell::new(None) };
+    /// Whether [`probing`] is looking into a value.
+    static PROBING: Cell<bool> = const { Cell::new(false) };
 }
 
 #[derive(Default)]
@@ -271,6 +273,102 @@ pub fn schema_or_ref_for<T: ?Sized>(name: Option<&str>, module: &str, required: 
     let identity = std::any::type_name::<T>();
     let preferred = name.map(str::to_owned).unwrap_or_else(|| short_type_name(identity));
     register(identity, preferred, module, name.is_some(), required, build)
+}
+
+/// Look into a value in a scope of its own, so that nothing it registers stays in the document.
+///
+/// What a probe builds is thrown away apart from its answer about the value itself, which the
+/// branches of an enum flattened further inside do not change. So those branches stop at
+/// [`unexamined_branch`], without a probe of their own. That also ends a value leading back to
+/// itself through a flattened enum, and keeps the cost at one probe per branch of the document.
+fn probing<R: SchemaReferences>(probe: impl FnOnce() -> R) -> (R, BTreeMap<String, Schema>) {
+    struct Finish(bool);
+    impl Drop for Finish {
+        fn drop(&mut self) {
+            PROBING.set(self.0);
+        }
+    }
+    let _finish = Finish(PROBING.replace(true));
+    collect(probe)
+}
+
+/// What a flattened enum's branch contributes to a probe further up: see [`probing`].
+fn unexamined_branch() -> EnhancedSchema {
+    EnhancedSchema {
+        schema: Schema::default(),
+        required: true,
+    }
+}
+
+/// Whether nothing is left of a map's schema without its `additionalProperties`, so nothing in it
+/// can refer to a scope thrown away or hold a branch a probe stopped at.
+fn is_plain_map(schema: &Schema) -> bool {
+    schema._ref.is_none() && schema.content_schema.is_none() && schema.extras.is_empty()
+}
+
+/// The schema of the value a newtype variant wraps, on a branch written without a tag.
+///
+/// A flattened enum's branch composes with the parent's fields, so a map's
+/// `additionalProperties` cannot stay on it. A plain map is probed in a scope of its own: its value
+/// type would otherwise stay registered with nothing left referencing it. Any other value with the
+/// keyword is hand-written and is built for real, because the probe's answer may not stand alone.
+#[doc(hidden)]
+pub fn wrapped_value_schema<T: Schematic>(flattening: bool) -> EnhancedSchema {
+    if flattening {
+        if PROBING.get() {
+            return unexamined_branch();
+        }
+        let (mut probe, _) = probing(T::generate_schema);
+        if probe.schema.extras.remove("additionalProperties").is_some() {
+            if is_plain_map(&probe.schema) {
+                return probe;
+            }
+            let mut value = T::generate_schema();
+            value.schema.extras.remove("additionalProperties");
+            return value;
+        }
+    }
+    T::generate_schema()
+}
+
+/// [`wrapped_value_schema`] for an internally tagged enum, whose newtype variants merge a struct's
+/// fields: a struct becomes an object of its fields, not a component of its own. What one object of
+/// fields cannot say stays a reference: a value that may be absent, or that flattens an enum.
+#[doc(hidden)]
+pub fn wrapped_value_fields_schema<T: Schematic>(flattening: bool) -> EnhancedSchema {
+    if flattening && PROBING.get() {
+        return unexamined_branch();
+    }
+    let fields = T::fields();
+    let flattens_enum = || {
+        let mut flattened = None;
+        probing(|| flattened = T::flatten_schema());
+        flattened.is_some()
+    };
+    if fields.is_empty() || !T::required() || flattens_enum() {
+        return wrapped_value_schema::<T>(flattening);
+    }
+    let mut properties = HashMap::new();
+    let mut required = vec![];
+    for (name, field) in fields {
+        properties.insert(name.to_owned(), field.schema.to_value());
+        if field.required {
+            required.push(name);
+        }
+    }
+    let mut schema = Schema {
+        _type: Some("object".into()),
+        description: T::doc(),
+        ..Schema::default()
+    };
+    schema.extras.insert("properties".to_owned(), serde_json::json!(properties));
+    schema.extras.insert("required".to_owned(), serde_json::json!(required));
+    if !flattening {
+        if let Some(additional) = T::additional_properties() {
+            schema.extras.insert("additionalProperties".to_owned(), additional);
+        }
+    }
+    EnhancedSchema { schema, required: true }
 }
 
 /// Record `length(min/max)` constraints with the keyword that matches the schema's type.

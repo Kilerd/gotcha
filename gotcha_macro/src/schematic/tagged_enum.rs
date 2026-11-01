@@ -1,6 +1,7 @@
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 
+use crate::schematic::untagged_enum::WrappedValue;
 use crate::schematic::ParameterEnumVariantOpt;
 
 /// Whether the field carries documentation worth copying onto the variant object.
@@ -13,9 +14,28 @@ pub(crate) fn handler(
 ) -> syn::Result<TokenStream2> {
     let tag_name_str = tag_name.as_str();
 
+    // An `#[serde(untagged)]` branch has no tag to discriminate on and can accept what another
+    // branch accepts, and serde takes the first match.
+    let has_untagged = variants.iter().any(|variant| variant.serde.untagged);
+    let union_keyword = if has_untagged { "anyOf" } else { "oneOf" };
+    let discriminator = quote! {
+        {
+            let mut discriminator: ::std::collections::HashMap<String, #core::serde_json::Value> = ::std::collections::HashMap::new();
+            discriminator.insert("propertyName".to_string(), #core::serde_json::to_value(#tag_name_str).unwrap());
+            #core::serde_json::to_value(discriminator).unwrap()
+        }
+    };
+    let schema_discriminator = (!has_untagged).then(|| quote! { schema.schema.extras.insert("discriminator".to_string(), #discriminator); });
+    let flatten_discriminator = (!has_untagged).then(|| quote! { obj.insert("discriminator".to_string(), #discriminator); });
+
     let variants_codegen: Vec<TokenStream2> = variants
         .into_iter()
         .map(|variant| {
+            if variant.serde.untagged {
+                let branch = variant.untagged_branch_object(core, WrappedValue::FieldsMerged);
+                return quote! { let variant_object = #branch; };
+            }
+
             let varient_string = variant.serde_name();
             let variant_annotations = variant.variant_customizations(core);
 
@@ -29,7 +49,7 @@ pub(crate) fn handler(
 
             match variant.style() {
                 darling::ast::Style::Struct => {
-                    let object = crate::schematic::named_variant_object(core, Some((tag_name_str, &varient_string)), variant.fields.fields);
+                    let object = crate::schematic::named_variant_object(core, Some((tag_name_str, &varient_string)), variant.fields.fields, true);
                     quote! {
                         let mut variant_object = #object;
                         variant_object.insert("title".to_string(), #core::serde_json::to_value(#varient_string).expect("cannot convert title to value"));
@@ -99,7 +119,7 @@ pub(crate) fn handler(
                                 // A map-like inner value merges its entries next to the tag
                                 // through `additionalProperties`; the trait method reports it
                                 // without generating/registering the wrapper's own schema.
-                                if collect_additional {
+                                if !flattening {
                                     if let Some(additional) = <#field_ty as #core::Schematic>::additional_properties() {
                                         inner_additional = Some(additional);
                                     }
@@ -158,28 +178,26 @@ pub(crate) fn handler(
                     required: Self::required(),
                 };
                 let mut branches = vec![];
-                // `flatten_schema` sets this to false: the map's value schema must not be
+                // `flatten_schema` sets this to true: the map's value schema must not be
                 // registered there when the branch constraint is stripped anyway.
-                let collect_additional = true;
+                let flattening = false;
 
                 #(
                     #variants_codegen
                     branches.push(variant_object);
                 )*
-                let mut discriminator = ::std::collections::HashMap::new();
-                discriminator.insert("propertyName".to_string(), #core::serde_json::to_value(#tag_name_str).unwrap());
-                schema.schema.extras.insert("oneOf".to_string(), #core::serde_json::to_value(branches).unwrap());
-                schema.schema.extras.insert("discriminator".to_string(), #core::serde_json::to_value(discriminator).unwrap());
+                schema.schema.extras.insert(#union_keyword.to_string(), #core::serde_json::to_value(branches).unwrap());
+                #schema_discriminator
                 schema
             })
         }
 
         fn flatten_schema() -> Option<#core::serde_json::Value> {
-            // Return the oneOf schema for flattening. A branch's `additionalProperties` would
+            // Return the union schema for flattening. A branch's `additionalProperties` would
             // also constrain the fields the parent declares next to the flattened enum, so it is
             // dropped here (the map's entries stay undocumented at the parent level).
             let mut branches: Vec<::std::collections::HashMap<String, #core::serde_json::Value>> = vec![];
-            let collect_additional = false;
+            let flattening = true;
             #(
                 #variants_codegen
                 branches.push(variant_object);
@@ -188,11 +206,9 @@ pub(crate) fn handler(
                 branch.remove("additionalProperties");
                 branch.remove("unevaluatedProperties");
             }
-            let mut discriminator: ::std::collections::HashMap<String, #core::serde_json::Value> = ::std::collections::HashMap::new();
-            discriminator.insert("propertyName".to_string(), #core::serde_json::to_value(#tag_name_str).unwrap());
             let mut obj: ::std::collections::HashMap<String, #core::serde_json::Value> = ::std::collections::HashMap::new();
-            obj.insert("oneOf".to_string(), #core::serde_json::to_value(branches).unwrap());
-            obj.insert("discriminator".to_string(), #core::serde_json::to_value(discriminator).unwrap());
+            obj.insert(#union_keyword.to_string(), #core::serde_json::to_value(branches).unwrap());
+            #flatten_discriminator
             Some(#core::serde_json::to_value(obj).unwrap())
         }
     };

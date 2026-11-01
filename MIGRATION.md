@@ -2,6 +2,7 @@
 
 - [Unreleased: moving from GotchaApp to the builder](#unreleased-moving-from-gotchaapp-to-the-builder)
 - [Unreleased: extractor provider keys](#unreleased-extractor-provider-keys)
+- [Unreleased: skipped and untagged variants](#unreleased-skipped-and-untagged-variants)
 - [Unreleased: names serde writes and reads differently](#unreleased-names-serde-writes-and-reads-differently)
 - [Unreleased: the macro crate needs Rust 1.88](#unreleased-the-macro-crate-needs-rust-188)
 - [Unreleased: untagged enums use anyOf](#unreleased-untagged-enums-use-anyof)
@@ -174,6 +175,28 @@ rejection responses, and the values the built-in extractors report do not change
   switch the built-in extractors to keys. See
   [Writing an extractor provider](README.md#writing-an-extractor-provider) for an extractor
   defined outside Gotcha.
+
+---
+
+# Unreleased: skipped and untagged variants
+
+The `Schematic` derive now reads `#[serde(skip)]` and `#[serde(untagged)]` on enum variants.
+
+- A `#[serde(skip)]` variant leaves the document, and its type no longer needs `Schematic`. If only
+  unit variants remain, an externally tagged enum becomes a plain string enum. A variant skipped in
+  one direction stays documented.
+- An `#[serde(untagged)]` variant of a tagged enum is documented without the tag. The enum's
+  branches change from `oneOf` to `anyOf` and its `discriminator` goes away, because the untagged
+  branch has no tag and can accept what another branch accepts.
+- An externally tagged all-unit enum with an untagged variant changes from a string enum to
+  `anyOf`, because that variant is written as `null`.
+- An `#[serde(untagged)]` variant of an internally tagged enum documents a wrapped struct through
+  its fields, as that enum's other newtype variants do. `Option<S>` and a struct flattening an enum
+  stay a `$ref`, so `S` becomes a component. A type with the same name elsewhere in the document
+  then gets a qualified component name, also on routes that do not use this enum.
+
+Generated types change for these enums, also for code that only uses the tagged variants, so
+regenerate clients built from them.
 
 ---
 
