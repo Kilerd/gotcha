@@ -495,6 +495,15 @@ enum VariantWithMap {
     },
 }
 
+/// Flattening the enum must strip the branch's `additionalProperties`, or it would constrain the
+/// parent's own `name` field.
+#[derive(Schematic, Serialize, Deserialize)]
+struct FlattensTaggedStructMap {
+    name: u32,
+    #[serde(flatten)]
+    variant: VariantWithMap,
+}
+
 /// An untagged struct variant flattening a map: flattening the enum must strip the branch's
 /// `additionalProperties`, or it would constrain the parent's own `name` field.
 #[derive(Schematic, Serialize, Deserialize)]
@@ -884,6 +893,26 @@ fn a_flattened_untagged_map_variant_does_not_constrain_the_parent() {
 }
 
 #[test]
+fn a_flattened_tagged_struct_map_variant_does_not_constrain_the_parent() {
+    // Loose validation on purpose: strict mode rejects the undocumented map entry, which is the
+    // known limitation of flattening a struct-variant map.
+    let document = schema_document::<FlattensTaggedStructMap>();
+    let instance = serde_json::to_value(FlattensTaggedStructMap {
+        name: 7,
+        variant: VariantWithMap::Mapped {
+            id: 1,
+            extra: HashMap::from([("a".to_owned(), "b".to_owned())]),
+        },
+    })
+    .expect("sample serializes");
+    let validator = jsonschema::validator_for(&document).expect("generated schema is a valid JSON Schema");
+    assert!(
+        validator.validate(&instance).is_ok(),
+        "the tagged branch map constraint must not apply to the parent's fields: {instance} vs {document}"
+    );
+}
+
+#[test]
 fn a_flattened_map_variant_collects_no_component_for_its_value_type() {
     // The flattened branch's `additionalProperties` is stripped, so the map's value type is
     // never documented there. Building it anyway (the tagged newtype-variant path before #178's
@@ -1006,9 +1035,11 @@ fn component_references_resolve() {
 //   `additionalProperties` from the composed schema: keeping it would constrain the parent's own
 //   declared fields (the variant branch is composed through `allOf`), so strict validation
 //   rejects the map entries.
-// - Flattening an enum whose struct variant flattens a map (in any tag form) is stripped the
-//   same way, for the same reason: the entries stay undocumented and strict validation rejects
-//   them.
+// - Flattening an internally tagged or untagged enum whose struct variant flattens a map strips
+//   the branch's `additionalProperties` for the same reason: the entries stay undocumented and
+//   strict validation rejects them. The external and adjacent forms keep it nested under
+//   `properties.<Variant>` / `properties.data`, so they document the entries and pass both
+//   validations.
 // - Flattening an untagged enum whose newtype variant wraps a map strips the branch's
 //   `additionalProperties`; the entries stay undocumented and strict validation rejects them.
 // - Flattening an untagged enum whose newtype variant wraps a struct that itself flattens a map
