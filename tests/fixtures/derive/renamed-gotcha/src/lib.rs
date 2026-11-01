@@ -16,6 +16,21 @@ pub struct Request {
     name: String,
 }
 
+// The attribute macros emit framework paths too; they must resolve through the renamed
+// dependency just like the derive's generated paths.
+#[schema::state]
+#[derive(Clone, Default)]
+pub struct AppState;
+
+#[schema::config]
+#[derive(Clone, Default)]
+pub struct AppConfig;
+
+#[schema::api(id = "renamed_ping")]
+pub async fn ping() -> String {
+    String::new()
+}
+
 #[test]
 fn library_types_satisfy_the_application_trait() {
     let fields = <ApplicationRecord as schema::Schematic>::fields();

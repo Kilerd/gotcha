@@ -5,6 +5,16 @@
 
 use schema::{Json, Schematic, Valid, Validate};
 
+// `#[state]` and `#[config]` are available without `openapi` and must resolve their generated
+// `FromRef` paths through the renamed dependency.
+#[schema::state]
+#[derive(Clone, Default)]
+pub struct AppState;
+
+#[schema::config]
+#[derive(Clone, Default)]
+pub struct AppConfig;
+
 #[derive(serde::Deserialize, Schematic, Validate)]
 #[validate(crate = "schema::validator")]
 #[serde(rename_all = "camelCase")]

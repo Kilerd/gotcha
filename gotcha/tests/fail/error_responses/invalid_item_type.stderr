@@ -1,0 +1,7 @@
+error: unexpected end of input, expected one of: `for`, parentheses, `fn`, `unsafe`, `extern`, identifier, `::`, `<`, square brackets, `*`, `&`, `!`, `impl`, `_`, lifetime
+ --> tests/fail/error_responses/invalid_item_type.rs:3:98
+  |
+3 | #[api(skip_response, responses(response(status = 200, content_type = "text/event-stream", item = "Vec<")))]
+  |                                                                                                  ^^^^^^
+  |
+  = note: this error originates in the attribute macro `api` (in Nightly builds, run with -Z macro-backtrace for more info)

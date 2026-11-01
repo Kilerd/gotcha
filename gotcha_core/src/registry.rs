@@ -273,6 +273,71 @@ pub fn schema_or_ref_for<T: ?Sized>(name: Option<&str>, module: &str, required: 
     register(identity, preferred, module, name.is_some(), required, build)
 }
 
+/// Record `length(min/max)` constraints with the keyword that matches the schema's type.
+///
+/// Strings get `minLength`/`maxLength`, arrays `minItems`/`maxItems`, and objects
+/// `minProperties`/`maxProperties`. The `Schematic` derive emits a call to this for every
+/// `#[validate(length(..))]` field, so the keyword follows the generated schema (a set or a map
+/// gets the keywords of the array or object it serializes to) rather than the Rust type written
+/// on the field, including when `#[schematic(as = "..")]` changes the described type.
+///
+/// A bound already present on the schema (for example the exact item count of `[T; N]`) is kept
+/// when it is tighter: the larger lower bound and the smaller upper bound win.
+///
+/// The type is read through the `anyOf` union `Option<T>` produces. A schema whose type is not
+/// visible (`$ref` and other composed schemas) keeps the string keywords.
+#[doc(hidden)]
+pub fn apply_length_constraints(schema: &mut Schema, min: Option<u64>, max: Option<u64>) {
+    let (min_keyword, max_keyword) = length_keywords(schema);
+    if let Some(min) = min {
+        let lower = schema.extras.get(min_keyword).and_then(Value::as_u64).map_or(min, |existing| existing.max(min));
+        schema.extras.insert(min_keyword.to_owned(), serde_json::json!(lower));
+    }
+    if let Some(max) = max {
+        let upper = schema.extras.get(max_keyword).and_then(Value::as_u64).map_or(max, |existing| existing.min(max));
+        schema.extras.insert(max_keyword.to_owned(), serde_json::json!(upper));
+    }
+}
+
+/// The `(min, max)` keywords for a schema's serialized type.
+fn length_keywords(schema: &Schema) -> (&'static str, &'static str) {
+    match schema_kind(schema) {
+        Some("array") => ("minItems", "maxItems"),
+        Some("object") => ("minProperties", "maxProperties"),
+        // Strings and schemas whose type is not visible keep the string keywords.
+        _ => ("minLength", "maxLength"),
+    }
+}
+
+/// The JSON type name of `schema`, looking through the `anyOf` union `Option<T>` produces.
+fn schema_kind(schema: &Schema) -> Option<&'static str> {
+    match &schema._type {
+        Some(oas::SchemaType::Single(name)) => match name.as_str() {
+            "string" => return Some("string"),
+            "array" => return Some("array"),
+            "object" => return Some("object"),
+            _ => {}
+        },
+        Some(oas::SchemaType::Multiple(names)) => {
+            for name in names {
+                match name.as_str() {
+                    "string" => return Some("string"),
+                    "array" => return Some("array"),
+                    "object" => return Some("object"),
+                    _ => {}
+                }
+            }
+        }
+        None => {}
+    }
+    // `Option<T>` is `anyOf: [T, {"type": "null"}]`.
+    let branches = schema.extras.get("anyOf")?.as_array()?;
+    branches.iter().find_map(|branch| {
+        let branch: Schema = serde_json::from_value(branch.clone()).ok()?;
+        schema_kind(&branch)
+    })
+}
+
 fn short_type_name(identity: &str) -> String {
     // Keep the last segment of each qualified path, including paths inside generic arguments.
     // Punctuation separates arguments. Any lossy spelling collision is resolved by names().

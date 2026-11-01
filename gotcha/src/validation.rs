@@ -145,13 +145,10 @@ impl<E> std::ops::DerefMut for Valid<E> {
 /// assert_eq!(flatten_errors(&errors)["name"], ["is required"]);
 /// ```
 pub fn flatten_errors(errors: &ValidationErrors) -> BTreeMap<String, Vec<String>> {
-    // Reuse the default-message filling so callers get the same readable text as the default
-    // rejection, without mutating the borrowed errors.
-    let mut filled = errors.clone();
-    fill_default_messages(&mut filled);
-
     let mut fields = BTreeMap::new();
-    flatten_into(&filled, "", &mut fields);
+    // `flatten_into` falls back to the default message for every error that carries none, so the
+    // borrowed errors are read in place; no clone or pre-filling pass is needed.
+    flatten_into(errors, "", &mut fields);
     fields
 }
 
@@ -352,33 +349,6 @@ pub(crate) fn validation_error_response(errors: &ValidationErrors) -> Response {
     crate::error::json_response(StatusCode::UNPROCESSABLE_ENTITY, body)
 }
 
-/// Give every error a non-null `message`.
-///
-/// `validator` only auto-describes an error in its `Display` impl; the serialized form leaves
-/// `message: null` unless the field declares `#[validate(.., message = "..")]`. Since the
-/// serialized form is what API clients actually see, fill in a readable default derived from the
-/// error's code and params, leaving any user-supplied message untouched.
-fn fill_default_messages(errors: &mut ValidationErrors) {
-    for kind in errors.0.values_mut() {
-        match kind {
-            ValidationErrorsKind::Field(field_errors) => {
-                for error in field_errors.iter_mut() {
-                    if error.message.is_none() {
-                        let message = default_message(error);
-                        error.message = Some(Cow::Owned(message));
-                    }
-                }
-            }
-            ValidationErrorsKind::Struct(nested) => fill_default_messages(nested),
-            ValidationErrorsKind::List(items) => {
-                for nested in items.values_mut() {
-                    fill_default_messages(nested);
-                }
-            }
-        }
-    }
-}
-
 /// A human-readable description of a validation failure, built from its code and params.
 fn default_message(error: &ValidationError) -> String {
     let param = |name: &str| error.params.get(name).map(render_param);
@@ -434,19 +404,23 @@ where
 {
     type Rejection = Rejected<ValidRejection>;
 
-    async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
-        // A malformed body is a `Json` rejection and is rendered by `JsonConfig`; keep that
-        // rendering while exposing the original rejection.
-        let config = crate::extract::config::configs(req.extensions());
-        let Json(value) = <Json<T> as FromRequest<S>>::from_request(req, state).await.map_err(|rejected| {
-            let (rejection, response) = rejected.into_parts();
-            Rejected::new(ValidRejection::Json(rejection), response)
-        })?;
+    async fn from_request(mut req: Request, state: &S) -> Result<Self, Self::Rejection> {
+        // The body extractor consumes the request, so take the configurations once: a malformed
+        // body is a `Json` rejection rendered by `JsonConfig`, and a decoded body that fails
+        // validation is rendered by `ValidConfig`. Delegating straight to Axum's `Json` keeps this
+        // to one lookup instead of the wrapper's lookup plus `Json`'s own.
+        let configs = crate::extract::config::TakenConfigs::take(req.extensions_mut());
+        let axum::extract::Json(value) = <axum::extract::Json<T> as FromRequest<S>>::from_request(req, state)
+            .await
+            .map_err(|rejection| {
+                let response = configs.json.render(&rejection);
+                Rejected::new(ValidRejection::Json(rejection), response)
+            })?;
         // Only a body that deserialized and failed validation reaches `ValidConfig`. Rewrite the
         // keys first so the handler, the rendered body, and `Rejected` all see wire names.
         value.validate().map_err(|mut errors| {
             remap_to_wire_names::<T>(&mut errors);
-            let response = config.valid.render(&errors);
+            let response = configs.valid.render(&errors);
             Rejected::new(ValidRejection::Invalid(errors), response)
         })?;
         Ok(Valid(Json(value)))
@@ -460,9 +434,11 @@ where
 {
     type Rejection = Rejected<ValidRejection>;
 
-    async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
-        // Choosing the Axum original keeps its own rejection response.
-        let config = crate::extract::config::configs(req.extensions());
+    async fn from_request(mut req: Request, state: &S) -> Result<Self, Self::Rejection> {
+        // Choosing the Axum original keeps its own rejection response, so only a validation
+        // failure needs the configurations. They are taken out of the consumed request without a
+        // refcount bump and used only if validation fails.
+        let configs = crate::extract::config::TakenConfigs::take(req.extensions_mut());
         let axum::extract::Json(value) = <axum::extract::Json<T> as FromRequest<S>>::from_request(req, state)
             .await
             .map_err(|rejection| {
@@ -473,7 +449,7 @@ where
             })?;
         value.validate().map_err(|mut errors| {
             remap_to_wire_names::<T>(&mut errors);
-            let response = config.valid.render(&errors);
+            let response = configs.valid.render(&errors);
             Rejected::new(ValidRejection::Invalid(errors), response)
         })?;
         Ok(Valid(axum::extract::Json(value)))
@@ -804,6 +780,48 @@ mod tests {
         let errors = Payload { age: 200 }.validate().unwrap_err();
         assert!(field_error(&errors, "age").message.is_none(), "validator itself leaves message unset");
         assert_eq!(flatten_errors(&errors)["age"], ["must be at least 0 and at most 150"]);
+    }
+
+    #[test]
+    fn flatten_errors_fills_message_less_errors_in_every_nesting_kind() {
+        // The default message is produced while flattening, not by rewriting the borrowed errors:
+        // pin that every kind (field, nested struct, list/map values, `__all__`) gets one and that
+        // the input keeps its `None`.
+        let message_less = ValidationError::new;
+
+        let mut nested = ValidationErrors::new();
+        nested.add("city", message_less("length"));
+
+        let mut listed = ValidationErrors::new();
+        listed.add("name", message_less("required"));
+
+        let mut errors = ValidationErrors::new();
+        errors.add("age", message_less("range"));
+        errors.add("__all__", message_less("some_custom_rule"));
+        errors.errors_mut().insert("address".into(), ValidationErrorsKind::Struct(Box::new(nested)));
+        // validator represents `#[validate(nested)]` map values as a list indexed by iteration
+        // order, so this arm also covers maps.
+        errors
+            .errors_mut()
+            .insert("entries".into(), ValidationErrorsKind::List(BTreeMap::from([(0, Box::new(listed))])));
+
+        assert_eq!(
+            flatten_errors(&errors),
+            BTreeMap::from([
+                ("__all__".to_string(), vec!["failed validation: some_custom_rule".to_string()]),
+                ("address.city".to_string(), vec!["invalid length".to_string()]),
+                ("age".to_string(), vec!["value out of range".to_string()]),
+                ("entries[0].name".to_string(), vec!["is required".to_string()]),
+            ])
+        );
+        for kind in errors.errors().values() {
+            if let ValidationErrorsKind::Field(field_errors) = kind {
+                assert!(
+                    field_errors.iter().all(|error| error.message.is_none()),
+                    "flattening must not fill messages on the borrowed errors"
+                );
+            }
+        }
     }
 
     #[test]

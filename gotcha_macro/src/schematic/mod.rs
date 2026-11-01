@@ -1,7 +1,6 @@
 use darling::ast::Data;
 use darling::{FromDeriveInput, FromField, FromVariant};
-use proc_macro2::{Span, TokenStream as TokenStream2};
-use proc_macro_crate::{crate_name, FoundCrate};
+use proc_macro2::{Delimiter, Group, Span, TokenStream as TokenStream2, TokenTree};
 use quote::quote;
 use syn::{parse2, DeriveInput};
 
@@ -166,10 +165,76 @@ struct ValidateConstraints {
     /// Whether the corresponding bound came from `exclusive_min` / `exclusive_max`.
     exclusive_minimum: bool,
     exclusive_maximum: bool,
-    /// `length(min/max/equal)` — becomes minLength/maxLength for strings, minItems/maxItems for collections.
+    /// `length(min/max/equal)` — recorded with the keywords of the schema's type at runtime.
     min_length: Option<u64>,
     max_length: Option<u64>,
     format: Option<&'static str>,
+}
+
+/// The items of a `#[validate(...)]` attribute, parsed leniently.
+///
+/// The validator crate accepts arguments that are not literals — `regex(path = *RE)`,
+/// `length(max = MAX_LEN)` — which `syn::Meta` cannot represent. Rather than dropping the whole
+/// attribute (and with it every constraint it declares), each list is rewritten to the literal
+/// name-value items it contains, so the constraints that map to JSON Schema are still read.
+fn validate_items(attr: &syn::Attribute) -> Vec<syn::Meta> {
+    let mut tokens = attr.tokens.clone().into_iter();
+    let Some(TokenTree::Group(group)) = tokens.next() else {
+        return Vec::new();
+    };
+    if tokens.next().is_some() || group.delimiter() != Delimiter::Parenthesis {
+        return Vec::new();
+    }
+    split_top_level_commas(group.stream()).into_iter().filter_map(lenient_meta).collect()
+}
+
+/// Split a token stream on its top-level commas. Commas inside a group are part of that group.
+fn split_top_level_commas(tokens: TokenStream2) -> Vec<TokenStream2> {
+    let mut items = Vec::new();
+    let mut current = TokenStream2::new();
+    for token in tokens {
+        if matches!(&token, TokenTree::Punct(punct) if punct.as_char() == ',') {
+            if !current.is_empty() {
+                items.push(std::mem::take(&mut current));
+            }
+        } else {
+            current.extend([token]);
+        }
+    }
+    if !current.is_empty() {
+        items.push(current);
+    }
+    items
+}
+
+/// Parse one comma-separated item of `#[validate(...)]`, dropping the parts `syn` cannot
+/// represent. A `name(args)` item with a non-literal argument keeps its literal arguments, so
+/// `length(min = 1, max = MAX_LEN)` still yields `length(min = 1)`.
+fn lenient_meta(tokens: TokenStream2) -> Option<syn::Meta> {
+    if let Ok(meta) = syn::parse2::<syn::Meta>(tokens.clone()) {
+        return Some(meta);
+    }
+    let mut path_tokens = Vec::new();
+    for part in tokens {
+        let TokenTree::Group(group) = part else {
+            path_tokens.push(part);
+            continue;
+        };
+        if group.delimiter() != Delimiter::Parenthesis || path_tokens.is_empty() {
+            return None;
+        }
+        let path: syn::Path = syn::parse2(path_tokens.iter().cloned().collect()).ok()?;
+        let nested: Vec<syn::Meta> = split_top_level_commas(group.stream()).into_iter().filter_map(lenient_meta).collect();
+        // No literal argument survived, so there is nothing to document.
+        if nested.is_empty() {
+            return None;
+        }
+        let nested_tokens = quote! { #(#nested),* };
+        let mut rebuilt = quote! { #path };
+        rebuilt.extend([TokenTree::Group(Group::new(Delimiter::Parenthesis, nested_tokens))]);
+        return syn::parse2::<syn::Meta>(rebuilt).ok();
+    }
+    None
 }
 
 impl ValidateConstraints {
@@ -179,13 +244,7 @@ impl ValidateConstraints {
             if !attr.path.is_ident("validate") {
                 continue;
             }
-            let items = match attr
-                .parse_args_with(|input: syn::parse::ParseStream| syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated(input))
-            {
-                Ok(items) => items,
-                Err(_) => continue,
-            };
-            for item in items {
+            for item in validate_items(attr) {
                 match item {
                     syn::Meta::List(list) if list.path.is_ident("range") => {
                         for (name, lit) in name_values(&list) {
@@ -258,31 +317,6 @@ fn lit_to_u64(lit: &syn::Lit) -> Option<u64> {
     }
 }
 
-/// Whether `ty` is a collection (`Vec<_>`), peeling one layer of `Option<_>`. Used to decide
-/// whether `length` maps to minItems/maxItems (collections) or minLength/maxLength (strings).
-fn is_collection(ty: &syn::Type) -> bool {
-    let syn::Type::Path(tp) = ty else {
-        return false;
-    };
-    let Some(seg) = tp.path.segments.last() else {
-        return false;
-    };
-    if seg.ident == "Vec" {
-        return true;
-    }
-    if seg.ident != "Option" {
-        return false;
-    }
-    // Peel one `Option<T>` layer and re-check the inner type.
-    let syn::PathArguments::AngleBracketed(args) = &seg.arguments else {
-        return false;
-    };
-    match args.args.first() {
-        Some(syn::GenericArgument::Type(inner)) => is_collection(inner),
-        _ => false,
-    }
-}
-
 impl ParameterStructFieldOpt {
     /// The type whose `Schematic` describes this field: the `#[schematic(as = "...")]` type when
     /// present, otherwise the declared field type. The original type is then never required to
@@ -325,16 +359,20 @@ impl ParameterStructFieldOpt {
             let key = if validated.exclusive_maximum { "exclusiveMaximum" } else { "maximum" };
             customizations.push(extra(core, key, quote! { #max }));
         }
-        let (len_min, len_max) = if is_collection(self.schema_type()) {
-            ("minItems", "maxItems")
-        } else {
-            ("minLength", "maxLength")
-        };
-        if let Some(min) = validated.min_length {
-            customizations.push(extra(core, len_min, quote! { #min }));
-        }
-        if let Some(max) = validated.max_length {
-            customizations.push(extra(core, len_max, quote! { #max }));
+        // The keyword depends on the schema above, which is only known at runtime: a string
+        // gets min/maxLength, an array min/maxItems and an object min/maxProperties.
+        if validated.min_length.is_some() || validated.max_length.is_some() {
+            let min = match validated.min_length {
+                Some(min) => quote! { Some(#min) },
+                None => quote! { None },
+            };
+            let max = match validated.max_length {
+                Some(max) => quote! { Some(#max) },
+                None => quote! { None },
+            };
+            customizations.push(quote! {
+                #core::registry::apply_length_constraints(&mut field_schema.schema, #min, #max);
+            });
         }
         if let Some(format) = validated.format {
             customizations.push(quote! { field_schema.schema.format = Some(#format.to_string()); });
@@ -373,19 +411,11 @@ pub(crate) struct ParameterEnumVariantOpt {
 // Libraries can stay on core alone; applications can use gotcha's re-export. Cargo
 // dependency aliases are resolved by package name, including workspace dependencies.
 fn core_crate_path() -> Result<TokenStream2, &'static str> {
-    for package in ["gotcha_core", "gotcha"] {
-        if let Ok(found) = crate_name(package) {
-            let name = match found {
-                FoundCrate::Itself => package.to_owned(),
-                FoundCrate::Name(name) => name,
-            };
-            let ident = syn::Ident::new(&name, Span::call_site());
-            return Ok(if package == "gotcha_core" {
-                quote! { ::#ident }
-            } else {
-                quote! { ::#ident::gotcha_core }
-            });
-        }
+    if let Some(core) = crate::utils::crate_path("gotcha_core") {
+        return Ok(core);
+    }
+    if let Some(gotcha) = crate::utils::crate_path("gotcha") {
+        return Ok(quote! { #gotcha::gotcha_core });
     }
     Err("Schematic requires a gotcha_core or gotcha dependency; use #[schematic(crate = \"path::to::gotcha_core\")] for a custom re-export")
 }
@@ -506,5 +536,42 @@ mod name_tests {
     fn misspelled_container_options_report_compile_errors() {
         let output = handler(quote! { #[schematic(nmae = "Example")] struct Example { value: String } }).unwrap();
         assert!(output.to_string().contains("compile_error"));
+    }
+}
+
+#[cfg(test)]
+mod validate_tests {
+    use super::*;
+
+    #[test]
+    fn literal_constraints_survive_non_literal_arguments() {
+        let attrs: Vec<syn::Attribute> = vec![syn::parse_quote!(#[validate(length(min = 1, max = MAX_LEN))])];
+        let constraints = ValidateConstraints::from_attrs(&attrs);
+        assert_eq!(constraints.min_length, Some(1));
+        assert_eq!(constraints.max_length, None);
+    }
+
+    #[test]
+    fn unmodelled_non_literal_validators_are_skipped() {
+        let attrs: Vec<syn::Attribute> = vec![syn::parse_quote!(#[validate(regex(path = *NAME_RE), range(min = 1, max = 5))])];
+        let constraints = ValidateConstraints::from_attrs(&attrs);
+        assert_eq!(constraints.minimum, Some(1.0));
+        assert_eq!(constraints.maximum, Some(5.0));
+    }
+
+    #[test]
+    fn attributes_that_syn_cannot_parse_do_not_abort_the_derive() {
+        let output = handler(quote! {
+            #[schematic(crate = "::gotcha_core")]
+            #[doc = include_str!("README.md")]
+            struct Example {
+                #[validate(regex(path = *NAME_RE))]
+                #[validate(length(min = 1, max = MAX_LEN))]
+                #[doc = include_str!("README.md")]
+                value: String,
+            }
+        })
+        .unwrap();
+        assert!(output.to_string().contains("Schematic"));
     }
 }
