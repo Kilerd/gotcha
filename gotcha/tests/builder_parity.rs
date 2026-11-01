@@ -1,26 +1,27 @@
-//! The builder can do everything [`GotchaApp`] can. The tests below describe one application with
-//! both APIs, overriding every trait method on one side and calling its builder equivalent on the
-//! other, and check that the two behave the same. The `droppen_*` tests port the shape of a large
-//! trait application to the builder: a custom configuration loader, state built from the bound
-//! address, an embedded router with extra services and layers, and its own listener.
+//! Every [`GotchaApp`] method has a builder equivalent. The tests below describe one application
+//! with both APIs, overriding every trait method on one side and calling its builder equivalent on
+//! the other, and check that the two behave the same. MIGRATION.md lists where using the two still
+//! differs. The `droppen_*` tests port the shape of a large trait application to the builder: a
+//! custom configuration loader, state built from the configuration, an embedded router with extra
+//! services and layers, and its own listener with connect info.
 //!
 //! | `GotchaApp`                                  | `Gotcha`                                       | test                                   |
 //! | -------------------------------------------- | ---------------------------------------------- | -------------------------------------- |
 //! | `type State`, `type Config`                  | `Gotcha<S, C>`                                 | every test                             |
 //! | `config()`                                   | `load_config`                                  | `startup_stages_match`                 |
 //! | `config_error_policy()`                      | `config_error_policy`                          | `config_errors_follow_the_same_policy` |
-//! | `logger()`                                   | `logger`, `with_default_logger`                | `startup_stages_match`, `builder_logger.rs` |
-//! | `state()`                                    | `from_state_fn`                                | `startup_stages_match`                 |
+//! | `logger()`                                   | `logger`, `with_default_logger`, `default_logger` | `startup_stages_match`, `builder_logger.rs`, `default_logger.rs` |
+//! | `state()`                                    | `from_state_fn`                                | `startup_stages_match`, `failing_stages_match` |
 //! | `routes()`                                   | route methods, `routes`, `method_route`, `fallback_service` | `assembled_routers_match` |
-//! | `extractor_configs()`                        | `extractor_config`                             | `assembled_routers_match`              |
-//! | `finish_router()`                            | `finish_router`                                | `assembled_routers_match`              |
+//! | `extractor_configs()`                        | `extractor_configs`, `extractor_config`        | `assembled_routers_match`              |
+//! | `finish_router()`                            | `finish_router`, `try_finish_router`           | `assembled_routers_match`, `failing_router_assembly_matches` |
 //! | `build_router()`                             | `into_router`                                  | `assembled_routers_match`, `configuration_without_serde_assembles` |
 //! | `openapi_endpoints()`                        | `openapi_endpoints`, `with_openapi`            | `documents_match`                      |
 //! | `openapi_info()`                             | `openapi_info`                                 | `documents_match`                      |
 //! | `document_extractor_errors()`                | `document_extractor_errors`                    | `documents_match`                      |
 //! | `openapi_document()`                         | `into_openapi` on a freshly built application  | `documents_match`                      |
 //! | `metrics_endpoint()`                         | `metrics`                                      | `assembled_routers_match`              |
-//! | `tasks()`                                    | `try_tasks`, `tasks`                           | `startup_stages_match`, `shutdown_lifecycles_match` |
+//! | `tasks()`                                    | `try_tasks`, `tasks`                           | `startup_stages_match`, `failing_stages_match`, `shutdown_lifecycles_match` |
 //! | `shutdown_signal()`                          | `shutdown_signal`                              | `shutdown_lifecycles_match`            |
 //! | `http_shutdown_timeout()`                    | `http_shutdown_timeout`                        | `shutdown_lifecycles_match`            |
 //! | `task_shutdown_timeout()`                    | `task_shutdown_timeout`                        | `shutdown_lifecycles_match`            |
@@ -76,6 +77,8 @@ struct Options {
     bound: Arc<Mutex<Option<u16>>>,
     stop: Arc<Notify>,
     fail_config: bool,
+    /// `"state"` or `"tasks"`: the stage that returns an error.
+    fail_at: Option<&'static str>,
     fallback: bool,
     #[cfg_attr(not(feature = "openapi"), allow(dead_code))]
     hide_extractor_errors: bool,
@@ -124,6 +127,9 @@ fn policy(options: &Options) -> ConfigErrorPolicy<Settings> {
 async fn init_state(config: &ConfigWrapper<Settings>, options: Options) -> GotchaResult<AppState> {
     *options.bound.lock().unwrap() = Some(config.server.port);
     record(&options.events, "state");
+    if options.fail_at == Some("state") {
+        return Err(GotchaError::message("state"));
+    }
     Ok(AppState {
         label: config.label.clone(),
         port: config.server.port,
@@ -182,8 +188,9 @@ fn spa() -> impl tower::Service<Request, Response = Response, Error = Infallible
     tower::service_fn(|_: Request| async { Ok::<_, Infallible>(Response::new(Body::from("index.html"))) })
 }
 
-fn json_config() -> JsonConfig {
-    JsonConfig::default().error_handler(|_| (StatusCode::UNPROCESSABLE_ENTITY, ErrorBody::new("invalid item")))
+/// One function both descriptions share, as applications share their rejection configurations.
+fn configs() -> ExtractorConfigs {
+    ExtractorConfigs::default().set(JsonConfig::default().error_handler(|_| (StatusCode::UNPROCESSABLE_ENTITY, ErrorBody::new("invalid item"))))
 }
 
 /// Mounts a service built from the application state, as a proxy closing over a registry would be.
@@ -199,13 +206,16 @@ fn finish(router: Router, context: &Context) -> Router {
     )
 }
 
-async fn register(scheduler: &mut gotcha::TaskScheduler<AppState, Settings>, events: Events) -> GotchaResult<()> {
+async fn register(scheduler: &mut gotcha::TaskScheduler<AppState, Settings>, events: Events, fail: bool) -> GotchaResult<()> {
     tokio::task::yield_now().await; // Registration may await, as the trait method can.
     record(&events, "tasks");
     scheduler.interval("hang", Duration::from_secs(3600), |context| async move {
         record(&context.state.events, "task started");
         std::future::pending::<()>().await;
     });
+    if fail {
+        return Err(GotchaError::message("tasks"));
+    }
     Ok(())
 }
 
@@ -248,7 +258,7 @@ impl GotchaApp for TraitApp {
     }
 
     fn extractor_configs(&self) -> ExtractorConfigs {
-        ExtractorConfigs::default().set(json_config())
+        configs()
     }
 
     fn finish_router(&self, router: Router, context: &Context) -> Router {
@@ -256,7 +266,7 @@ impl GotchaApp for TraitApp {
     }
 
     async fn tasks(&self, scheduler: &mut gotcha::TaskScheduler<AppState, Settings>) -> GotchaResult<()> {
-        register(scheduler, self.0.events.clone()).await
+        register(scheduler, self.0.events.clone(), self.0.fail_at == Some("tasks")).await
     }
 
     async fn shutdown_signal(&self) {
@@ -311,14 +321,14 @@ fn builder(options: Options) -> Gotcha<AppState, Settings> {
         .routes(routes)
         .method_route("/items/{id}", MethodFilter::PUT, replace)
         .fallback_service(spa())
-        .extractor_config(json_config())
+        .extractor_configs(configs())
         .finish_router(finish)
         .shutdown_signal(signal(options.stop.clone(), options.events.clone()))
         .http_shutdown_timeout(DRAIN)
         .on_shutdown(|context| async move { record(&context.state.events, "cleanup") });
     let app = {
-        let events = options.events.clone();
-        app.try_tasks(move |scheduler| Box::pin(register(scheduler, events)))
+        let (events, fail) = (options.events.clone(), options.fail_at == Some("tasks"));
+        app.try_tasks(move |scheduler| Box::pin(register(scheduler, events, fail)))
             .task_shutdown_timeout(DRAIN)
     };
     #[cfg(feature = "openapi")]
@@ -423,6 +433,74 @@ async fn config_errors_follow_the_same_policy() {
         assert!(response.ends_with(&format!("fallback@{}", address.port())), "{response}");
         lenient.stop.notify_one();
         within(serving).await.unwrap().unwrap();
+    }
+}
+
+#[tokio::test]
+async fn failing_stages_match() {
+    for stage in ["state", "tasks"] {
+        let mut observed = Vec::new();
+        for trait_api in [true, false] {
+            let options = Options {
+                fail_at: Some(stage),
+                ..Default::default()
+            };
+            let result = if trait_api {
+                TraitApp(options.clone()).bind().await
+            } else {
+                builder(options.clone()).bind().await
+            };
+            let Err(error) = result else {
+                panic!("a failing {stage} stops startup");
+            };
+            assert!(matches!(error, GotchaError::Message(message) if message == stage));
+            let port = options.bound.lock().unwrap().unwrap();
+            std::net::TcpListener::bind(("127.0.0.1", port)).unwrap_or_else(|error| panic!("a failing {stage} releases the listener: {error}"));
+            observed.push(events(&options));
+        }
+        assert_eq!(observed[0], observed[1], "trait, then builder");
+        assert_eq!(observed[0].last(), Some(&stage), "nothing runs after the failure, no task starts");
+    }
+}
+
+#[tokio::test]
+async fn failing_router_assembly_matches() {
+    let config = || ConfigWrapper {
+        app: (),
+        server: ServerConfig {
+            host: "127.0.0.1".into(),
+            port: 0,
+        },
+    };
+    struct FailingAssembly;
+    impl GotchaApp for FailingAssembly {
+        type State = ();
+        type Config = ();
+        fn logger(&self) -> GotchaResult<()> {
+            Ok(())
+        }
+        async fn config(&self) -> GotchaResult<ConfigWrapper<()>> {
+            Ok(ConfigWrapper {
+                app: (),
+                server: ServerConfig {
+                    host: "127.0.0.1".into(),
+                    port: 0,
+                },
+            })
+        }
+        async fn state(&self, _: &ConfigWrapper<()>) -> GotchaResult<()> {
+            Ok(())
+        }
+        fn routes(&self, router: GotchaRouter<GotchaContext<(), ()>>) -> GotchaRouter<GotchaContext<(), ()>> {
+            router
+        }
+        async fn build_router(&self, _: GotchaContext<(), ()>) -> GotchaResult<Router> {
+            Err(GotchaError::message("router"))
+        }
+    }
+    let builder = Gotcha::from_context(GotchaContext::new((), config())).try_finish_router(|_, _| Err(GotchaError::message("router")));
+    for result in [FailingAssembly.bind().await, builder.bind().await] {
+        assert!(matches!(result, Err(GotchaError::Message(message)) if message == "router"));
     }
 }
 
@@ -612,6 +690,7 @@ async fn configuration_without_serde_assembles() {
 /// and host layers, and its own listener and shutdown around `build_router`.
 mod droppen {
     use super::*;
+    use gotcha::axum::extract::ConnectInfo;
     use gotcha::config::ConfigBuilder;
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -669,6 +748,13 @@ mod droppen {
         next.run(request).await
     }
 
+    /// Refuses requests without a peer address, as an IP allow-list does.
+    async fn require_peer(ConnectInfo(peer): ConnectInfo<SocketAddr>, request: Request, next: Next) -> Response {
+        let mut response = next.run(request).await;
+        response.headers_mut().insert("x-peer", peer.ip().to_string().parse().unwrap());
+        response
+    }
+
     async fn served_by(request: Request, next: Next) -> Response {
         let mut response = next.run(request).await;
         response.headers_mut().insert("x-served-by", "droppen".parse().unwrap());
@@ -679,7 +765,8 @@ mod droppen {
     fn api(path: PathBuf) -> Gotcha<DroppenState, DroppenConfig> {
         let app = Gotcha::from_state_fn(init)
             .load_config(move || load(path))
-            .nest("/api", GotchaRouter::default().get("/session", session));
+            .nest("/api", GotchaRouter::default().get("/session", session))
+            .fallback(|| async { (StatusCode::NOT_FOUND, "no such API route") });
         #[cfg(feature = "openapi")]
         let app = app.with_openapi();
         app
@@ -763,25 +850,32 @@ mod droppen {
         assert_eq!(to_bytes(response.into_body(), 1024).await.unwrap(), "embedded /index.html");
     }
 
+    /// The application's own `prepare()`: install the logger, load the configuration, build the
+    /// state before binding (so it sees the configured port), bind, and serve the assembled router
+    /// with connect info, which its peer guard reads, after replacing the API's fallback with the
+    /// embedded assets. `bind().serve()` serves without connect info on either API, so the guard
+    /// there would answer 500: an application whose middleware reads `ConnectInfo` serves the
+    /// router itself.
     #[tokio::test]
     async fn droppen_shaped_server_binds_its_own_listener() {
         let (_dir, path) = settings();
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let address = listener.local_addr().unwrap();
-        let mut config = load(path.clone()).await.unwrap();
-        config.server.port = address.port();
+        gotcha::default_logger().unwrap();
+        let config = load(path.clone()).await.unwrap();
         let state = init(Arc::new(config.clone())).await.unwrap();
         let token = state.token.clone();
-        // The embedded router gets the extra fallback service and layers outside the builder.
+        let listener = tokio::net::TcpListener::bind((config.server.host.as_str(), config.server.port)).await.unwrap();
+        let address = listener.local_addr().unwrap();
         let router = api(path.clone())
             .into_router(GotchaContext::new(state, config))
             .unwrap()
+            // Replaces the fallback the API registered.
             .fallback_service(embed_proxy())
             .layer(middleware::from_fn_with_state(token, require_token))
+            .layer(middleware::from_fn(require_peer))
             .layer(middleware::from_fn(served_by));
         let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
         let serving = tokio::spawn(
-            gotcha::axum::serve(listener, router)
+            gotcha::axum::serve(listener, router.into_make_service_with_connect_info::<SocketAddr>())
                 .with_graceful_shutdown(async move {
                     let _ = stopped.await;
                 })
@@ -789,10 +883,15 @@ mod droppen {
         );
 
         let response = within(http_get(address, "/api/session", AUTH)).await;
-        assert!(response.ends_with(&format!("http://127.0.0.1:{}/box #0", address.port())), "{response}");
-        assert!(response.contains("x-served-by: droppen"), "{response}");
+        assert!(response.ends_with("http://127.0.0.1:0/box #0"), "the state saw the configured port: {response}");
+        assert!(
+            response.contains("x-served-by: droppen") && response.contains("x-peer: 127.0.0.1"),
+            "{response}"
+        );
         let response = within(http_get(address, "/assets/app.js", AUTH)).await;
         assert!(response.ends_with("embedded /assets/app.js"), "{response}");
+        let response = within(http_get(address, "/api/session", "")).await;
+        assert!(response.starts_with("HTTP/1.1 401") || response.starts_with("HTTP/1.0 401"), "{response}");
         stop.send(()).unwrap();
         within(serving).await.unwrap().unwrap();
 
