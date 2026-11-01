@@ -213,6 +213,18 @@ pub trait ParameterProvider {
     }
 }
 
+/// The name serde reads for what `fields()` lists as `name`. Parameters are only ever read, while
+/// `fields()` use the schema's name.
+fn read_name<T: Schematic>(name: &str) -> String {
+    fn lookup(table: &'static [crate::WireField], name: &str) -> Option<&'static str> {
+        table.iter().find_map(|field| match field.nested {
+            Some(nested) if field.flatten => lookup(nested(), name),
+            _ => (field.schema == name).then_some(field.wire),
+        })
+    }
+    lookup(T::wire_fields(), name).unwrap_or(name).to_owned()
+}
+
 fn build_param(name: String, _in: ParameterIn, required: bool, schema: Schema, description: Option<String>) -> Parameter {
     Parameter {
         name,
@@ -296,7 +308,7 @@ impl<T: Schematic> ParameterProvider for Path<T> {
                     .into_iter()
                     .map(|(name, schema)| {
                         let desc = schema.schema.description.clone();
-                        build_param(name.to_string(), ParameterIn::Path, true, schema.schema, desc)
+                        build_param(read_name::<T>(name), ParameterIn::Path, true, schema.schema, desc)
                     })
                     .collect(),
             );
@@ -417,7 +429,7 @@ impl<T: Schematic> ParameterProvider for Query<T> {
                     .into_iter()
                     .map(|(name, schema)| {
                         let desc = schema.schema.description.clone();
-                        build_param(name.to_string(), ParameterIn::Query, schema.required, schema.schema, desc)
+                        build_param(read_name::<T>(name), ParameterIn::Query, schema.required, schema.schema, desc)
                     })
                     .collect(),
             )

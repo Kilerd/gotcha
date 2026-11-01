@@ -190,6 +190,12 @@ pub fn api(args: TokenStream, input_stream: TokenStream) -> TokenStream {
 /// `Option<Option<T>>` always produces a single null branch. The README section
 /// "Optional and nullable fields" maps each pattern to its schema and zod equivalent.
 ///
+/// A type has one schema, so it cannot describe both directions where serde writes and reads
+/// different names (`rename(serialize = .., deserialize = ..)` and the `rename_all` forms). The
+/// identifier, under a `rename_all = ".."`, stays when it is right in a direction, so a one-sided
+/// form leaves the name as it is; otherwise the schema uses the name serde writes. `Valid` errors
+/// and query and path parameters use the name serde reads.
+///
 /// ## Field attributes
 ///
 /// Individual fields can be annotated with `#[schematic(...)]` to enrich the

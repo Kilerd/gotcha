@@ -5,7 +5,7 @@ use crate::schematic::ParameterStructFieldOpt;
 
 pub(crate) fn handler(
     core: &TokenStream2, ident_string: String, doc: TokenStream2, fields: darling::ast::Fields<ParameterStructFieldOpt>, container_default: bool,
-    tag: Option<(&str, &str)>,
+    tag: Option<(&str, &str)>, reads_another_type: bool,
 ) -> syn::Result<TokenStream2> {
     // `#[serde(tag = "..")]`: serde writes the tag next to the fields and ignores it when reading,
     // so this struct's own schema documents it without requiring it. It stays out of `fields()`, so
@@ -85,12 +85,14 @@ pub(crate) fn handler(
         } else {
             // Normal field: static field entry
             let field_name = field.serde.schema_name();
-            // Validation errors use the names serde accepts on input, which differ from the
-            // schema-side name when only `rename(deserialize = ..)` / `rename_all(deserialize = ..)`
-            // is given.
+            // Validation errors and parameters use the names serde accepts on input, which can
+            // differ from the schema-side name. When serde reads another type this one's rename has
+            // no effect on what it reads, so a parameter keeps the name in `fields()`.
             let wire_name = field.serde.wire_name();
+            let schema_name = (!reads_another_type).then(|| quote! { .schema(#field_name) });
             wire_fields_stream.push(quote! {
                 #core::WireField::new(#ident_str, #wire_name)
+                    #schema_name
                     .nested(<#field_ty as #core::Schematic>::wire_fields)
             });
             // Presence and nullability come from the serde attributes already on the field, so

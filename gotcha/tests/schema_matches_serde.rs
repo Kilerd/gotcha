@@ -1506,6 +1506,185 @@ fn a_skipped_untagged_newtype_field_is_a_unit_variant() {
     assert_serialization_matches(&NewtypeSkipUntagged::Skip("x".into()));
 }
 
+/// Both directions are renamed and the identifier is neither: the schema uses the name serde writes.
+#[derive(Schematic, Serialize, Deserialize)]
+struct RenameBothDirections {
+    #[serde(rename(serialize = "written", deserialize = "read"))]
+    value: u8,
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+struct RenameSameBothDirections {
+    #[serde(rename(serialize = "same", deserialize = "same"))]
+    value: u8,
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(rename_all(serialize = "camelCase", deserialize = "kebab-case"))]
+struct ConventionBothDirections {
+    some_field: u8,
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(rename_all(serialize = "camelCase", deserialize = "camelCase"))]
+struct ConventionSameBothDirections {
+    some_field: u8,
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+enum VariantRenameBothDirections {
+    #[serde(rename(serialize = "written", deserialize = "read"))]
+    Unit,
+    #[serde(rename(serialize = "written_newtype", deserialize = "read_newtype"))]
+    Newtype(u8),
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(rename_all(serialize = "kebab-case", deserialize = "SCREAMING_SNAKE_CASE"))]
+enum VariantConventionBothDirections {
+    SomeVariant,
+    OtherVariant,
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(rename_all_fields(serialize = "camelCase", deserialize = "kebab-case"))]
+enum FieldConventionBothDirections {
+    Named { some_field: u8 },
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(tag = "kind")]
+enum VariantOwnConventionBothDirections {
+    #[serde(rename_all(serialize = "camelCase", deserialize = "kebab-case"))]
+    Named { some_field: u8 },
+}
+
+/// A one-sided rename leaves the name that is right for one direction.
+#[derive(Schematic, Serialize, Deserialize)]
+struct RenameSerializeOnly {
+    #[serde(rename(serialize = "written"))]
+    value: u8,
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+struct RenameDeserializeOnly {
+    #[serde(rename(deserialize = "read"))]
+    value: u8,
+}
+
+/// The same when a two-sided form leaves one side on the identifier.
+#[derive(Schematic, Serialize, Deserialize)]
+struct RenameWrittenAndOwnName {
+    #[serde(rename(serialize = "written", deserialize = "value"))]
+    value: u8,
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(rename_all(serialize = "camelCase"))]
+struct ConventionSerializeOnly {
+    some_field: u8,
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(rename_all(deserialize = "camelCase"))]
+struct ConventionDeserializeOnly {
+    some_field: u8,
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(rename_all(serialize = "camelCase", deserialize = "snake_case"))]
+struct ConventionWrittenAndOwnName {
+    some_field: u8,
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(rename_all(serialize = "kebab-case"))]
+enum VariantConventionSerializeOnly {
+    SomeVariant,
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+enum VariantRenameSerializeOnly {
+    #[serde(rename(serialize = "written"))]
+    Unit,
+}
+
+#[test]
+fn a_split_rename_names_the_schema_with_its_serialize_side() {
+    assert_serialization_matches(&RenameBothDirections { value: 1 });
+}
+
+#[test]
+fn a_list_form_rename_with_one_name_names_the_schema() {
+    assert_serialization_matches(&RenameSameBothDirections { value: 1 });
+}
+
+#[test]
+fn a_split_convention_names_the_schema_with_its_serialize_side() {
+    assert_serialization_matches(&ConventionBothDirections { some_field: 1 });
+}
+
+#[test]
+fn a_list_form_convention_with_one_rule_names_the_schema() {
+    assert_serialization_matches(&ConventionSameBothDirections { some_field: 1 });
+}
+
+#[test]
+fn a_split_variant_rename_names_a_unit_variant_with_its_serialize_side() {
+    assert_serialization_matches(&VariantRenameBothDirections::Unit);
+}
+
+#[test]
+fn a_split_variant_rename_names_a_newtype_variant_with_its_serialize_side() {
+    assert_serialization_matches(&VariantRenameBothDirections::Newtype(1));
+}
+
+#[test]
+fn a_split_variant_convention_names_the_variants_with_its_serialize_side() {
+    assert_serialization_matches(&VariantConventionBothDirections::SomeVariant);
+}
+
+#[test]
+fn a_split_field_convention_names_the_variant_fields_with_its_serialize_side() {
+    assert_serialization_matches(&FieldConventionBothDirections::Named { some_field: 1 });
+}
+
+#[test]
+fn a_variants_split_convention_names_its_fields_with_its_serialize_side() {
+    assert_serialization_matches(&VariantOwnConventionBothDirections::Named { some_field: 1 });
+}
+
+#[test]
+fn the_input_of_a_name_for_both_directions_is_what_serde_reads() {
+    assert_requests_are_read::<RenameSameBothDirections>();
+    assert_requests_are_read::<ConventionSameBothDirections>();
+}
+
+#[test]
+fn a_one_sided_rename_keeps_the_input_serde_reads() {
+    assert_requests_are_read::<RenameSerializeOnly>();
+    assert_request_accepted::<RenameSerializeOnly>(json!({"value": 1}));
+    assert_serialization_matches(&RenameDeserializeOnly { value: 1 });
+}
+
+#[test]
+fn a_written_name_next_to_the_own_name_keeps_the_input_serde_reads() {
+    assert_requests_are_read::<RenameWrittenAndOwnName>();
+    assert_requests_are_read::<ConventionWrittenAndOwnName>();
+}
+
+#[test]
+fn a_one_sided_convention_keeps_the_direction_it_leaves_alone() {
+    assert_requests_are_read::<ConventionSerializeOnly>();
+    assert_serialization_matches(&ConventionDeserializeOnly { some_field: 1 });
+}
+
+#[test]
+fn a_one_sided_variant_name_keeps_the_input_serde_reads() {
+    assert_requests_are_read::<VariantConventionSerializeOnly>();
+    assert_requests_are_read::<VariantRenameSerializeOnly>();
+}
+
 /// `#[serde(tag = "..")]` on a struct: serde writes the tag with the struct's serialize name.
 #[derive(Schematic, Serialize, Deserialize)]
 #[serde(tag = "kind")]
@@ -2006,6 +2185,12 @@ fn a_conversion_leaves_the_struct_tag_undocumented() {
 
 // Known mismatches, deliberately not asserted (follow-up work; arch review A4/A14):
 //
+// - Names that need per-direction schemas. `rename(serialize = "out")` and
+//   `rename_all(serialize = "camelCase")` (with no other side, or with a deserialize side that
+//   leaves the identifier alone) document the name serde reads, so the output does not match. Split
+//   names document the name serde writes, so a request body does not match. `Valid` errors and
+//   parameters use the name serde reads.
+// - An enum `Path<T>` parameter: an enum has no `fields()`, so its name comes from the route.
 // - One-way skips on a tuple-variant field need per-direction schemas. serde writes
 //   `P(u8, #[serde(skip_serializing)] String)` as `{"P":[1]}` and reads `{"P":[1,"x"]}`;
 //   `skip_deserializing` is the reverse, and a newtype variant is written or read as a unit variant
