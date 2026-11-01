@@ -173,7 +173,9 @@ pub use tower_http::services::{ServeDir, ServeFile};
 /// when shutdown starts, before HTTP connections begin draining. Long-lived handlers (WebSockets,
 /// server-sent events, other streaming responses) can select on [`Self::shutdown`] to stop at the
 /// same moment the listener stops accepting. Use [`Self::new`] to build a context directly for
-/// tests or manual router assembly; that token is never cancelled by the framework.
+/// tests or manual router assembly; that token is never cancelled by the framework. A standalone
+/// [`TaskScheduler::new`] derives a child token from it, so shutting that scheduler down does not
+/// cancel this token or other schedulers built from the same context.
 pub struct GotchaContext<State, Config> {
     /// The loaded configuration.
     pub config: ConfigWrapper<Config>,

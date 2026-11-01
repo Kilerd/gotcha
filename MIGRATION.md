@@ -683,6 +683,11 @@ aborts and joins unfinished tasks at the deadline. Dropping the owner or cancell
 future requests immediate abortion; dropping cannot perform an asynchronous join. The same ownership
 includes the current execution, which is no longer a separate detached task.
 
+A standalone scheduler uses a child of the context's shutdown token. Cancelling the context token
+stops the tasks, while `RunningTasks::shutdown` cancels only the child, so executions waiting on
+`context.shutdown()` are released without shutting down the application or another scheduler
+sharing the context. Schedulers created by application startup already use the server's token.
+
 ## Application shutdown
 
 Builder `run` / `listen` / `listen_on` and `GotchaApp::run` now wait for Ctrl-C or Unix SIGTERM by

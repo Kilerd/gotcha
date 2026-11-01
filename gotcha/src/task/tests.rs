@@ -34,6 +34,64 @@ fn registration_is_inert_and_can_be_discarded_without_a_runtime() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn standalone_shutdown_releases_context_waiters_without_cancelling_the_context() {
+    let context = GotchaContext::new((), ConfigWrapper::<()>::default());
+    let token = context.shutdown();
+    let mut scheduler = TaskScheduler::new(context);
+    let (started, mut starts) = mpsc::unbounded_channel();
+    scheduler.interval("waits-for-shutdown", Duration::from_secs(1), move |ctx| {
+        let started = started.clone();
+        async move {
+            started.send(()).unwrap();
+            ctx.shutdown().cancelled().await;
+        }
+    });
+    let running = scheduler.start();
+    starts.recv().await.unwrap();
+    // The execution waits on the scheduler's child token, so shutdown joins it instead of
+    // running out the task deadline, but the context's own token is not cancelled.
+    tokio::time::timeout(Duration::from_secs(1), running.shutdown(Duration::from_secs(60)))
+        .await
+        .expect("shutdown must release executions waiting on the scheduler token");
+    assert!(!token.is_cancelled());
+}
+
+#[tokio::test(start_paused = true)]
+async fn standalone_shutdown_does_not_stop_another_scheduler_sharing_the_context() {
+    let context = GotchaContext::new((), ConfigWrapper::<()>::default());
+    let token = context.shutdown();
+    let (started, mut starts) = mpsc::unbounded_channel();
+    let second_runs = Arc::new(AtomicUsize::new(0));
+    let mut first = TaskScheduler::new(context.clone());
+    first.interval("first", Duration::from_secs(1), |_| async {});
+    let mut second = TaskScheduler::new(context.clone());
+    second.interval("second", Duration::from_secs(1), {
+        let second_runs = second_runs.clone();
+        let started = started.clone();
+        move |_| {
+            let second_runs = second_runs.clone();
+            let started = started.clone();
+            async move {
+                started.send(()).unwrap();
+                second_runs.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+    });
+    let first = first.start();
+    let second = second.start();
+    starts.recv().await.unwrap();
+    first.shutdown(Duration::from_secs(1)).await;
+    assert!(!token.is_cancelled());
+    tokio::time::advance(Duration::from_secs(2)).await;
+    tokio::task::yield_now().await;
+    assert!(
+        second_runs.load(Ordering::SeqCst) >= 2,
+        "shutting down one scheduler must not stop another on the same context"
+    );
+    second.shutdown(Duration::from_secs(1)).await;
+}
+
+#[tokio::test(start_paused = true)]
 async fn graceful_shutdown_finishes_current_execution_without_starting_another() {
     let mut scheduler = scheduler();
     let count = Arc::new(AtomicUsize::new(0));
