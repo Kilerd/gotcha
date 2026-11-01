@@ -63,7 +63,8 @@ pub type ParamType = Either<Vec<Parameter>, RequestBody>;
 pub type ParamConstructor = fn(String) -> ParamType;
 
 /// Reports the Gotcha extractor providers a handler argument uses, so document assembly can add
-/// their rejection responses. Axum's originals and custom implementations report none.
+/// their rejection responses. Axum's originals report none; a custom implementation reports the
+/// providers it rejects through, with `gotcha::extract::kind::<P>()`.
 pub type ExtractorConstructor = fn() -> &'static [crate::ExtractorKind];
 
 /// Generate the parameters an extractor contributes, dropping any request body it would infer.

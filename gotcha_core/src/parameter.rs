@@ -25,7 +25,8 @@ use crate::Schematic;
 ///
 /// A provider is named by [`Provider`](Self::Provider), built with `gotcha::extract::kind::<P>()`
 /// for any `gotcha::extract::RejectionProvider`. The unit variants name Gotcha's built-in
-/// providers and document exactly like their `kind::<P>()`.
+/// providers, which report them, and document exactly like their `kind::<P>()`; a unit variant and
+/// the matching `Provider` key are still different values.
 ///
 /// This enum is `#[non_exhaustive]`: a later release may add a provider, so a `match` outside this
 /// crate needs a wildcard arm.
@@ -69,7 +70,8 @@ impl ExtractorKind {
 /// The identity of a rejection provider and the statuses it documents by default.
 ///
 /// Only `gotcha::extract::kind` builds one, so the default statuses always come from the provider
-/// itself. Keys compare, order, and hash by the provider's [`TypeId`].
+/// itself. Keys compare, order, and hash by the provider's [`TypeId`]; their order is consistent
+/// within one build but can change between builds.
 #[derive(Clone, Copy)]
 pub struct ProviderKey {
     id: fn() -> TypeId,
@@ -84,6 +86,7 @@ impl ProviderKey {
     }
 
     /// The provider's type id.
+    #[doc(hidden)]
     pub fn id(&self) -> TypeId {
         (self.id)()
     }
@@ -95,6 +98,7 @@ impl ProviderKey {
 
     /// The statuses the provider documents when the application declares none, each with the
     /// phrase that describes it.
+    #[doc(hidden)]
     pub fn default_statuses(&self) -> &'static [(StatusCode, &'static str)] {
         (self.statuses)()
     }
@@ -140,6 +144,7 @@ pub struct KindList(fn() -> &'static [ExtractorKind]);
 
 impl KindList {
     /// The kinds this list stands for.
+    #[doc(hidden)]
     pub fn kinds(&self) -> &'static [ExtractorKind] {
         (self.0)()
     }

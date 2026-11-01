@@ -406,20 +406,19 @@ fn raw_axum_extractors_and_custom_providers_contribute_nothing() {
     assert!(<Custom as ParameterProvider>::extractor_kinds().is_empty(), "user-defined providers are opt-in");
 }
 
-/// A body extractor written by hand before `kind::<P>()` existed, naming the built-in provider
-/// by its `ExtractorKind` variant.
-struct LegacyJson(Payload);
+/// A body extractor written outside Gotcha that names the built-in `Json` provider by its key.
+struct KeyedJson(Payload);
 
-impl<S: Send + Sync> FromRequest<S> for LegacyJson {
+impl<S: Send + Sync> FromRequest<S> for KeyedJson {
     type Rejection = <Json<Payload> as FromRequest<S>>::Rejection;
 
     async fn from_request(req: gotcha::axum::extract::Request, state: &S) -> Result<Self, Self::Rejection> {
         let Json(payload) = Json::<Payload>::from_request(req, state).await?;
-        Ok(LegacyJson(payload))
+        Ok(KeyedJson(payload))
     }
 }
 
-impl ParameterProvider for LegacyJson {
+impl ParameterProvider for KeyedJson {
     fn generate(url: String) -> gotcha::Either<Vec<gotcha::oas::Parameter>, gotcha::oas::RequestBody> {
         <Json<Payload> as ParameterProvider>::generate(url)
     }
@@ -429,13 +428,18 @@ impl ParameterProvider for LegacyJson {
     }
 
     fn extractor_kinds() -> &'static [ExtractorKind] {
-        &[ExtractorKind::Json]
+        const { &[kind::<JsonProvider>()] }
     }
 }
 
 #[api]
-async fn legacy_json(_body: LegacyJson) -> String {
+async fn keyed_json(_body: KeyedJson) -> String {
     String::new()
+}
+
+/// A hand-written provider naming the built-in provider by its unit variant.
+fn json_variant() -> &'static [ExtractorKind] {
+    &[ExtractorKind::Json]
 }
 
 /// A wrapper that reports every kind of the extractor it wraps.
@@ -444,24 +448,28 @@ fn all_of_json() -> &'static [ExtractorKind] {
 }
 
 #[test]
-fn built_in_providers_report_their_provider_keys() {
-    assert_eq!(<Json<Payload> as ParameterProvider>::extractor_kinds(), [kind::<JsonProvider>()]);
+fn built_in_providers_keep_reporting_their_kind_variants() {
+    assert_eq!(<Json<Payload> as ParameterProvider>::extractor_kinds(), [ExtractorKind::Json]);
     assert_eq!(
         <Valid<Json<Checked>> as ParameterProvider>::extractor_kinds(),
-        [kind::<ValidProvider>(), kind::<JsonProvider>()]
+        [ExtractorKind::Valid, ExtractorKind::Json]
     );
+    assert_eq!(<Header<RequestId> as ParameterProvider>::extractor_kinds(), [ExtractorKind::Header]);
+    assert_eq!(<Cookie<Session> as ParameterProvider>::extractor_kinds(), [ExtractorKind::Cookie]);
+
+    // A key documents like its variant but is a different value.
+    assert_ne!(kind::<JsonProvider>(), ExtractorKind::Json);
+    assert_eq!(kind::<JsonProvider>(), kind::<JsonProvider>());
     // Header and cookie parameters share a rejection type but are separate providers.
-    assert_eq!(<Header<RequestId> as ParameterProvider>::extractor_kinds(), [kind::<HeaderProvider>()]);
-    assert_eq!(<Cookie<Session> as ParameterProvider>::extractor_kinds(), [kind::<CookieProvider>()]);
     assert_ne!(kind::<HeaderProvider>(), kind::<CookieProvider>());
-    assert!(format!("{:?}", kind::<JsonProvider>()).contains("JsonProvider"));
+    assert!(format!("{:?}", kind::<ValidProvider>()).contains("ValidProvider"));
     assert_eq!(ExtractorKind::all(all_of_json), ExtractorKind::all(all_of_json));
 }
 
 #[test]
-fn a_hand_built_operable_naming_a_kind_variant_documents_like_the_built_in_provider() {
-    static LEGACY: Operable = Operable {
-        type_name: "extractor_rejections::legacy",
+fn hand_built_operables_document_keys_variants_and_lists_like_the_built_in_provider() {
+    static KEYED: Operable = Operable {
+        type_name: "extractor_rejections::keyed",
         id: "json_body",
         group: None,
         summary: None,
@@ -469,7 +477,19 @@ fn a_hand_built_operable_naming_a_kind_variant_documents_like_the_built_in_provi
         deprecated: false,
         security: None,
         parameters: &[<Json<Payload> as ParameterProvider>::generate],
-        extractors: &[<LegacyJson as ParameterProvider>::extractor_kinds],
+        extractors: &[<KeyedJson as ParameterProvider>::extractor_kinds],
+        responses: <String as Responsible>::response,
+    };
+    static VARIANT: Operable = Operable {
+        type_name: "extractor_rejections::variant",
+        id: "json_body",
+        group: None,
+        summary: None,
+        description: None,
+        deprecated: false,
+        security: None,
+        parameters: &[<Json<Payload> as ParameterProvider>::generate],
+        extractors: &[json_variant],
         responses: <String as Responsible>::response,
     };
     static WRAPPED: Operable = Operable {
@@ -486,12 +506,13 @@ fn a_hand_built_operable_naming_a_kind_variant_documents_like_the_built_in_provi
     };
     let built_in = one(operable(json_body), "/json");
     assert_eq!(statuses(&built_in, "/json"), ["200", "400", "413", "415", "422"]);
-    assert_eq!(one(&LEGACY, "/json"), built_in);
-    assert_eq!(one(&WRAPPED, "/json"), built_in);
+    for op in [&KEYED, &VARIANT, &WRAPPED] {
+        assert_eq!(one(op, "/json"), built_in, "{}", op.type_name);
+    }
 }
 
 #[test]
-fn a_kind_variant_resolves_to_the_configured_provider() {
+fn a_provider_key_resolves_to_the_configured_provider() {
     let app = Gotcha::new()
         .extractor_config(
             JsonConfig::default()
@@ -499,11 +520,11 @@ fn a_kind_variant_resolves_to_the_configured_provider() {
                 .statuses([StatusCode::BAD_REQUEST, StatusCode::CONFLICT]),
         )
         .post("/json", json_body)
-        .post("/legacy", legacy_json);
+        .post("/keyed", keyed_json);
     let spec = serde_json::to_value(app.into_openapi()).unwrap();
-    assert_eq!(statuses(&spec, "/legacy"), ["200", "400", "409"]);
-    assert_eq!(responses(&spec, "/legacy"), responses(&spec, "/json"));
-    assert_eq!(error_body_ref(&responses(&spec, "/legacy")["409"]), "#/components/schemas/Problem");
+    assert_eq!(statuses(&spec, "/keyed"), ["200", "400", "409"]);
+    assert_eq!(responses(&spec, "/keyed"), responses(&spec, "/json"));
+    assert_eq!(error_body_ref(&responses(&spec, "/keyed")["409"]), "#/components/schemas/Problem");
 }
 
 #[test]

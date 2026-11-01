@@ -45,19 +45,17 @@
 # Unreleased: extractor provider keys
 
 Rejection configurations and their documentation are keyed by the provider's type, so an extractor
-defined outside Gotcha can be configured and documented like the built-in ones. Documents and
-rejection responses do not change.
+defined outside Gotcha can be configured and documented like the built-in ones. Documents,
+rejection responses, and the values the built-in extractors report do not change.
 
 - `ExtractorKind` gains `Provider(ProviderKey)`, built by `gotcha::extract::kind::<P>()` for any
   `gotcha::extract::RejectionProvider`, and `All(KindList)`, built by `ExtractorKind::all(..)`,
   which stands for every kind another extractor reports. The enum was already
   `#[non_exhaustive]`.
-- The built-in extractors' `ParameterProvider::extractor_kinds()` now return provider keys:
-  `<Json<T> as ParameterProvider>::extractor_kinds()` is `[kind::<JsonProvider>()]` instead of
-  `[ExtractorKind::Json]`. Code that compares those values with the unit variants must compare with
-  `kind::<P>()` instead. A hand-written `ParameterProvider` or static `Operable` that returns
-  `&[ExtractorKind::Json]` still documents exactly like `Json<T>`, including the application's
-  `JsonConfig`.
+- `kind::<JsonProvider>()` documents exactly like `ExtractorKind::Json`, including the
+  application's `JsonConfig`, and likewise for the other built-in providers. The two are still
+  different values: Gotcha's own extractors keep reporting the unit variants, so code that matches
+  on `extractor_kinds()` is unaffected.
 
 ---
 
