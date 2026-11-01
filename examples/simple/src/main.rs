@@ -7,16 +7,17 @@
 //! - Simple route definitions with closures
 //! - Path parameters
 //! - JSON responses
-//! - Automatic OpenAPI documentation (visit /redoc)
+//! - `#[api]` handlers documented in OpenAPI (closures are not documented automatically)
 //! - CORS support
 //!
 //! Run with: cargo run
 //! Then visit: http://localhost:3000
+//! API documentation: http://localhost:3000/scalar
 
 use gotcha::prelude::*;
 
 // Simple data structure for our API
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Schematic)]
 struct User {
     id: u32,
     name: String,
@@ -37,24 +38,33 @@ struct HealthResponse {
     version: String,
 }
 
+/// Look up a user by id. Unlike the closure routes, `#[api]` handlers appear in the generated
+/// document; the response type must implement `Schematic`, which `User` derives above.
+#[api(group = "users")]
+async fn find_user(Path(id): Path<u32>) -> Json<User> {
+    Json(User {
+        id,
+        name: format!("User {}", id),
+        email: format!("user{}@example.com", id),
+    })
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize logging
     tracing_subscriber::fmt().with_env_filter("info,simple=debug").init();
 
     println!("🚀 Starting Simple Gotcha Server");
-    println!("📖 API Documentation: http://localhost:3000/redoc");
+    println!("📖 API Documentation: http://localhost:3000/scalar");
     println!("📊 OpenAPI Spec: http://localhost:3000/openapi.json");
     println!("🔧 Health Check: http://localhost:3000/health");
 
     // Create the application using the new builder API
     Gotcha::new()
-        // Enable CORS for all origins (not recommended for production)
-        .with_cors()
         // Enable OpenAPI documentation
         .with_openapi()
         // Simple text response
-        .get("/", || async { "🎉 Welcome to Gotcha! Visit /redoc for API documentation." })
+        .get("/", || async { "🎉 Welcome to Gotcha! Visit /scalar for API documentation." })
         // Health check endpoint with JSON response
         .get("/health", || async {
             Json(serde_json::json!({
@@ -67,16 +77,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .get("/hello/{name}", |Path(name): Path<String>| async move {
             format!("👋 Hello, {}! Welcome to Gotcha!", name)
         })
-        // JSON response with path parameter
-        .get("/users/{id}", |Path(id): Path<u32>| async move {
-            // In a real application, you would fetch this from a database
-            let user = User {
-                id,
-                name: format!("User {}", id),
-                email: format!("user{}@example.com", id),
-            };
-            Json(user)
-        })
+        // JSON response with path parameter, documented because it is an `#[api]` handler
+        .get("/users/{id}", find_user)
         // POST endpoint with JSON body
         .post("/users", |Json(req): Json<CreateUserRequest>| async move {
             // In a real application, you would save this to a database
@@ -104,8 +106,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         })
         // Error handling example
         .get("/error", || async {
-            // This will return a 500 Internal Server Error
-            Err::<String, _>("Something went wrong!")
+            // Returning an error response as the `Err` variant.
+            Err::<String, _>((StatusCode::INTERNAL_SERVER_ERROR, "Something went wrong!"))
         })
         // Custom status code
         .get("/teapot", || async { (StatusCode::IM_A_TEAPOT, "I'm a teapot! ☕") })
@@ -118,11 +120,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 <ul>
                     <li><a href="/">Home</a></li>
                     <li><a href="/health">Health Check</a></li>
-                    <li><a href="/redoc">API Documentation</a></li>
+                    <li><a href="/scalar">API Documentation</a></li>
                 </ul>
             "#,
             )
         })
+        // Enable CORS for all origins (not recommended for production)
+        .with_cors()
         // Start the server
         .listen("127.0.0.1:3000")
         .await?;
