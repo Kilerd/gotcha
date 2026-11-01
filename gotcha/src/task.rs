@@ -70,8 +70,19 @@ where
     T2: Clone + Send + Sync + 'static,
 {
     /// Create a registration-only scheduler. This does not require a running Tokio runtime.
+    ///
+    /// The scheduler uses a child of the context's shutdown token: cancelling the context token
+    /// stops the tasks, while [`RunningTasks::shutdown`] only cancels the child, so shutting a
+    /// standalone scheduler down neither stops the application nor another scheduler sharing the
+    /// context. Tasks receive a context whose [`GotchaContext::shutdown`] is that child token.
     pub fn new(context: GotchaContext<T1, T2>) -> Self {
-        Self::with_shutdown(context, CancellationToken::new())
+        let shutdown = context.shutdown().child_token();
+        let context = GotchaContext {
+            config: context.config,
+            state: context.state,
+            shutdown: shutdown.clone(),
+        };
+        Self::with_shutdown(context, shutdown)
     }
 
     pub(crate) fn with_shutdown(context: GotchaContext<T1, T2>, shutdown: CancellationToken) -> Self {
@@ -158,6 +169,9 @@ impl RunningTasks {
     }
 
     /// Stop new executions and wait up to `timeout` for current executions to complete.
+    /// Also cancels the scheduler's shutdown token, which is a child of the context token for
+    /// schedulers built with [`TaskScheduler::new`], releasing executions that wait on it without
+    /// cancelling that token or other schedulers sharing it.
     /// At the deadline, abort unfinished tasks and wait for their futures to be dropped.
     /// Cancelling this future also aborts the tasks. Cancellation requires tasks to yield;
     /// blocking work and application-created detached tasks cannot be forcibly stopped here.
