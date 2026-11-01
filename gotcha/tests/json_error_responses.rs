@@ -12,6 +12,7 @@ use serde_json::{json, Value};
 use tower::ServiceExt;
 
 #[derive(Debug, Deserialize, Serialize)]
+#[cfg_attr(feature = "openapi", derive(gotcha::Schematic))]
 struct Item {
     id: u32,
 }
@@ -93,6 +94,12 @@ impl CookieParam for Session {
 }
 
 async fn echo_json(Json(item): Json<Item>) -> Json<Item> {
+    Json(item)
+}
+
+/// The documented twin of `echo_json`, so the trait API's document contains a JSON operation.
+#[cfg_attr(feature = "openapi", gotcha::api)]
+async fn documented_json(Json(item): Json<Item>) -> Json<Item> {
     Json(item)
 }
 
@@ -459,6 +466,7 @@ impl GotchaApp for CustomApp {
             "/api",
             GotchaRouter::default()
                 .post("/json", echo_json)
+                .post("/documented", documented_json)
                 .get("/items/{id}", read_item)
                 .post("/valid", validate),
         )
@@ -555,9 +563,8 @@ async fn valid_override_receives_the_validation_errors_and_can_flatten_them() {
 #[cfg(feature = "openapi")]
 #[test]
 fn custom_error_bodies_are_openapi_components() {
-    // Builder API: the configured body is registered even without a route declaring it.
-    let document = gotcha::Gotcha::new()
-        .extractor_config(JsonConfig::default().error_handler(|rejection| {
+    let custom_json = || {
+        JsonConfig::default().error_handler(|rejection| {
             (
                 StatusCode::BAD_REQUEST,
                 JsonProblem {
@@ -565,13 +572,23 @@ fn custom_error_bodies_are_openapi_components() {
                     detail: rejection.body_text(),
                 },
             )
-        }))
+        })
+    };
+
+    // Builder API: an operation that uses the provider references the configured body.
+    let document = gotcha::Gotcha::new()
+        .extractor_config(custom_json())
+        .post("/json", documented_json)
         .into_openapi();
     let document = serde_json::to_value(document).unwrap();
     let problem = &document["components"]["schemas"]["JsonProblem"];
     assert_eq!(problem["type"], "object");
     assert_eq!(problem["properties"]["code"]["type"], "integer");
     assert_eq!(problem["properties"]["detail"]["type"], "string");
+
+    // With no operation referencing the provider, the body is not an orphan component.
+    let unused = serde_json::to_value(gotcha::Gotcha::new().extractor_config(custom_json()).into_openapi()).unwrap();
+    assert!(unused["components"]["schemas"].get("JsonProblem").is_none());
 
     // Trait API: the same configs feed document generation.
     let document = serde_json::to_value(CustomApp.openapi_document()).unwrap();

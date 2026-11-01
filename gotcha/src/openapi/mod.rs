@@ -370,8 +370,9 @@ pub fn generate_openapi(operables: HashMap<(String, Method), &'static Operable>)
 
 /// Like [`generate_openapi`], with the application's extractor configurations and opt-out.
 ///
-/// Configured error bodies are registered inside the collection scope, and every operation
-/// documents the rejection responses of the Gotcha providers its arguments use.
+/// Every operation documents the rejection responses of the Gotcha providers its arguments use.
+/// A configured error body is built inside the collection scope only when one of those responses
+/// references it, so overrides that no documented operation reaches leave no component behind.
 #[doc(hidden)]
 pub fn generate_openapi_with_configs_and_info(
     operables: HashMap<(String, Method), &'static Operable>, configs: &crate::extract::ExtractorConfigs, document_extractor_errors: bool, info: Info,
@@ -379,10 +380,6 @@ pub fn generate_openapi_with_configs_and_info(
     let mut operables: Vec<_> = operables.into_iter().collect();
     operables.sort_by(|((path_a, method_a), _), ((path_b, method_b), _)| (path_a, method_a.as_str()).cmp(&(path_b, method_b.as_str())));
     let (operations, schemas) = gotcha_core::registry::collect(|| {
-        // Custom rejection bodies are not attached to operations, but their components must exist.
-        for schema in &configs.schemas() {
-            let _ = schema();
-        }
         operables
             .iter()
             .map(|((path, _), operable)| operable.generate_with_configs(path.clone(), configs, document_extractor_errors))
