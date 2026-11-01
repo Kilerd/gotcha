@@ -1,5 +1,6 @@
 # Migration Guide
 
+- [Unreleased: duplicate operation ids are suffixed](#unreleased-duplicate-operation-ids-are-suffixed)
 - [Unreleased: validation `length` keywords follow the schema type](#unreleased-validation-length-keywords-follow-the-schema-type)
 - [Unreleased: extractor rejection responses in OpenAPI](#unreleased-extractor-rejection-responses-in-openapi)
 - [Unreleased: neutral OpenAPI info defaults](#unreleased-neutral-openapi-info-defaults)
@@ -28,6 +29,22 @@
 - [Unreleased: default configuration sources](#unreleased-default-configuration-sources)
 - [0.3 → 0.4](#03--04) — **every application must edit its route paths and configuration file**
 - [0.2 → 0.3: API simplification](#02--03-api-simplification)
+
+---
+
+# Unreleased: duplicate operation ids are suffixed
+
+**Two operations can no longer emit the same `operationId`.** The id defaults to the handler's
+function name, so `users::list` and `books::list`, or one handler mounted at two paths, used to
+collide. The first operation now keeps the id and each later duplicate gets `_2`, `_3`, … in the
+order operations appear in the document: by path, and by method as `PathItem` writes it (GET,
+PUT, POST, DELETE, OPTIONS, HEAD, PATCH, TRACE). Explicit `#[api(id = "…")]` ids follow the same
+rule, and an existing id is never renamed by a generated suffix.
+
+Because a suffix depends on the order of the operations, adding a route can rename an existing
+operation in the generated document (and therefore in clients generated from it). Give operations
+an explicit `#[api(id = "…")]` when their ids must stay stable. Documents whose ids were already
+unique are unchanged.
 
 ---
 
