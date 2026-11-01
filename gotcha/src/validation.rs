@@ -325,7 +325,11 @@ fn merge_errors(target: &mut HashMap<Cow<'static, str>, ValidationErrorsKind>, s
 ///
 /// Both `Valid<Json<T>>` and `Valid<axum::extract::Json<T>>` use this type, so a handler can
 /// match on the original JSON rejection and the validation errors regardless of flavor.
+///
+/// This enum is `#[non_exhaustive]`: a later release may add a variant, so a `match` outside this
+/// crate needs a wildcard arm.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum ValidRejection {
     /// The JSON body could not be extracted.
     Json(JsonRejection),

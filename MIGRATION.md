@@ -1,5 +1,6 @@
 # Migration Guide
 
+- [Unreleased: non-exhaustive extractor enums](#unreleased-non-exhaustive-extractor-enums)
 - [Unreleased: shared configuration](#unreleased-shared-configuration)
 - [Unreleased: removed unused public items](#unreleased-removed-unused-public-items)
 - [Unreleased: duplicate operation ids are suffixed](#unreleased-duplicate-operation-ids-are-suffixed)
@@ -31,6 +32,20 @@
 - [Unreleased: default configuration sources](#unreleased-default-configuration-sources)
 - [0.3 → 0.4](#03--04) — **every application must edit its route paths and configuration file**
 - [0.2 → 0.3: API simplification](#02--03-api-simplification)
+
+---
+
+# Unreleased: non-exhaustive extractor enums
+
+**`gotcha::ExtractorKind` (with the `openapi` feature), `gotcha_core::ExtractorKind` (with
+`axum`), `gotcha::validation::ValidRejection`, and `gotcha::ParamRejection` are now
+`#[non_exhaustive]`,** so a later release can add an extractor provider, a validation-failure
+variant, or a header/cookie rejection variant without a breaking change.
+
+- A `match` on any of these types outside the crate that defines it needs a wildcard arm
+  (`_ => ..`); a `matches!(..)` with a single variant keeps compiling.
+- Constructing the existing variants is unchanged: `ExtractorKind::Json`, the `ValidRejection`
+  variants, and `ParamRejection::Missing`/`Invalid`/`NotText` remain usable.
 
 ---
 
