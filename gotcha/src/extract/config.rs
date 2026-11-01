@@ -280,7 +280,8 @@ impl ExtractorConfigs {
     }
 }
 
-/// The configurations a body extractor keeps while another extractor consumes the request.
+/// A request's extractor configurations, held by a body extractor while another extractor
+/// consumes the request.
 ///
 /// [`take`](Self::take) removes them from the request: use it when the request goes to an extractor
 /// that never reads them, such as Axum's own `Json`. Nothing can then observe that the extension is
@@ -292,9 +293,9 @@ impl ExtractorConfigs {
 /// It costs one lookup and one refcount increment per extraction.
 ///
 /// When neither is needed, render a rejection with [`reject`] before the request is consumed.
-pub struct TakenConfigs(Option<Arc<ExtractorConfigs>>);
+pub struct RequestConfigs(Option<Arc<ExtractorConfigs>>);
 
-impl TakenConfigs {
+impl RequestConfigs {
     /// Take the configurations out of a request's extensions before the request is consumed.
     pub fn take(extensions: &mut Extensions) -> Self {
         Self(extensions.remove::<Arc<ExtractorConfigs>>())
@@ -507,12 +508,12 @@ mod tests {
         let configs = ExtractorConfigs::default().set(HeaderConfig::default().error_handler(|_| (StatusCode::IM_A_TEAPOT, ErrorBody::new("teapot"))));
         extensions.insert(Arc::new(configs));
 
-        let shared = TakenConfigs::share(&extensions);
+        let shared = RequestConfigs::share(&extensions);
         assert!(extensions.get::<Arc<ExtractorConfigs>>().is_some(), "an inner extractor still finds them");
         assert_eq!(shared.render::<HeaderProvider>(&missing()).status(), StatusCode::IM_A_TEAPOT);
         assert_eq!(reject::<HeaderProvider>(&extensions, missing()).response().status(), StatusCode::IM_A_TEAPOT);
 
-        let taken = TakenConfigs::take(&mut extensions);
+        let taken = RequestConfigs::take(&mut extensions);
         assert!(extensions.get::<Arc<ExtractorConfigs>>().is_none());
         assert_eq!(taken.reject::<HeaderProvider>(missing()).response().status(), StatusCode::IM_A_TEAPOT);
         // Only `Header` is configured.
@@ -520,11 +521,11 @@ mod tests {
 
         // A request without configurations uses the provider's default.
         assert_eq!(
-            TakenConfigs::share(&extensions).render::<HeaderProvider>(&missing()).status(),
+            RequestConfigs::share(&extensions).render::<HeaderProvider>(&missing()).status(),
             StatusCode::BAD_REQUEST
         );
         assert_eq!(
-            TakenConfigs::take(&mut extensions).reject::<HeaderProvider>(missing()).response().status(),
+            RequestConfigs::take(&mut extensions).reject::<HeaderProvider>(missing()).response().status(),
             StatusCode::BAD_REQUEST
         );
     }

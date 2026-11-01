@@ -405,7 +405,7 @@ where
         // body is a `Json` rejection rendered by `JsonConfig`, and a decoded body that fails
         // validation is rendered by `ValidConfig`. Delegating straight to Axum's `Json` keeps this
         // to one lookup instead of the wrapper's lookup plus `Json`'s own.
-        let configs = crate::extract::TakenConfigs::take(req.extensions_mut());
+        let configs = crate::extract::RequestConfigs::take(req.extensions_mut());
         let axum::extract::Json(value) = <axum::extract::Json<T> as FromRequest<S>>::from_request(req, state)
             .await
             .map_err(|rejection| {
@@ -434,7 +434,7 @@ where
         // Choosing the Axum original keeps its own rejection response, so only a validation
         // failure needs the configurations. They are taken out of the consumed request without a
         // refcount bump and used only if validation fails.
-        let configs = crate::extract::TakenConfigs::take(req.extensions_mut());
+        let configs = crate::extract::RequestConfigs::take(req.extensions_mut());
         let axum::extract::Json(value) = <axum::extract::Json<T> as FromRequest<S>>::from_request(req, state)
             .await
             .map_err(|rejection| {

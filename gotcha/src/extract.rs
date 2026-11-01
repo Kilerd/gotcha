@@ -100,7 +100,7 @@ impl<R> IntoResponse for Rejected<R> {
 pub use config::{
     reject, CookieConfig, CookieProvider, ErrorBodyResponse, ExtractorConfig, ExtractorConfigs, FormConfig, FormProvider, HeaderConfig, HeaderProvider,
     JsonConfig, JsonProvider, MultipartConfig, MultipartProvider, PathConfig, PathProvider, QueryConfig, QueryProvider, RejectionConfig, RejectionProvider,
-    TakenConfigs, TypedHeaderConfig, TypedHeaderProvider, ValidConfig, ValidProvider,
+    RequestConfigs, TypedHeaderConfig, TypedHeaderProvider, ValidConfig, ValidProvider,
 };
 
 /// JSON extractor and response.
@@ -316,7 +316,7 @@ where
     type Rejection = Rejected<axum::extract::rejection::JsonRejection>;
 
     async fn from_request(mut req: Request, state: &S) -> Result<Self, Self::Rejection> {
-        let configs = TakenConfigs::take(req.extensions_mut());
+        let configs = RequestConfigs::take(req.extensions_mut());
         <axum::Json<T> as FromRequest<S>>::from_request(req, state)
             .await
             .map(|axum::Json(value)| Json(value))
@@ -332,7 +332,7 @@ where
     type Rejection = Rejected<axum::extract::rejection::JsonRejection>;
 
     async fn from_request(mut req: Request, state: &S) -> Result<Option<Self>, Self::Rejection> {
-        let configs = TakenConfigs::take(req.extensions_mut());
+        let configs = RequestConfigs::take(req.extensions_mut());
         <axum::Json<T> as OptionalFromRequest<S>>::from_request(req, state)
             .await
             .map(|value| value.map(|axum::Json(value)| Json(value)))
@@ -348,7 +348,7 @@ where
     type Rejection = Rejected<axum::extract::rejection::FormRejection>;
 
     async fn from_request(mut req: Request, state: &S) -> Result<Self, Self::Rejection> {
-        let configs = TakenConfigs::take(req.extensions_mut());
+        let configs = RequestConfigs::take(req.extensions_mut());
         <axum::extract::Form<T> as FromRequest<S>>::from_request(req, state)
             .await
             .map(|axum::extract::Form(value)| Form(value))
@@ -363,7 +363,7 @@ where
     type Rejection = Rejected<axum::extract::multipart::MultipartRejection>;
 
     async fn from_request(mut req: Request, state: &S) -> Result<Self, Self::Rejection> {
-        let configs = TakenConfigs::take(req.extensions_mut());
+        let configs = RequestConfigs::take(req.extensions_mut());
         <axum::extract::Multipart as FromRequest<S>>::from_request(req, state)
             .await
             .map(Multipart)
@@ -378,7 +378,7 @@ where
     type Rejection = Rejected<axum::extract::multipart::MultipartRejection>;
 
     async fn from_request(mut req: Request, state: &S) -> Result<Option<Self>, Self::Rejection> {
-        let configs = TakenConfigs::take(req.extensions_mut());
+        let configs = RequestConfigs::take(req.extensions_mut());
         <axum::extract::Multipart as OptionalFromRequest<S>>::from_request(req, state)
             .await
             .map(|value| value.map(Multipart))
