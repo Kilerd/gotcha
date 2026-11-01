@@ -311,6 +311,28 @@ enum AdjacentTuple {
     Tuple(),
 }
 
+/// `#[serde(transparent)]` named structs are their single inner field on the wire.
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(transparent)]
+struct TransparentId {
+    value: u32,
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(transparent)]
+struct TransparentAudit {
+    inner: Audit,
+}
+
+/// serde allows extra `#[serde(skip)]` fields on a transparent struct (the typed-ID pattern).
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(transparent)]
+struct TransparentTypedId<T> {
+    value: u32,
+    #[serde(skip)]
+    marker: std::marker::PhantomData<T>,
+}
+
 /// An all-unit enum: the wire form is a plain string.
 #[derive(Schematic, Serialize, Deserialize)]
 enum SimpleEnum {
@@ -381,6 +403,17 @@ fn structs_match_serde() {
     assert_serialization_matches(&ContainerDefault {
         name: "example".into(),
         count: 2,
+    });
+    assert_serialization_matches(&TransparentId { value: 7 });
+    assert_serialization_matches(&TransparentAudit {
+        inner: Audit {
+            created_by: "system".into(),
+            version: 3,
+        },
+    });
+    assert_serialization_matches(&TransparentTypedId::<()> {
+        value: 7,
+        marker: std::marker::PhantomData,
     });
 }
 
@@ -588,7 +621,6 @@ fn component_references_resolve() {
 //   still routed to the string-enum shape (the dispatch checks emptiness, not `Style::Unit`).
 // - Struct-variant fields ignore `#[serde(skip)]`, `#[serde(flatten)]` and
 //   `#[serde(rename_all_fields = "..")]`.
-// - `#[serde(transparent)]` types are documented as objects with the inner field as a property.
 // - `#[serde(skip)]` on a tuple-variant field: serde writes the remaining elements, while the
 //   schema still requires one item per declared field.
 // - Untagged enums use `oneOf`, so a value matching several branches fails validation (`u32|f64`

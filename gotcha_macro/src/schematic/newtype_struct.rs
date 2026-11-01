@@ -15,6 +15,28 @@ pub(crate) fn handler(core: &TokenStream2, fields: Vec<ParameterStructFieldOpt>,
         Some(name) => quote! { #name },
         None => quote! { <#inner_ty as #core::Schematic>::name() },
     };
+    // A transparent named struct's field name is invisible on the wire (serde flattens the
+    // inner value), but the remapper walks the Rust field name first: the entry tells it to
+    // drop that segment and continue with the inner type's table.
+    let wire_fields_impl = match fields[0].ident.as_ref() {
+        Some(ident) => {
+            let ident_string = ident.to_string();
+            quote! {
+                fn wire_fields() -> &'static [#core::WireField] {
+                    const {
+                        &[#core::WireField::new(#ident_string, #ident_string)
+                            .flatten()
+                            .nested(<#inner_ty as #core::Schematic>::wire_fields)]
+                    }
+                }
+            }
+        }
+        None => quote! {
+            fn wire_fields() -> &'static [#core::WireField] {
+                <#inner_ty as #core::Schematic>::wire_fields()
+            }
+        },
+    };
     let schema_impl = if name.is_some() {
         quote! {
             #core::registry::schema_or_ref_for::<Self>(Self::schema_name(), module_path!(), Self::required(), || {
@@ -52,8 +74,6 @@ pub(crate) fn handler(core: &TokenStream2, fields: Vec<ParameterStructFieldOpt>,
         fn flatten_schema() -> Option<#core::serde_json::Value> {
             <#inner_ty as #core::Schematic>::flatten_schema()
         }
-        fn wire_fields() -> &'static [#core::WireField] {
-            <#inner_ty as #core::Schematic>::wire_fields()
-        }
+        #wire_fields_impl
     }
 }
