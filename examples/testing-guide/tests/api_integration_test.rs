@@ -8,7 +8,7 @@ use uuid::Uuid;
 
 // ========== Test Setup ==========
 async fn setup() -> TestServer {
-    TestServer::new(create_test_app().await).unwrap()
+    TestServer::new(create_test_app()).unwrap()
 }
 
 // ========== Core API Tests ==========

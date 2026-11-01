@@ -1,4 +1,4 @@
-use gotcha::{ConfigWrapper, GotchaApp, GotchaContext, GotchaRouter, Responder, State, TaskScheduler};
+use gotcha::{ConfigWrapper, EmptyState, Gotcha, GotchaContext, Responder, State};
 use serde::{Deserialize, Serialize};
 
 pub async fn hello_world(_state: State<ConfigWrapper<Config>>) -> impl Responder {
@@ -8,33 +8,17 @@ pub async fn hello_world(_state: State<ConfigWrapper<Config>>) -> impl Responder
 #[derive(Debug, Deserialize, Serialize, Clone, Default)]
 pub struct Config {}
 
-pub struct App {}
-
-impl GotchaApp for App {
-    type State = ();
-
-    type Config = Config;
-
-    fn routes(&self, router: GotchaRouter<GotchaContext<Self::State, Self::Config>>) -> GotchaRouter<GotchaContext<Self::State, Self::Config>> {
-        router.get("/", hello_world)
-    }
-
-    async fn state(&self, _config: &ConfigWrapper<Self::Config>) -> Result<Self::State, gotcha::GotchaError> {
-        Ok(())
-    }
-
-    async fn tasks(&self, task_scheduler: &mut TaskScheduler<Self::State, Self::Config>) -> Result<(), gotcha::GotchaError> {
-        task_scheduler.interval("interval task", std::time::Duration::from_secs(1), interval_task);
-        Ok(())
-    }
-}
-
-async fn interval_task(_: GotchaContext<(), Config>) {
+async fn interval_task(_: GotchaContext<EmptyState, Config>) {
     println!("interval task");
 }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    App {}.run().await?;
+    Gotcha::with_config::<Config>()
+        .with_default_logger()
+        .get("/", hello_world)
+        .tasks(|scheduler| scheduler.interval("interval task", std::time::Duration::from_secs(1), interval_task))
+        .run()
+        .await?;
     Ok(())
 }

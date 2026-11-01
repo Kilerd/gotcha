@@ -1,5 +1,6 @@
 # Migration Guide
 
+- [Unreleased: moving from GotchaApp to the builder](#unreleased-moving-from-gotchaapp-to-the-builder)
 - [Unreleased: extractor provider keys](#unreleased-extractor-provider-keys)
 - [Unreleased: the macro crate needs Rust 1.88](#unreleased-the-macro-crate-needs-rust-188)
 - [Unreleased: untagged enums use anyOf](#unreleased-untagged-enums-use-anyof)
@@ -39,6 +40,83 @@
 - [Unreleased: default configuration sources](#unreleased-default-configuration-sources)
 - [0.3 → 0.4](#03--04) — **every application must edit its route paths and configuration file**
 - [0.2 → 0.3: API simplification](#02--03-api-simplification)
+
+---
+
+# Unreleased: moving from GotchaApp to the builder
+
+The `Gotcha` builder now covers every `GotchaApp` method, so an application can be described with
+the builder alone. Nothing changes for existing trait applications. Each trait method has a builder
+equivalent:
+
+| `GotchaApp` | `Gotcha` builder |
+| --- | --- |
+| `type State`, `type Config` | `Gotcha<S, C>`, from `Gotcha::from_state_fn(..)`, `with_types::<S, C>()`, `from_state(value)`, or `from_context(context)` |
+| `config()` override | `.load_config(\|\| async { .. })` |
+| `config_error_policy()` | `.config_error_policy(policy)` |
+| `logger()` | `.with_default_logger()` for the trait's default subscriber, or `.logger(\|\| { .. })` |
+| `state(&config)` | `Gotcha::from_state_fn(\|config: Arc<ConfigWrapper<C>>\| async move { .. })` |
+| `routes(router)` | `.get(..)`, `.route(..)`, `.method_route(..)`, `.fallback_service(..)`, `.nest(..)`, `.merge(..)`, or `.routes(\|router\| ..)` with the same body |
+| `tasks(scheduler)` | `.try_tasks(\|scheduler\| Box::pin(async move { ..; Ok(()) }))`, or `.tasks(\|scheduler\| ..)` when registration neither awaits nor fails |
+| `extractor_configs()` | `.extractor_config(config)`, once per provider |
+| `finish_router(router, context)` | `.finish_router(\|router, context\| ..)` |
+| `build_router(context)` | `.into_router(context)` |
+| `openapi_endpoints()` | `.with_openapi()` or `.openapi_endpoints(..)` |
+| `openapi_info()` | `.openapi_info(info)` |
+| `document_extractor_errors()` | `.document_extractor_errors(bool)` |
+| `openapi_document()` | `.into_openapi()` on a freshly built application |
+| `metrics_endpoint()` | `.metrics(endpoint)` |
+| `shutdown_signal()` | `.shutdown_signal(future)` |
+| `http_shutdown_timeout()`, `task_shutdown_timeout()` | `.http_shutdown_timeout(duration)`, `.task_shutdown_timeout(duration)` |
+| `on_shutdown(&context)` | `.on_shutdown(\|context\| async move { .. })` |
+| `run()`, `bind()` | `.run()`, `.bind()` |
+
+The hooks run at the same startup stages: logger, configuration, bind, state, routes, tasks.
+`gotcha/tests/builder_parity.rs` runs one application described both ways and compares them.
+
+```rust,ignore
+// Before
+struct App;
+
+impl GotchaApp for App {
+    type State = AppState;
+    type Config = Config;
+
+    fn routes(&self, router: GotchaRouter<GotchaContext<AppState, Config>>) -> GotchaRouter<GotchaContext<AppState, Config>> {
+        router.get("/", hello_world)
+    }
+
+    async fn state(&self, config: &ConfigWrapper<Config>) -> GotchaResult<AppState> {
+        AppState::connect(&config.database_url).await
+    }
+}
+
+App.run().await?;
+
+// After
+fn app() -> Gotcha<AppState, Config> {
+    Gotcha::from_state_fn(|config: Arc<ConfigWrapper<Config>>| async move { AppState::connect(&config.database_url).await })
+        .with_default_logger()
+        .get("/", hello_world)
+}
+
+app().run().await?;
+```
+
+Differences to account for:
+
+- **The builder installs no `tracing` subscriber unless asked.** Trait applications installed one
+  through the default `logger()`; add `.with_default_logger()` to keep that output.
+- A builder is consumed by `run`, `bind`, `into_router`, and `into_openapi`, where the trait value
+  could be reused. Write a function that returns the builder, as above, and call it for each use:
+  `app().into_openapi()` in an export command, `app().into_router(context)` in each test.
+- Builder hooks are `Send + 'static` closures. Data a trait method borrowed from `self` is moved
+  or cloned into the closure; share it behind an `Arc`.
+- `from_state_fn` receives the configuration as `Arc<ConfigWrapper<C>>`, the same value handlers
+  later share. Automatic loading needs `C: Deserialize`, as `GotchaApp::run` does; a configuration
+  supplied with `load_config` or `from_context` needs no serde traits.
+- Work that a `build_router` override did before assembly, including fallible work, belongs in
+  `from_state_fn`; `finish_router` then mounts services from `context.state`.
 
 ---
 

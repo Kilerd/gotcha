@@ -1,7 +1,7 @@
 // Business application code using Gotcha framework
 
 use axum::http::StatusCode;
-use gotcha::{api, ConfigWrapper, GotchaApp, GotchaContext, GotchaRouter, Json, Path, Query, Schematic, State};
+use gotcha::{api, ConfigWrapper, Gotcha, GotchaContext, Json, Path, Query, Schematic, State};
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
 use uuid::Uuid;
@@ -223,39 +223,28 @@ impl Default for AppConfig {
 }
 
 // ========== Application Setup ==========
-pub struct App;
-
-impl GotchaApp for App {
-    type State = AppState;
-    type Config = AppConfig;
-
-    async fn state(&self, _config: &ConfigWrapper<Self::Config>) -> Result<Self::State, gotcha::GotchaError> {
-        Ok(AppState::default())
-    }
-
-    fn routes(&self, router: GotchaRouter<GotchaContext<Self::State, Self::Config>>) -> GotchaRouter<GotchaContext<Self::State, Self::Config>> {
-        router
-            .get("/health", health_check)
-            .get("/users", list_users)
-            .get("/users/{id}", get_user)
-            .post("/users", create_user)
-            .put("/users/{id}", update_user)
-            .delete("/users/{id}", delete_user)
-    }
+/// The application. `run()` loads the configuration and starts with `AppState::default()`.
+pub fn app() -> Gotcha<AppState, AppConfig> {
+    Gotcha::with_types::<AppState, AppConfig>()
+        .get("/health", health_check)
+        .get("/users", list_users)
+        .get("/users/{id}", get_user)
+        .post("/users", create_user)
+        .put("/users/{id}", update_user)
+        .delete("/users/{id}", delete_user)
 }
 
 // ========== Helper function for testing ==========
-pub async fn create_test_app() -> axum::Router {
+/// The application's router for a context built in the test, without loading configuration or
+/// binding a listener.
+pub fn create_test_app() -> axum::Router {
     use gotcha::config::ServerConfig;
 
-    let app = App;
     let config = ConfigWrapper {
         server: ServerConfig::default(),
         app: AppConfig::default(),
     };
+    let context = GotchaContext::new(AppState::default(), config);
 
-    let state = app.state(&config).await.unwrap();
-    let context = GotchaContext::new(state, config);
-
-    app.build_router(context).await.unwrap()
+    app().into_router(context).unwrap()
 }

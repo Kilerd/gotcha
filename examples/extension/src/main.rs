@@ -1,6 +1,6 @@
 //! Example demonstrating `Extension<T>` usage with OpenAPI generation
 
-use gotcha::{api, ConfigWrapper, Extension, GotchaApp, GotchaContext, GotchaRouter, Json, Responder, Schematic, State};
+use gotcha::{api, ConfigWrapper, Extension, Gotcha, Json, Responder, Schematic, State};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone)]
@@ -62,30 +62,6 @@ pub async fn health() -> Json<serde_json::Value> {
     Json(serde_json::json!({ "status": "healthy" }))
 }
 
-pub struct App {}
-
-impl GotchaApp for App {
-    type State = ();
-    type Config = Config;
-
-    fn openapi_endpoints(&self) -> Option<gotcha::OpenApiEndpoints> {
-        Some(gotcha::OpenApiEndpoints::default())
-    }
-
-    fn routes(&self, router: GotchaRouter<GotchaContext<Self::State, Self::Config>>) -> GotchaRouter<GotchaContext<Self::State, Self::Config>> {
-        router
-            .get("/health", health)
-            .get("/user/me", get_current_user)
-            .post("/posts", create_post)
-            // Add middleware to inject the AuthContext
-            .layer(axum::middleware::from_fn(inject_auth_context))
-    }
-
-    async fn state(&self, _config: &ConfigWrapper<Self::Config>) -> Result<Self::State, gotcha::GotchaError> {
-        Ok(())
-    }
-}
-
 // Middleware to inject AuthContext into requests
 async fn inject_auth_context(mut req: axum::extract::Request, next: axum::middleware::Next) -> impl Responder {
     // In a real application, you would extract this from a JWT token or session
@@ -109,6 +85,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  GET  /user/me       - Get current user (uses Extension)");
     println!("  POST /posts         - Create post (uses Extension)");
 
-    App {}.run().await?;
+    Gotcha::with_config::<Config>()
+        .with_default_logger()
+        .with_openapi()
+        .get("/health", health)
+        .get("/user/me", get_current_user)
+        .post("/posts", create_post)
+        // Add middleware to inject the AuthContext
+        .layer(axum::middleware::from_fn(inject_auth_context))
+        .run()
+        .await?;
     Ok(())
 }

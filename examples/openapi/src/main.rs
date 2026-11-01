@@ -1,4 +1,4 @@
-use gotcha::{api, ConfigWrapper, GotchaApp, GotchaContext, GotchaRouter, Json, Path, Schematic};
+use gotcha::{api, EmptyState, Gotcha, Json, Path, Schematic};
 use serde::{Deserialize, Serialize};
 
 mod test_skip;
@@ -90,40 +90,28 @@ pub async fn update_pet_address_detail(_paths: Path<UpdatePetAddressPathArgs>, _
 #[derive(Debug, Deserialize, Clone, Serialize, Default)]
 struct Config {}
 
-struct App {}
-
-impl GotchaApp for App {
-    type State = ();
-    type Config = Config;
-    fn openapi_endpoints(&self) -> Option<gotcha::OpenApiEndpoints> {
-        Some(gotcha::OpenApiEndpoints::default())
-    }
-
-    fn routes(&self, router: GotchaRouter<GotchaContext<(), Config>>) -> GotchaRouter<GotchaContext<(), Config>> {
-        router
-            .get("/", hello_world)
-            .post("/pets", new_pet)
-            .get("/pets/{pet_id}", get_pet)
-            .put("/pets/{pet_id}", update_pet_info)
-            .put("/pets/{pet_id}/address/{address_id}", update_pet_address_detail)
-            // Test skip functionality
-            .post("/test/skip-json/{key_id}", test_skip::test_skip_json)
-            .post("/test/skip-query/{key_id}", test_skip::test_skip_query)
-            .post("/test/no-skip/{key_id}", test_skip::test_no_skip)
-    }
-
-    async fn state(&self, _config: &ConfigWrapper<Self::Config>) -> Result<Self::State, gotcha::GotchaError> {
-        Ok(())
-    }
+/// The application. A builder is consumed when it runs or exports, so build it where needed.
+fn app() -> Gotcha<EmptyState, Config> {
+    Gotcha::with_config::<Config>()
+        .with_default_logger()
+        .with_openapi()
+        .get("/", hello_world)
+        .post("/pets", new_pet)
+        .get("/pets/{pet_id}", get_pet)
+        .put("/pets/{pet_id}", update_pet_info)
+        .put("/pets/{pet_id}/address/{address_id}", update_pet_address_detail)
+        // Test skip functionality
+        .post("/test/skip-json/{key_id}", test_skip::test_skip_json)
+        .post("/test/skip-query/{key_id}", test_skip::test_skip_query)
+        .post("/test/no-skip/{key_id}", test_skip::test_no_skip)
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let app = App {};
     if std::env::args().nth(1).as_deref() == Some("--export-openapi") {
         // No configuration loading, state initialization, listener, or background tasks.
-        println!("{}", serde_json::to_string_pretty(&app.openapi_document())?);
+        println!("{}", serde_json::to_string_pretty(&app().into_openapi())?);
         return Ok(());
     }
-    tokio::runtime::Runtime::new()?.block_on(app.run())?;
+    tokio::runtime::Runtime::new()?.block_on(app().run())?;
     Ok(())
 }

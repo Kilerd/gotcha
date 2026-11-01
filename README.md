@@ -17,11 +17,11 @@ An enhanced web framework built on top of Axum, providing additional features an
 - ⏰ **Background Work** - Owned consumers and watchers, intervals, and cron schedules, drained at shutdown
 - 💌 **Typed Commands** - Reusable messages with application state and configuration
 - ⚙️ **Smart Configuration** - Environment-based config with variable resolution
-- 🏗️ **Two APIs** - Choose between simple builder API or advanced trait-based API
+- 🏗️ **One builder API** - From a two-line server to custom configuration loading, state built at startup, and lifecycle hooks
 
 ## 🚀 Quick Start
 
-### Simple Builder API (Recommended for new projects)
+### Builder API
 
 ```rust,no_run
 use gotcha::prelude::*;
@@ -205,10 +205,16 @@ Override the HTTP drain period with builder `.http_shutdown_timeout(duration)` o
 Background tasks keep their independent grace period (builder `.task_shutdown_timeout(duration)`
 or trait `task_shutdown_timeout(&self)`); see the [task migration notes](MIGRATION.md#unreleased-owned-scheduled-tasks).
 
-### Advanced Trait API (For complex applications)
+### Complex applications
+
+The builder covers applications whose state needs the loaded configuration, whose configuration
+comes from their own loader, and which need lifecycle hooks. Write the application as a function
+that returns the builder: `main` runs it, tests assemble it in memory, and an export command
+generates its document without starting it.
 
 ```rust,no_run
 use gotcha::prelude::*;
+use std::sync::Arc;
 
 #[config]
 #[derive(Debug, Deserialize, Clone)]
@@ -223,26 +229,6 @@ pub struct AppState {
     pub started_at: std::time::Instant,
 }
 
-pub struct App {}
-
-impl GotchaApp for App {
-    type State = AppState;
-    type Config = Config;
-
-    fn routes(&self, router: GotchaRouter<GotchaContext<Self::State, Self::Config>>)
-        -> GotchaRouter<GotchaContext<Self::State, Self::Config>> {
-        router
-            .get("/", hello_world)
-            .get("/users/{id}", get_user)
-    }
-
-    async fn state(&self, config: &ConfigWrapper<Self::Config>) -> GotchaResult<Self::State> {
-        // Open database connections here; `config` is already loaded.
-        let _ = &config.database_url;
-        Ok(AppState { started_at: std::time::Instant::now() })
-    }
-}
-
 // The application's own config and state extract directly, thanks to `#[config]` / `#[state]`.
 async fn hello_world(State(config): State<Config>) -> impl Responder {
     config.redis_url.clone()
@@ -252,12 +238,61 @@ async fn get_user(Path(id): Path<u32>, State(_state): State<AppState>) -> impl R
     format!("user {id}")
 }
 
+fn app() -> Gotcha<AppState, Config> {
+    Gotcha::from_state_fn(|config: Arc<ConfigWrapper<Config>>| async move {
+        // Open database connections here. `config` is loaded, and `config.server` holds the
+        // bound address, including the port chosen for port 0.
+        let _ = &config.database_url;
+        Ok(AppState { started_at: std::time::Instant::now() })
+    })
+    .with_default_logger()
+    .get("/", hello_world)
+    .get("/users/{id}", get_user)
+    .on_shutdown(|_context| async { /* close connections */ })
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    App {}.run().await?;
+    app().run().await?;
     Ok(())
 }
 ```
+
+- `Gotcha::from_state_fn` builds the state at startup, after configuration is loaded and the
+  listener is bound. An error stops startup and releases the listener.
+- `load_config(|| async { .. })` replaces automatic loading with your own loader; its errors go
+  through `config_error_policy`, as automatic loading's do.
+- `try_tasks(|scheduler| Box::pin(async move { .. }))` registers background tasks with a
+  registrar that can await and fail; `tasks(|scheduler| ..)` covers the simple case.
+- `finish_router` mounts services built from the application state, and `app_layer` adds
+  middleware that covers every endpoint.
+- `into_router(context)` assembles the router for a context you build, without loading
+  configuration or binding: use it in tests or to serve the application from your own listener.
+  `into_openapi()` exports the document.
+- `with_default_logger()` installs a `RUST_LOG`-filtered `tracing` subscriber. The builder installs
+  none unless asked, so applications that set up their own logging keep it.
+
+```rust
+use gotcha::prelude::*;
+use tower::ServiceExt;
+
+# #[tokio::main(flavor = "current_thread")]
+# async fn main() -> GotchaResult<()> {
+fn app() -> Gotcha<u32, EmptyConfig> {
+    Gotcha::from_state(0).get("/visits", |State(context): State<GotchaContext<u32, EmptyConfig>>| async move {
+        context.state.to_string()
+    })
+}
+
+// In a test: the context is built by hand, no configuration file or listener is involved.
+let router = app().into_router(GotchaContext::new(41, ConfigWrapper::default()))?;
+let request = gotcha::axum::http::Request::get("/visits").body(gotcha::axum::body::Body::empty()).unwrap();
+assert_eq!(router.oneshot(request).await.unwrap().status(), StatusCode::OK);
+# Ok(()) }
+```
+
+Applications that implement the `GotchaApp` trait can move to the builder method by method; see
+the [migration guide](MIGRATION.md#unreleased-moving-from-gotchaapp-to-the-builder).
 
 ## 📦 Installation
 
@@ -1226,20 +1261,25 @@ let _app = Gotcha::new()
     .expect("configuration loads");
 ```
 
-The trait API can use the same builder in a custom `GotchaApp::config()`. Manual loaders should
-start from `ConfigBuilder::framework_defaults()` rather than `ConfigBuilder::new()`; without the
-typed `[server]` base, `APP_SERVER__PORT` is not coerced when no file supplies `server.port`:
+A custom loader passed to `load_config` can use the same builder. Manual loaders should start
+from `ConfigBuilder::framework_defaults()` rather than `ConfigBuilder::new()`; without the typed
+`[server]` base, `APP_SERVER__PORT` is not coerced when no file supplies `server.port`:
 
 ```rust,no_run
 use gotcha::config::{ConfigBuilder, ConfigWrapper};
+use gotcha::{EmptyConfig, Gotcha};
 
-let config: ConfigWrapper<gotcha::EmptyConfig> = ConfigBuilder::framework_defaults()
-    .file_optional("configurations/application.toml")
-    .env("APP")
-    .enable_vars()
-    .build()
-    .expect("configuration loads");
+let app = Gotcha::new().load_config(|| async {
+    let config: ConfigWrapper<EmptyConfig> = ConfigBuilder::framework_defaults()
+        .file_optional("configurations/application.toml")
+        .env("APP")
+        .enable_vars()
+        .build()?;
+    Ok(config)
+});
 ```
+
+The same loader also works in a `GotchaApp::config()` override.
 
 ### Messages
 
@@ -1318,37 +1358,27 @@ initialization succeeds. The application retains ownership until shutdown comple
 users call `scheduler.start()`, retain the returned `RunningTasks`, and call
 `running.shutdown(timeout).await` to stop and join their tasks. Dropping the owner aborts its tasks.
 
-```rust,ignore
+```rust,no_run
+# #[cfg(feature = "task")]
+# {
 use gotcha::prelude::*;
 use std::time::Duration;
 
-# pub struct App {}
-impl GotchaApp for App {
-    type State = ();
-    type Config = EmptyConfig;
-
-    fn routes(&self, router: GotchaRouter<GotchaContext<Self::State, Self::Config>>)
-        -> GotchaRouter<GotchaContext<Self::State, Self::Config>> {
-        router
-    }
-
-    async fn state(&self, _config: &ConfigWrapper<Self::Config>) -> GotchaResult<Self::State> {
-        Ok(())
-    }
-
-    async fn tasks(&self, scheduler: &mut TaskScheduler<Self::State, Self::Config>) -> GotchaResult<()> {
-        // Daily cleanup at 2 AM (cron fields: sec min hour day month weekday)
-        scheduler.cron("cleanup", "0 0 2 * * *".to_string(), |_ctx| async {
-            println!("Running cleanup task");
-        });
-        // Every 30 seconds
-        scheduler.interval("heartbeat", Duration::from_secs(30), |_ctx| async {
-            println!("Heartbeat");
-        });
-        Ok(())
-    }
-}
+let app = Gotcha::new().tasks(|scheduler| {
+    // Daily cleanup at 2 AM (cron fields: sec min hour day month weekday)
+    scheduler.cron("cleanup", "0 0 2 * * *".to_string(), |_ctx| async {
+        println!("Running cleanup task");
+    });
+    // Every 30 seconds
+    scheduler.interval("heartbeat", Duration::from_secs(30), |_ctx| async {
+        println!("Heartbeat");
+    });
+});
+# }
 ```
+
+An invalid cron expression or a zero interval fails startup. Use `try_tasks` when registration
+itself awaits or returns an error, as `GotchaApp::tasks` could.
 
 ## 🏗️ Architecture
 
@@ -1360,7 +1390,7 @@ gotcha/
 ├── gotcha_core/      # Schematic, parameter providers, and response descriptors
 ├── gotcha_macro/     # Procedural macros
 └── examples/         # Example applications
-    ├── basic/        # Trait-based application with custom configuration
+    ├── basic/        # Minimal application with custom configuration
     ├── configuration/# File, environment, and profile configuration
     ├── custom_types/ # Constructors for custom state and configuration types
     ├── custom_types_real/ # Initialized state and configuration in a runnable API
@@ -1374,8 +1404,7 @@ gotcha/
 
 ### Core Concepts
 
-- **GotchaApp trait** - Main application interface for complex apps
-- **Gotcha builder** - Simple API for straightforward applications  
+- **Gotcha builder** - The application API, from minimal servers to complex applications
 - **GotchaRouter** - Enhanced Axum router with OpenAPI integration
 - **GotchaContext** - Application context combining state and configuration
 - **ConfigWrapper** - Configuration management with environment resolution

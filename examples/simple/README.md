@@ -25,9 +25,9 @@ Then visit:
 - **OpenAPI Spec**: http://localhost:3000/openapi.json
 - **Health Check**: http://localhost:3000/health
 
-## Key Differences from Traditional API
+## Key Differences from the Trait API
 
-### Old Way (Trait-based)
+### Trait API
 ```rust
 pub struct App {}
 
@@ -53,7 +53,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-### New Way (Builder API)
+### Builder API
 ```rust
 use gotcha::prelude::*;
 
@@ -136,16 +136,11 @@ This example uses the following Gotcha features:
 - `openapi` - OpenAPI documentation for `#[api]` handlers
 - `cors` - Cross-origin resource sharing support
 
-## Migration from Traditional API
+## Migration from the Trait API
 
-The new builder API is fully compatible with the existing trait-based API. You can:
-
-1. **Start fresh** with the new API for new projects
-2. **Gradually migrate** existing projects by adding new routes with the builder API
-3. **Mix both approaches** in the same application
-
-The traditional `GotchaApp` trait remains available for complex applications that need:
-- Custom state management
-- Complex configuration
-- Advanced lifecycle hooks
-- Task scheduling integration
+The builder covers everything the `GotchaApp` trait does: state built from the loaded
+configuration (`Gotcha::from_state_fn`), custom configuration loading (`load_config`), lifecycle
+hooks (`on_shutdown`, `finish_router`), fallible task registration (`try_tasks`), and in-memory
+router assembly for tests (`into_router`). See the
+[migration guide](../../MIGRATION.md#unreleased-moving-from-gotchaapp-to-the-builder) for a
+method-by-method table.

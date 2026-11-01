@@ -23,12 +23,10 @@
 
 3. **测试设置**
    ```rust
-   pub async fn create_test_app() -> axum::Router {
-       let app = App;
+   pub fn create_test_app() -> axum::Router {
        let config = ConfigWrapper { /* ... */ };
-       let state = app.state(&config).await.unwrap();
-       let context = GotchaContext::new(state, config);
-       app.build_router(context).await.unwrap()
+       let context = GotchaContext::new(AppState::default(), config);
+       app().into_router(context).unwrap()
    }
    ```
 
