@@ -275,7 +275,7 @@ pub trait GotchaApp: Sized + Send + Sync {
     /// The default waits for Ctrl-C or, on Unix, SIGTERM.
     ///
     /// When this resolves, the [`GotchaContext`] shutdown token is cancelled and the listener
-    /// stops accepting. Then HTTP connections drain, scheduled executions stop starting, and
+    /// stops accepting. Then HTTP connections and background tasks drain at the same time, and
     /// [`Self::on_shutdown`] runs after both have finished. See [`Self::bind`] for serving a
     /// pre-bound listener.
     ///
@@ -310,7 +310,8 @@ pub trait GotchaApp: Sized + Send + Sync {
     }
 
     /// How long to wait for background tasks and in-flight scheduled executions after shutdown is
-    /// requested. Defaults to 30 seconds. At the deadline, remaining tasks are aborted and joined.
+    /// requested. Defaults to 30 seconds. At the deadline, remaining tasks are aborted and get up
+    /// to one second to stop; see [`RunningTasks::shutdown`].
     /// This runs concurrently with HTTP request draining.
     fn task_shutdown_timeout(&self) -> std::time::Duration {
         crate::task::DEFAULT_SHUTDOWN_TIMEOUT

@@ -947,7 +947,7 @@ running.shutdown(Duration::from_secs(10)).await;
 ```
 
 `RunningTasks::shutdown(timeout)` stops subsequent executions, waits for current executions, and
-aborts and joins unfinished tasks at the deadline. Dropping the owner or cancelling its shutdown
+aborts unfinished tasks at the deadline, waiting up to one second for them to stop. Dropping the owner or cancelling its shutdown
 future requests immediate abortion; dropping cannot perform an asynchronous join. The same ownership
 includes the current execution, which is no longer a separate detached task.
 
@@ -980,8 +980,10 @@ bounded separately by `http_shutdown_timeout`; see
 error also stops and drains the scheduled tasks; cancelling the serving future requests abortion of
 all scheduled work and signals HTTP shutdown.
 
-Cancellation requires async tasks to yield. Synchronous blocking work and tasks explicitly detached
-by application code (including `Messager::spawn`) remain outside this ownership.
+Cancellation requires async tasks to yield. A task blocking its thread never observes the abort:
+one second after it, shutdown names the task in a warning and continues without it, so cleanup still
+runs, but the runtime waits for that thread when it is dropped. Tasks explicitly detached by
+application code (including `Messager::spawn`) remain outside this ownership.
 
 Single-execution panics are logged and the schedule continues, including a panic while constructing
 the execution future. Interval tasks retain their existing immediate first tick and non-overlapping

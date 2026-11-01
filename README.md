@@ -111,12 +111,19 @@ for behavior changes and the trait example.
 Both application APIs stop gracefully on Ctrl-C or Unix SIGTERM. When the signal resolves, gotcha:
 
 1. cancels the shutdown token in `GotchaContext` and stops accepting connections,
-2. drains in-flight HTTP connections, bounded by `http_shutdown_timeout` (30 seconds by default).
-   This also waits for upgraded connections such as WebSockets, which axum no longer tracks after
-   the upgrade,
-3. waits for background tasks and running scheduled executions, bounded by `task_shutdown_timeout`
-   (30 seconds by default; this deadline runs concurrently with HTTP draining),
-4. runs cleanup hooks in registration order.
+2. drains two things at the same time, each with its own deadline:
+   - in-flight HTTP connections, bounded by `http_shutdown_timeout` (30 seconds by default). This
+     also waits for upgraded connections such as WebSockets, which axum no longer tracks after the
+     upgrade,
+   - background tasks and running scheduled executions, bounded by `task_shutdown_timeout` (30
+     seconds by default),
+3. runs cleanup hooks in registration order, once both drains have finished.
+
+Neither drain waits for the other, so a task can finish while a handler is still running; see
+[Background Work](#background-work) for what that means for a queue. At the task deadline, remaining
+tasks are aborted and get up to one second to stop. An abort takes effect when a task yields, so a
+task blocking its thread is named in a warning and left behind: cleanup still runs, but the runtime
+waits for that thread when it is dropped.
 
 At the HTTP drain deadline, remaining connections (including upgraded ones) are closed at the OS
 socket level, so a handler that is not polling its socket is disconnected too. Gotcha then waits
@@ -1268,7 +1275,11 @@ let app = Gotcha::new().tasks(move |scheduler| {
                 Some(job) = queue.recv() => println!("{job}"),
             }
         }
-        // Flush what the loop holds here; cleanup hooks run after this returns.
+        // Refuse new jobs and finish the queued ones; cleanup hooks run after this returns.
+        queue.close();
+        while let Some(job) = queue.recv().await {
+            println!("{job}");
+        }
     });
 });
 # drop(jobs);
@@ -1276,10 +1287,17 @@ let app = Gotcha::new().tasks(move |scheduler| {
 
 A spawned future starts when serving starts, like every other task, and does not start at all if
 a registration fails. At shutdown `ctx.shutdown()` fires and the future has until
-`task_shutdown_timeout` to return; at the deadline it is aborted, and cleanup hooks run only after
-that. Returning early is not an error and the future does not run again. A panic is logged and ends
-only that task: other tasks and the server keep running. Use `GotchaApp::tasks` the same way in the
-trait API. A plain `tokio::spawn` stays outside all of this.
+`task_shutdown_timeout` to return; at the deadline it is aborted. Returning early is not an error
+and the future does not run again. A panic is logged and ends only that task: other tasks and the
+server keep running. Use `GotchaApp::tasks` the same way in the trait API. A plain `tokio::spawn`
+stays outside all of this.
+
+HTTP connections drain at the same time as tasks, not first, and cleanup hooks run after both. So
+the consumer can stop while a handler is still running, and a job that handler enqueues afterwards
+is never consumed. That is why the example closes the queue before its last drain: `send` fails from
+then on, and every `send` that succeeded is handled unless the deadline aborts the consumer first.
+A handler has to check that result and refuse the work, for example with `503`. Ignoring it and
+answering `200` loses the job.
 
 ### Task Scheduling
 

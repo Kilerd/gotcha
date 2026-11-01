@@ -1,7 +1,8 @@
 //! Work registered with `TaskScheduler::spawn` joins the application's lifecycle. Nothing here
 //! needs the `task` feature, so these also run in the builds without it.
 
-use gotcha::{ConfigWrapper, Gotcha, GotchaApp, GotchaContext, GotchaError, GotchaResult, GotchaRouter, ServerConfig, TaskScheduler};
+use gotcha::axum::http::StatusCode;
+use gotcha::{ConfigWrapper, Gotcha, GotchaApp, GotchaContext, GotchaError, GotchaResult, GotchaRouter, ServerConfig, State, TaskScheduler};
 use std::future::Future;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
@@ -28,8 +29,15 @@ async fn within<F: Future>(future: F) -> F::Output {
 }
 
 async fn ping(address: SocketAddr) -> String {
+    request(address, "/ping").await
+}
+
+async fn request(address: SocketAddr, path: &str) -> String {
     let mut stream = tokio::net::TcpStream::connect(address).await.unwrap();
-    stream.write_all(b"GET /ping HTTP/1.0\r\nHost: localhost\r\n\r\n").await.unwrap();
+    stream
+        .write_all(format!("GET {path} HTTP/1.0\r\nHost: localhost\r\n\r\n").as_bytes())
+        .await
+        .unwrap();
     let mut response = String::new();
     stream.read_to_string(&mut response).await.unwrap();
     response
@@ -154,6 +162,93 @@ async fn future_ignoring_the_token_is_aborted_at_the_deadline() {
         ["aborted", "on_shutdown"],
         "the future is dropped at the deadline, before cleanup"
     );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn future_blocking_its_thread_does_not_hold_serve_or_cleanup() {
+    let events = Events::default();
+    let stop = Arc::new(Notify::new());
+    let signal = stop.clone();
+    let (started, mut starts) = mpsc::unbounded_channel();
+    let (release, blocked) = std::sync::mpsc::channel::<()>();
+    let server = tokio::spawn(
+        builder(&events)
+            .tasks(move |scheduler| {
+                scheduler.spawn("blocking", move |_| async move {
+                    started.send(()).unwrap();
+                    // Never yields, so neither the shutdown token nor the abort reaches it.
+                    let _ = blocked.recv();
+                });
+            })
+            .task_shutdown_timeout(Duration::from_millis(20))
+            .shutdown_signal(async move { signal.notified().await })
+            .run(),
+    );
+    within(starts.recv()).await.unwrap();
+    stop.notify_one();
+    within(server).await.unwrap().unwrap();
+    assert_eq!(*events.lock().unwrap(), ["on_shutdown"]);
+    release.send(()).unwrap();
+}
+
+/// HTTP and tasks drain at the same time, so a consumer can stop while a handler is still running.
+/// The handler learns that from its `send`, and every job that was accepted has been handled.
+#[tokio::test]
+async fn handler_outliving_the_consumer_sees_its_send_fail() {
+    #[derive(Clone)]
+    struct Queue {
+        jobs: mpsc::UnboundedSender<&'static str>,
+        entered: Arc<Notify>,
+        consumer_stopped: Arc<Notify>,
+    }
+    async fn enqueue(State(ctx): State<GotchaContext<Queue, ()>>) -> StatusCode {
+        ctx.state.entered.notify_one();
+        ctx.state.consumer_stopped.notified().await;
+        match ctx.state.jobs.send("late") {
+            Ok(()) => StatusCode::OK,
+            Err(_) => StatusCode::SERVICE_UNAVAILABLE,
+        }
+    }
+
+    let events = Events::default();
+    let stop = Arc::new(Notify::new());
+    let signal = stop.clone();
+    let (jobs, mut pending) = mpsc::unbounded_channel();
+    jobs.send("early").unwrap();
+    let queue = Queue {
+        jobs,
+        entered: Arc::default(),
+        consumer_stopped: Arc::default(),
+    };
+    let entered = queue.entered.clone();
+    let (handled, hook) = (events.clone(), events.clone());
+    let server = Gotcha::from_context(GotchaContext::new(queue, config()))
+        .get("/enqueue", enqueue)
+        .tasks(move |scheduler| {
+            scheduler.spawn("consumer", move |ctx| async move {
+                ctx.shutdown().cancelled().await;
+                pending.close();
+                while let Some(job) = pending.recv().await {
+                    handled.lock().unwrap().push(job);
+                }
+                ctx.state.consumer_stopped.notify_one();
+            });
+        })
+        .on_shutdown(move |_| async move {
+            hook.lock().unwrap().push("on_shutdown");
+        })
+        .shutdown_signal(async move { signal.notified().await })
+        .bind()
+        .await
+        .unwrap();
+    let address = server.local_addr();
+    let serving = tokio::spawn(server.serve());
+    let client = tokio::spawn(async move { request(address, "/enqueue").await });
+    within(entered.notified()).await;
+    stop.notify_one();
+    assert!(within(client).await.unwrap().starts_with("HTTP/1.0 503"), "the job was refused");
+    within(serving).await.unwrap().unwrap();
+    assert_eq!(*events.lock().unwrap(), ["early", "on_shutdown"]);
 }
 
 #[tokio::test]

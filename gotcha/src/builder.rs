@@ -1019,8 +1019,9 @@ where
     }
 
     /// Set the grace period for background tasks and in-flight scheduled executions (default: 30
-    /// seconds). Remaining tasks are aborted and joined at the deadline. This runs concurrently
-    /// with HTTP draining; see [`Self::http_shutdown_timeout`].
+    /// seconds). At the deadline, remaining tasks are aborted and get up to one second to stop; see
+    /// [`RunningTasks::shutdown`](crate::RunningTasks::shutdown). This runs concurrently with HTTP
+    /// draining; see [`Self::http_shutdown_timeout`].
     pub fn task_shutdown_timeout(mut self, timeout: std::time::Duration) -> Self {
         self.task_shutdown_timeout = timeout;
         self

@@ -49,6 +49,7 @@
 //! - Scheduled notifications
 //!
 
+use std::collections::HashMap;
 use std::fmt;
 use std::future::Future;
 use std::panic::AssertUnwindSafe;
@@ -62,13 +63,22 @@ use chrono::{DateTime, Utc};
 #[cfg(feature = "task")]
 use cron::Schedule;
 use futures_util::FutureExt;
-use tokio::task::JoinSet;
+use tokio::task::{Id, JoinSet};
 use tokio_util::sync::CancellationToken;
 
 use crate::{GotchaContext, GotchaError, GotchaResult};
 
-pub(crate) type ScheduledTask = Pin<Box<dyn Future<Output = ()> + Send>>;
+/// A registered task: its owned future and the name that shutdown diagnostics report.
+pub(crate) struct ScheduledTask {
+    name: String,
+    future: Pin<Box<dyn Future<Output = ()> + Send>>,
+}
+
 pub(crate) const DEFAULT_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// How long to wait for aborted tasks to stop. A task blocking its thread never observes the
+/// abort, so shutdown continues without it instead of waiting forever.
+const ABORT_GRACE: Duration = Duration::from_secs(1);
 
 /// One registration that cannot be scheduled. The message names only the task (and expression);
 /// the cron parse error, when there is one, becomes the error source of [`RegistrationErrors`].
@@ -170,8 +180,10 @@ where
                 return;
             }
         };
-        self.tasks
-            .push(Box::pin(run_cron(self.context.clone(), schedule, name, task, self.shutdown.clone())));
+        self.tasks.push(ScheduledTask {
+            name: name.clone(),
+            future: Box::pin(run_cron(self.context.clone(), schedule, name, task, self.shutdown.clone())),
+        });
     }
 
     /// Register a task with an immediate first execution, then repeat at the given interval.
@@ -193,18 +205,28 @@ where
             });
             return;
         }
-        self.tasks
-            .push(Box::pin(run_interval(self.context.clone(), interval, name, task, self.shutdown.clone())));
+        self.tasks.push(ScheduledTask {
+            name: name.clone(),
+            future: Box::pin(run_interval(self.context.clone(), interval, name, task, self.shutdown.clone())),
+        });
     }
 
     /// Register one long-running or one-off future, such as a queue consumer or a watcher.
     ///
-    /// The application owns it like every other task. It starts when serving starts, and it does
-    /// not start at all if a registration fails. When shutdown is requested,
-    /// [`GotchaContext::shutdown`] fires and the future has until the task shutdown timeout to
-    /// return; at the deadline it is aborted. Cleanup hooks run only after that. Returning before
-    /// shutdown is not an error and the future does not run again. A panic is logged and ends only
-    /// this task: other tasks and the server keep running.
+    /// The application owns it like every other task. An application starts it when serving
+    /// starts, and not at all if a registration fails. A standalone scheduler starts it in
+    /// [`Self::start`], which logs and skips invalid registrations and starts the rest. Returning
+    /// before shutdown is not an error and the future does not run again. A panic is logged and
+    /// ends only this task: other tasks and the server keep running.
+    ///
+    /// When shutdown is requested, [`GotchaContext::shutdown`] fires and the future has until the
+    /// task shutdown timeout to return; at the deadline it is aborted, see
+    /// [`RunningTasks::shutdown`]. HTTP connections drain at the same time, not first, and cleanup
+    /// hooks run after both. So a consumer can stop while a handler is still running, and a job
+    /// that handler enqueues afterwards is never consumed. As below, close the queue before the
+    /// last drain, and have handlers check their `send` and refuse the work (for example with
+    /// `503`) when it fails: a `send` that succeeded is handled, unless the deadline aborts the
+    /// consumer first.
     ///
     /// ```no_run
     /// use gotcha::Gotcha;
@@ -220,7 +242,11 @@ where
     ///                 Some(job) = queue.recv() => println!("{job}"),
     ///             }
     ///         }
-    ///         // Flush what the loop holds here; cleanup hooks run after this returns.
+    ///         // Refuse new jobs and finish the queued ones; cleanup hooks run after this returns.
+    ///         queue.close();
+    ///         while let Some(job) = queue.recv().await {
+    ///             println!("{job}");
+    ///         }
     ///     });
     /// });
     /// # drop(jobs);
@@ -231,7 +257,10 @@ where
         FF: Future<Output = ()> + Send + 'static,
     {
         let name = name.as_ref().to_string();
-        self.tasks.push(Box::pin(run_spawned(self.context.clone(), name, task)));
+        self.tasks.push(ScheduledTask {
+            name: name.clone(),
+            future: Box::pin(run_spawned(self.context.clone(), name, task)),
+        });
     }
 
     /// Start the registered tasks on Tokio. Dropping the returned owner aborts them.
@@ -273,16 +302,19 @@ where
 #[must_use = "dropping the task owner aborts all scheduled tasks"]
 pub struct RunningTasks {
     tasks: JoinSet<()>,
+    // The tasks not joined yet, for shutdown diagnostics.
+    names: HashMap<Id, String>,
     shutdown: CancellationToken,
 }
 
 impl RunningTasks {
     pub(crate) fn start(pending: Vec<ScheduledTask>, shutdown: CancellationToken) -> Self {
         let mut tasks = JoinSet::new();
+        let mut names = HashMap::new();
         for task in pending {
-            tasks.spawn(task);
+            names.insert(tasks.spawn(task.future).id(), task.name);
         }
-        Self { tasks, shutdown }
+        Self { tasks, names, shutdown }
     }
 
     /// Stop new executions and wait up to `timeout` for spawned futures and current executions to
@@ -290,22 +322,49 @@ impl RunningTasks {
     /// Also cancels the scheduler's shutdown token, which is a child of the context token for
     /// schedulers built with [`TaskScheduler::new`], releasing executions that wait on it without
     /// cancelling that token or other schedulers sharing it.
-    /// At the deadline, abort unfinished tasks and wait for their futures to be dropped.
-    /// Cancelling this future also aborts the tasks. Cancellation requires tasks to yield;
-    /// blocking work and application-created detached tasks cannot be forcibly stopped here.
+    /// At the deadline, abort unfinished tasks and wait up to one second for their futures to be
+    /// dropped. Cancelling this future also aborts the tasks.
+    ///
+    /// An abort takes effect when a task yields. A task blocking its thread is named in a warning
+    /// and left behind so that this returns, and application cleanup can run, but it keeps its
+    /// thread until it yields and the runtime waits for that thread when it is dropped. On a
+    /// single-threaded runtime it also blocks this wait. Application-created detached tasks are
+    /// outside this owner.
     pub async fn shutdown(mut self, timeout: Duration) {
         self.shutdown.cancel();
-        let drain = async {
-            while let Some(result) = self.tasks.join_next().await {
-                if let Err(error) = result {
-                    tracing::error!("background task failed: {error}");
+        if tokio::time::timeout(timeout, self.join_all()).await.is_ok() {
+            return;
+        }
+        tracing::warn!("background tasks {:?} exceeded shutdown timeout {timeout:?}; aborting them", self.running());
+        self.tasks.abort_all();
+        if tokio::time::timeout(ABORT_GRACE, self.join_all()).await.is_err() {
+            tracing::warn!(
+                "background tasks {:?} still running {ABORT_GRACE:?} after abort; continuing shutdown",
+                self.running()
+            );
+        }
+    }
+
+    async fn join_all(&mut self) {
+        while let Some(result) = self.tasks.join_next_with_id().await {
+            match result {
+                Ok((id, ())) => {
+                    self.names.remove(&id);
+                }
+                Err(error) => {
+                    let name = self.names.remove(&error.id());
+                    if !error.is_cancelled() {
+                        tracing::error!("background task {name:?} failed: {error}");
+                    }
                 }
             }
-        };
-        if tokio::time::timeout(timeout, drain).await.is_err() {
-            tracing::warn!("background tasks exceeded shutdown timeout {timeout:?}; aborting remaining tasks");
-            self.tasks.shutdown().await;
         }
+    }
+
+    fn running(&self) -> Vec<&str> {
+        let mut names: Vec<&str> = self.names.values().map(String::as_str).collect();
+        names.sort_unstable();
+        names
     }
 }
 

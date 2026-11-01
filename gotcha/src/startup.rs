@@ -279,12 +279,15 @@ where
 /// An application whose listener is bound, with the effective local address available before
 /// serving starts. Binding can use port 0; [`Self::local_addr`] then reports the assigned port.
 ///
-/// Shutdown order: the signal resolves, the context shutdown token is cancelled and the listener
-/// stops accepting, in-flight HTTP connections (including WebSocket upgrades) drain (bounded by
-/// [`GotchaApp::http_shutdown_timeout`] or the builder's `.http_shutdown_timeout()`), background
-/// tasks drain (bounded by the task shutdown timeout), and finally cleanup hooks run. At the HTTP
-/// deadline, remaining sockets are shut down at the OS level, their handlers get up to one second
-/// to observe the closure, and shutdown then continues.
+/// Shutdown order: the signal resolves, and the context shutdown token is cancelled and the
+/// listener stops accepting. Then two drains run at the same time: in-flight HTTP connections
+/// (including WebSocket upgrades, bounded by [`GotchaApp::http_shutdown_timeout`] or the builder's
+/// `.http_shutdown_timeout()`) and background tasks (bounded by the task shutdown timeout). Neither
+/// waits for the other, so a task can finish while a handler is still running. Cleanup hooks run
+/// once both have finished. At the HTTP deadline, remaining sockets are shut down at the OS level,
+/// their handlers get up to one second to observe the closure, and shutdown then continues. At the
+/// task deadline, remaining tasks are aborted and get up to one second to stop, with the same
+/// result; see [`RunningTasks::shutdown`](crate::RunningTasks::shutdown).
 ///
 /// Signal handling starts only when serving starts: holding an unserved `BoundServer` does not
 /// install a signal handler, and dropping it cancels the context shutdown token (releasing tasks

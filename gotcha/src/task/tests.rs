@@ -1,8 +1,6 @@
 use super::*;
 use crate::ConfigWrapper;
 use std::cell::Cell;
-#[cfg(feature = "task")]
-use std::error::Error;
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
     Arc, Mutex,
@@ -347,7 +345,10 @@ async fn construction_and_polling_panics_are_logged_and_the_schedule_continues()
     scheduler.tasks = scheduler
         .tasks
         .into_iter()
-        .map(|task| Box::pin(task.with_subscriber(dispatch.clone())) as ScheduledTask)
+        .map(|task| ScheduledTask {
+            name: task.name,
+            future: Box::pin(task.future.with_subscriber(dispatch.clone())),
+        })
         .collect();
     let running = scheduler.start();
     assert_eq!(completions.recv().await, Some(2));
