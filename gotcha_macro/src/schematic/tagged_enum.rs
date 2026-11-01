@@ -1,4 +1,4 @@
-use proc_macro2::{Span, TokenStream as TokenStream2};
+use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 
 use crate::schematic::{ParameterEnumVariantOpt, VariantNaming};
@@ -11,7 +11,7 @@ fn has_annotations(description: &TokenStream2, customizations: &[TokenStream2]) 
 
 pub(crate) fn handler(
     core: &TokenStream2, ident_string: String, doc: TokenStream2, variants: Vec<ParameterEnumVariantOpt>, naming: VariantNaming, tag_name: String,
-) -> Result<TokenStream2, (Span, &'static str)> {
+) -> syn::Result<TokenStream2> {
     let tag_name_str = tag_name.as_str();
 
     let variants_codegen: Vec<TokenStream2> = variants

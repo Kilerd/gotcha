@@ -1,4 +1,4 @@
-use proc_macro2::{Span, TokenStream as TokenStream2};
+use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 
 use crate::schematic::ParameterStructFieldOpt;
@@ -10,7 +10,7 @@ use crate::utils::{
 pub(crate) fn handler(
     core: &TokenStream2, ident_string: String, doc: TokenStream2, fields: darling::ast::Fields<ParameterStructFieldOpt>, rename_all: Option<RenameAll>,
     rename_all_deserialize: Option<RenameAll>, container_default: bool,
-) -> Result<TokenStream2, (Span, &'static str)> {
+) -> syn::Result<TokenStream2> {
     let mut normal_fields_stream: Vec<TokenStream2> = Vec::new();
     let mut flatten_fields_stream: Vec<TokenStream2> = Vec::new();
     let mut flatten_schema_stream: Vec<TokenStream2> = Vec::new();

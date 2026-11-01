@@ -4,8 +4,9 @@ use proc_macro::TokenStream;
 use proc_macro2::{Group, Span, TokenStream as TokenStream2, TokenTree};
 use quote::quote;
 use syn::spanned::Spanned;
-use syn::{parse_macro_input, AttributeArgs, FnArg, ItemFn, ReturnType};
+use syn::{FnArg, ItemFn, ReturnType};
 
+use darling::ast::NestedMeta;
 use darling::util::Flag;
 
 use crate::utils::{gotcha_crate_path, AttributesExt};
@@ -77,14 +78,14 @@ impl RouteMeta {
 
 /// `request_body(...)` may appear more than once, which `RouteMeta`'s single-value fields cannot
 /// express, so the entries are split off before the rest is parsed.
-fn split_request_bodies(args: Vec<syn::NestedMeta>) -> darling::Result<(Vec<RequestBodyMeta>, Vec<syn::NestedMeta>)> {
+fn split_request_bodies(args: Vec<NestedMeta>) -> darling::Result<(Vec<RequestBodyMeta>, Vec<NestedMeta>)> {
     let mut declarations = Vec::new();
     let mut remaining = Vec::new();
     for arg in args {
         match arg {
             // Match every form so a malformed `request_body` is reported as such rather than as
             // an unknown field of the route attribute.
-            syn::NestedMeta::Meta(meta) if meta.path().is_ident("request_body") => {
+            NestedMeta::Meta(meta) if meta.path().is_ident("request_body") => {
                 declarations.push(RequestBodyMeta::from_meta(&meta)?);
             }
             other => remaining.push(other),
@@ -122,8 +123,7 @@ fn validate_request_bodies(declarations: &[RequestBodyMeta]) -> darling::Result<
 struct RequestBodyMeta {
     /// Span of the whole entry, used for errors that depend on the other entries.
     span: proc_macro2::Span,
-    /// Kept as the literal so a malformed type is reported at the string, not the attribute.
-    body: syn::LitStr,
+    body: syn::Type,
     /// Defaults to `application/json`, matching a body declaration in `response(...)`.
     content_type: String,
     description: Option<String>,
@@ -133,6 +133,7 @@ struct RequestBodyMeta {
 
 #[derive(Debug, FromMeta)]
 struct RequestBodyFields {
+    /// Kept as the literal so a malformed type is reported at the string, not the attribute.
     body: syn::LitStr,
     content_type: Option<String>,
     description: Option<String>,
@@ -144,11 +145,13 @@ impl FromMeta for RequestBodyMeta {
         let syn::Meta::List(meta) = item else {
             return Err(darling::Error::custom("expected request_body(body = \"Type\")").with_span(item));
         };
-        let fields = RequestBodyFields::from_list(&meta.nested.iter().cloned().collect::<Vec<_>>()).map_err(|error| error.with_span(meta))?;
-        parse_type(&fields.body)?;
+        let fields = NestedMeta::parse_meta_list(meta.tokens.clone())
+            .map_err(darling::Error::from)
+            .and_then(|items| RequestBodyFields::from_list(&items))
+            .map_err(|error| error.with_span(meta))?;
         Ok(Self {
             span: meta.span(),
-            body: fields.body,
+            body: parse_type(&fields.body)?,
             content_type: fields.content_type.unwrap_or_else(|| "application/json".to_owned()),
             description: fields.description,
             required: fields.required.unwrap_or(true),
@@ -158,7 +161,7 @@ impl FromMeta for RequestBodyMeta {
 
 impl RequestBodyMeta {
     fn tokens(&self, gotcha: &proc_macro2::TokenStream) -> proc_macro2::TokenStream {
-        let body: syn::Type = parse_type(&self.body).expect("validated body type");
+        let body = &self.body;
         let content_type = &self.content_type;
         let required = self.required;
         let description = match &self.description {
@@ -192,7 +195,7 @@ struct ResponseDeclarations(Vec<ResponseMeta>);
 struct ErrorDeclarations(Vec<ResponseMeta>);
 
 impl FromMeta for ErrorDeclarations {
-    fn from_list(items: &[syn::NestedMeta]) -> darling::Result<Self> {
+    fn from_list(items: &[NestedMeta]) -> darling::Result<Self> {
         let ResponseDeclarations(responses) = ResponseDeclarations::from_list(items)?;
         if responses.is_empty() {
             return Err(darling::Error::custom("errors(...) must declare at least one response"));
@@ -201,8 +204,9 @@ impl FromMeta for ErrorDeclarations {
     }
 }
 
+/// The arguments of one `response(...)` entry as written.
 #[derive(Debug, FromMeta)]
-struct ResponseMeta {
+struct ResponseFields {
     status: u16,
     /// Kept as the literal so a malformed type is reported at the string, not the attribute.
     body: Option<syn::LitStr>,
@@ -212,41 +216,53 @@ struct ResponseMeta {
     description: Option<String>,
 }
 
+/// One validated `response(...)` declaration, with its types parsed.
+#[derive(Debug)]
+struct ResponseMeta {
+    status: u16,
+    body: Option<syn::Type>,
+    item: Option<syn::Type>,
+    content_type: Option<String>,
+    description: Option<String>,
+}
+
 impl FromMeta for ResponseDeclarations {
-    fn from_list(items: &[syn::NestedMeta]) -> darling::Result<Self> {
+    fn from_list(items: &[NestedMeta]) -> darling::Result<Self> {
         let mut responses = Vec::new();
         let mut statuses = std::collections::BTreeSet::new();
         for item in items {
-            let syn::NestedMeta::Meta(syn::Meta::List(meta)) = item else {
+            let NestedMeta::Meta(syn::Meta::List(meta)) = item else {
                 return Err(darling::Error::custom("expected response(status = ..., body = \"Type\")").with_span(item));
             };
             if !meta.path.is_ident("response") {
                 return Err(darling::Error::custom("expected response(...)").with_span(meta));
             }
-            let response = ResponseMeta::from_list(&meta.nested.iter().cloned().collect::<Vec<_>>())?;
+            let response = ResponseFields::from_list(&NestedMeta::parse_meta_list(meta.tokens.clone())?)?;
             if !(100..=599).contains(&response.status) {
                 return Err(darling::Error::custom("response status must be in 100..=599").with_span(meta));
             }
             if !statuses.insert(response.status) {
                 return Err(darling::Error::custom("duplicate response status").with_span(meta));
             }
-            if let Some(body) = &response.body {
-                parse_type(body)?;
+            let body = response.body.as_ref().map(parse_type).transpose()?;
+            let item = response.item.as_ref().map(parse_type).transpose()?;
+            if item.is_some() && response.content_type.is_none() {
+                return Err(darling::Error::custom("item requires an explicit content_type").with_span(meta));
             }
-            if let Some(item_type) = &response.item {
-                parse_type(item_type)?;
-                if response.content_type.is_none() {
-                    return Err(darling::Error::custom("item requires an explicit content_type").with_span(meta));
-                }
-            }
-            let has_content = response.body.is_some() || response.item.is_some();
+            let has_content = body.is_some() || item.is_some();
             if has_content && (response.status < 200 || matches!(response.status, 204 | 205 | 304)) {
                 return Err(darling::Error::custom("this status cannot declare response content").with_span(meta));
             }
             if !has_content && response.content_type.is_some() {
                 return Err(darling::Error::custom("content_type requires a body or item type").with_span(meta));
             }
-            responses.push(response);
+            responses.push(ResponseMeta {
+                status: response.status,
+                body,
+                item,
+                content_type: response.content_type,
+                description: response.description,
+            });
         }
         Ok(Self(responses))
     }
@@ -256,23 +272,13 @@ impl ResponseMeta {
     fn tokens(&self, gotcha: &proc_macro2::TokenStream) -> proc_macro2::TokenStream {
         let status = self.status;
         let description = self.description.clone().unwrap_or_else(|| format!("HTTP {status}"));
+        // Validation requires an explicit `content_type` for an item, so the default only
+        // applies to a body.
+        let media_type = self.content_type.as_deref().unwrap_or("application/json");
         match (&self.body, &self.item) {
-            (Some(body), Some(item)) => {
-                let body: syn::Type = parse_type(body).expect("validated body type");
-                let item: syn::Type = parse_type(item).expect("validated item type");
-                let media_type = self.content_type.as_deref().expect("item validation requires content_type");
-                quote!(#gotcha::response::response_with_item::<#body, #item>(#status, #media_type, #description))
-            }
-            (Some(body), None) => {
-                let body: syn::Type = parse_type(body).expect("validated body type");
-                let media_type = self.content_type.as_deref().unwrap_or("application/json");
-                quote!(#gotcha::response::response::<#body>(#status, #media_type, #description))
-            }
-            (None, Some(item)) => {
-                let item: syn::Type = parse_type(item).expect("validated item type");
-                let media_type = self.content_type.as_deref().expect("item validation requires content_type");
-                quote!(#gotcha::response::item_response::<#item>(#status, #media_type, #description))
-            }
+            (Some(body), Some(item)) => quote!(#gotcha::response::response_with_item::<#body, #item>(#status, #media_type, #description)),
+            (Some(body), None) => quote!(#gotcha::response::response::<#body>(#status, #media_type, #description)),
+            (None, Some(item)) => quote!(#gotcha::response::item_response::<#item>(#status, #media_type, #description)),
             (None, None) => quote!(#gotcha::response::empty_response(#status, #description)),
         }
     }
@@ -281,15 +287,18 @@ impl ResponseMeta {
 /// Validate a parameter-level `#[api(...)]` attribute. `#[api(skip)]` is the only supported
 /// form, and it is parsed rather than matched by substring.
 fn validate_parameter_skip(attr: &syn::Attribute) -> syn::Result<()> {
-    match attr.parse_meta()? {
-        syn::Meta::List(meta) if meta.path.is_ident("api") => {
-            let mut nested = meta.nested.iter();
+    match &attr.meta {
+        syn::Meta::List(meta) if meta.path.is_ident("api") && matches!(meta.delimiter, syn::MacroDelimiter::Paren(_)) => {
+            let nested = meta
+                .parse_args_with(syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated)
+                .map_err(|_| unknown_parameter_attribute(meta))?;
+            let mut nested = nested.iter();
             match (nested.next(), nested.next()) {
-                (Some(syn::NestedMeta::Meta(syn::Meta::Path(path))), None) if path.is_ident("skip") => Ok(()),
-                _ => Err(unknown_parameter_attribute(&meta)),
+                (Some(syn::Meta::Path(path)), None) if path.is_ident("skip") => Ok(()),
+                _ => Err(unknown_parameter_attribute(meta)),
             }
         }
-        meta => Err(unknown_parameter_attribute(&meta)),
+        meta => Err(unknown_parameter_attribute(meta)),
     }
 }
 
@@ -297,29 +306,32 @@ fn unknown_parameter_attribute(tokens: &impl quote::ToTokens) -> syn::Error {
     syn::Error::new_spanned(tokens, "unknown parameter-level #[api(...)]; only #[api(skip)] is supported")
 }
 
-pub(crate) fn request_handler(args: TokenStream, input_stream: TokenStream) -> TokenStream {
-    let attr_args = parse_macro_input!(args as AttributeArgs);
-    let gotcha = gotcha_crate_path();
+/// Parse and validate the arguments of `#[api(...)]`.
+fn parse_route_args(args: Vec<NestedMeta>) -> darling::Result<(RouteMeta, Vec<RequestBodyMeta>)> {
+    let (request_bodies, args) = split_request_bodies(args)?;
+    let meta = RouteMeta::from_list(&args)?;
+    meta.validate()?;
+    validate_request_bodies(&request_bodies)?;
+    Ok((meta, request_bodies))
+}
 
-    let (request_bodies, attr_args) = match split_request_bodies(attr_args) {
-        Ok(v) => v,
-        Err(e) => {
-            return TokenStream::from(e.write_errors());
-        }
-    };
-    let args = match RouteMeta::from_list(&attr_args) {
-        Ok(v) => v,
-        Err(e) => {
-            return TokenStream::from(e.write_errors());
-        }
-    };
-    let meta = args;
-    if let Err(e) = meta.validate() {
-        return TokenStream::from(e.write_errors());
+/// Add `error` to the errors one expansion reports.
+fn push_error(errors: &mut Option<syn::Error>, error: syn::Error) {
+    match errors {
+        Some(errors) => errors.combine(error),
+        None => *errors = Some(error),
     }
-    if let Err(e) = validate_request_bodies(&request_bodies) {
-        return TokenStream::from(e.write_errors());
-    }
+}
+
+pub(crate) fn request_handler(args: TokenStream, input_stream: TokenStream) -> TokenStream {
+    expand_request_handler(args.into(), input_stream.into())
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
+}
+
+fn expand_request_handler(args: TokenStream2, input_stream: TokenStream2) -> syn::Result<TokenStream2> {
+    let gotcha = gotcha_crate_path();
+    let (meta, request_bodies) = parse_route_args(NestedMeta::parse_meta_list(args)?)?;
     let skip_response = meta.skip_response.is_present();
     let declared_request_body = RequestBodyMeta::constructor(&request_bodies, &gotcha);
     let extra_responses: Vec<_> = meta.responses.unwrap_or_default().0.iter().map(|response| response.tokens(&gotcha)).collect();
@@ -347,7 +359,7 @@ pub(crate) fn request_handler(args: TokenStream, input_stream: TokenStream) -> T
     } else {
         quote! { None }
     };
-    let mut input = parse_macro_input!(input_stream as ItemFn);
+    let mut input = syn::parse2::<ItemFn>(input_stream)?;
 
     let fn_ident = input.sig.ident.clone();
     let fn_ident_string = fn_ident.to_string();
@@ -365,14 +377,16 @@ pub(crate) fn request_handler(args: TokenStream, input_stream: TokenStream) -> T
 
     let mut params_token: Vec<proc_macro2::TokenStream> = Vec::new();
     let mut extractor_tokens: Vec<proc_macro2::TokenStream> = Vec::new();
+    // Every parameter is checked before reporting, so all misspelled attributes show at once.
+    let mut parameter_errors = None;
     for param in &input.sig.inputs {
         let FnArg::Typed(typed) = param else {
             continue;
         };
         let mut skip = false;
-        for attr in typed.attrs.iter().filter(|attr| attr.path.is_ident("api")) {
+        for attr in typed.attrs.iter().filter(|attr| attr.path().is_ident("api")) {
             if let Err(error) = validate_parameter_skip(attr) {
-                return TokenStream::from(error.to_compile_error());
+                push_error(&mut parameter_errors, error);
             }
             skip = true;
         }
@@ -389,6 +403,9 @@ pub(crate) fn request_handler(args: TokenStream, input_stream: TokenStream) -> T
             params_token.push(quote! { <#ty as #gotcha::ParameterProvider>::generate });
         }
         extractor_tokens.push(quote! { <#ty as #gotcha::ParameterProvider>::extractor_kinds });
+    }
+    if let Some(error) = parameter_errors {
+        return Err(error);
     }
     let ret_type = match &input.sig.output {
         // A handler without an explicit return type returns `()`.
@@ -411,7 +428,7 @@ pub(crate) fn request_handler(args: TokenStream, input_stream: TokenStream) -> T
     input.sig.inputs.iter_mut().for_each(|param| {
         if let FnArg::Typed(typed) = param {
             // Remove only the #[api(...)] attributes, keep others
-            typed.attrs.retain(|attr| !attr.path.is_ident("api"));
+            typed.attrs.retain(|attr| !attr.path().is_ident("api"));
         }
     });
 
@@ -443,7 +460,7 @@ pub(crate) fn request_handler(args: TokenStream, input_stream: TokenStream) -> T
             }
         }
     };
-    TokenStream::from(ret)
+    Ok(ret)
 }
 
 #[cfg(test)]
@@ -452,7 +469,7 @@ mod tests {
 
     fn parse(meta: syn::Meta) -> darling::Result<RouteMeta> {
         let syn::Meta::List(meta) = meta else { unreachable!() };
-        RouteMeta::from_list(&meta.nested.into_iter().collect::<Vec<_>>())
+        RouteMeta::from_list(&NestedMeta::parse_meta_list(meta.tokens)?)
     }
 
     fn parse_validated(meta: syn::Meta) -> darling::Result<RouteMeta> {
@@ -465,7 +482,7 @@ mod tests {
     /// parsed as `RouteMeta`, and both halves are validated.
     fn parse_api(meta: syn::Meta) -> darling::Result<(RouteMeta, Vec<RequestBodyMeta>)> {
         let syn::Meta::List(meta) = meta else { unreachable!() };
-        let (request_bodies, args) = split_request_bodies(meta.nested.into_iter().collect())?;
+        let (request_bodies, args) = split_request_bodies(NestedMeta::parse_meta_list(meta.tokens)?)?;
         Ok((RouteMeta::from_list(&args)?, request_bodies))
     }
 
@@ -614,7 +631,8 @@ mod tests {
             item = "Event"
         )))))
         .unwrap();
-        assert_eq!(meta.responses.unwrap().0[0].item.as_ref().map(syn::LitStr::value).as_deref(), Some("Event"));
+        let item = meta.responses.unwrap().0[0].item.as_ref().map(|item| quote!(#item).to_string());
+        assert_eq!(item.as_deref(), Some("Event"));
 
         for invalid in [
             syn::parse_quote!(api(responses(response(status = 200, item = "Event")))),

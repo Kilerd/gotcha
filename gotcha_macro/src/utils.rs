@@ -1,7 +1,7 @@
 use proc_macro2::{Span, TokenStream as TokenStream2};
 use proc_macro_crate::{crate_name, FoundCrate};
 use quote::quote;
-use syn::{Attribute, Lit, Meta};
+use syn::{Attribute, Expr, ExprLit, Lit, Meta};
 
 /// Resolve `package` to the path the calling crate uses for it, honouring Cargo dependency
 /// renames. `FoundCrate::Itself` resolves to the package's own name; the crates in this
@@ -179,57 +179,56 @@ pub fn parse_serde_rename_deserialize(attrs: &[Attribute]) -> Option<String> {
 /// The `deserialize = ".."` value inside a `#[serde(<key>(..))]` list, such as
 /// `rename(serialize = "out", deserialize = "in")`.
 fn serde_list_deserialize(attrs: &[Attribute], key: &str) -> Option<String> {
-    attrs.iter().filter(|attr| attr.path.is_ident("serde")).find_map(|attr| {
-        let nested = attr
-            .parse_args_with(|input: syn::parse::ParseStream| syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated(input))
-            .ok()?;
-        nested.into_iter().find_map(|meta| match meta {
-            syn::Meta::List(list) if list.path.is_ident(key) => list.nested.into_iter().find_map(|nested| match nested {
-                syn::NestedMeta::Meta(syn::Meta::NameValue(name_value)) if name_value.path.is_ident("deserialize") => match name_value.lit {
-                    syn::Lit::Str(lit_str) => Some(lit_str.value()),
-                    _ => None,
-                },
+    serde_metas(attrs).find_map(|meta| match meta {
+        syn::Meta::List(list) if list.path.is_ident(key) => {
+            let nested = list
+                .parse_args_with(syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated)
+                .ok()?;
+            nested.into_iter().find_map(|nested| match nested {
+                syn::Meta::NameValue(name_value) if name_value.path.is_ident("deserialize") => lit_str(&name_value.value),
                 _ => None,
-            }),
-            _ => None,
-        })
+            })
+        }
+        _ => None,
     })
+}
+
+/// The items of every `#[serde(...)]` attribute, in order. An attribute whose arguments do not
+/// parse contributes nothing.
+fn serde_metas(attrs: &[Attribute]) -> impl Iterator<Item = syn::Meta> + '_ {
+    attrs.iter().filter(|attr| attr.path().is_ident("serde")).flat_map(|attr| {
+        attr.parse_args_with(syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated)
+            .into_iter()
+            .flatten()
+    })
+}
+
+/// The literal `value` is, looking through the invisible groups a `macro_rules!` fragment such as
+/// `$name:expr` arrives in (syn 1 read those as the literal itself).
+pub(crate) fn expr_lit(value: &Expr) -> Option<&Lit> {
+    match value {
+        Expr::Lit(ExprLit { lit, .. }) => Some(lit),
+        Expr::Group(group) => expr_lit(&group.expr),
+        _ => None,
+    }
+}
+
+/// The value of a string literal expression, as in `rename = "..."`.
+pub(crate) fn lit_str(value: &Expr) -> Option<String> {
+    match expr_lit(value)? {
+        Lit::Str(lit) => Some(lit.value()),
+        _ => None,
+    }
 }
 
 /// Check if field has serde(flatten) attribute
 pub fn has_serde_flatten(attrs: &[Attribute]) -> bool {
-    for attr in attrs {
-        if attr.path.is_ident("serde") {
-            if let Ok(nested) =
-                attr.parse_args_with(|input: syn::parse::ParseStream| syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated(input))
-            {
-                for meta in nested {
-                    if let syn::Meta::Path(path) = meta {
-                        if path.is_ident("flatten") {
-                            return true;
-                        }
-                    }
-                }
-            }
-        }
-    }
-    false
+    serde_nested_any(attrs, |meta| matches!(meta, syn::Meta::Path(path) if path.is_ident("flatten")))
 }
 
 /// Run `pred` over each item inside every `#[serde(...)]` attribute; return true if any matches.
 fn serde_nested_any(attrs: &[Attribute], pred: impl Fn(&syn::Meta) -> bool) -> bool {
-    for attr in attrs {
-        if attr.path.is_ident("serde") {
-            if let Ok(nested) =
-                attr.parse_args_with(|input: syn::parse::ParseStream| syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated(input))
-            {
-                if nested.iter().any(&pred) {
-                    return true;
-                }
-            }
-        }
-    }
-    false
+    serde_metas(attrs).any(|meta| pred(&meta))
 }
 
 /// Whether a field is dropped by serde (`skip`, `skip_serializing`, `skip_deserializing`)
@@ -298,17 +297,9 @@ pub fn has_serde_skip_serializing_if(attrs: &[Attribute]) -> bool {
 
 /// The string literal of a `#[serde(<key> = "...")]` attribute.
 fn serde_name_value(attrs: &[Attribute], key: &str) -> Option<String> {
-    attrs.iter().filter(|attr| attr.path.is_ident("serde")).find_map(|attr| {
-        let nested = attr
-            .parse_args_with(|input: syn::parse::ParseStream| syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated(input))
-            .ok()?;
-        nested.into_iter().find_map(|meta| match meta {
-            syn::Meta::NameValue(nv) if nv.path.is_ident(key) => match nv.lit {
-                syn::Lit::Str(lit) => Some(lit.value()),
-                _ => None,
-            },
-            _ => None,
-        })
+    serde_metas(attrs).find_map(|meta| match meta {
+        syn::Meta::NameValue(nv) if nv.path.is_ident(key) => lit_str(&nv.value),
+        _ => None,
     })
 }
 
@@ -556,12 +547,8 @@ impl AttributesExt for Vec<Attribute> {
         // time and is skipped.
         let docs: Vec<String> = self
             .iter()
-            .filter(|attr| attr.path.is_ident("doc"))
-            .filter_map(|attr| match attr.parse_meta().ok()? {
-                Meta::NameValue(doc) if doc.path.is_ident("doc") => match doc.lit {
-                    Lit::Str(lit_str) => Some(lit_str.value()),
-                    _ => None,
-                },
+            .filter_map(|attr| match &attr.meta {
+                Meta::NameValue(doc) if doc.path.is_ident("doc") => lit_str(&doc.value),
                 _ => None,
             })
             .map(|doc| doc.trim().to_string())
