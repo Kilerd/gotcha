@@ -104,6 +104,9 @@ fn app_config(context: &GotchaContext<AppState, AppConfig>) -> ConfigWrapper<App
     (*context.config).clone()
 }
 ```
+
+---
+
 # Unreleased: removed unused public items
 
 Several public items that nothing in the framework, examples, or documentation used are gone.
@@ -188,6 +191,8 @@ newtype wrapping a `Vec`, and `[T; N]` (previously `minLength`/`maxLength`; now
 `minItems`/`maxItems`, merged with the array's exact length so the tighter bound wins).
 
 Generated clients that pinned the old keywords on such fields must be regenerated.
+
+---
 
 # Unreleased: extractor rejection responses in OpenAPI
 
@@ -591,6 +596,8 @@ See the [oas migration guide](https://github.com/Kilerd/oas/blob/main/MIGRATION.
 model differences. SSE responses can now be declared with `skip_response` and `item`;
 WebSocket message contracts remain separate AsyncAPI work.
 
+---
+
 # Unreleased: HTTP/1 is always enabled
 
 The `http1` feature has been removed. It existed to support Cloudflare Worker integration,
@@ -600,6 +607,8 @@ features, so server startup remains available even with `default-features = fals
 Remove `"http1"` from any explicit gotcha feature lists. Default application behavior is
 unchanged; `openapi`, `prometheus`, `cors`, `static_files`, and `task` remain optional.
 Libraries that only implement `Schematic` can continue to depend on `gotcha_core` directly.
+
+---
 
 # Unreleased: derive dependency paths
 
@@ -636,6 +645,8 @@ The override is required for this form; re-exporting the derive does not change 
 default. If gotcha is renamed to `web`, use `#[derive(web::Validate)]` and
 `#[validate(crate = "web::validator")]`. Existing direct validator dependencies still work
 when their trait version matches gotcha's.
+
+---
 
 # Unreleased: explicit OpenAPI endpoints
 
