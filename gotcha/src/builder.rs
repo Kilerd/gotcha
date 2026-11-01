@@ -308,9 +308,10 @@ impl Gotcha {
     /// receives the configuration that handlers later share. An error stops startup and releases
     /// the listener before routes are assembled or tasks registered.
     ///
-    /// The state does not need `Default`. The configuration is loaded automatically, which needs
-    /// `Deserialize`, unless [`Self::load_config`], [`Self::config`], or the configuration source
-    /// methods choose otherwise.
+    /// The state does not need `Default`. The configuration must implement `Deserialize`, as for
+    /// [`GotchaApp::run`](crate::GotchaApp::run), even when [`Self::load_config`], [`Self::config`],
+    /// or the configuration source methods replace automatic loading later: the builder starts with
+    /// automatic loading.
     ///
     /// ```no_run
     /// use gotcha::prelude::*;
@@ -403,12 +404,14 @@ where
     ///
     /// This is the builder equivalent of overriding [`GotchaApp::config`](crate::GotchaApp::config).
     /// The loader runs once, after the logger and before the listener is bound, and an error it
-    /// returns goes through [`Self::config_error_policy`], as automatic loading does. The
-    /// configuration does not need serde traits.
+    /// returns goes through [`Self::config_error_policy`], as automatic loading does. The loader
+    /// adds no serde bound, so it also works on a builder from [`Gotcha::from_context`];
+    /// [`Gotcha::from_state_fn`] and [`Gotcha::with_types`] require `Deserialize` regardless.
     ///
-    /// The loader replaces automatic loading and every configuration source. As with
-    /// [`Self::config`], source methods called afterwards have no effect, and a later
-    /// [`Self::config`] or [`Self::build_config`] replaces the loader. Start from
+    /// The loader replaces automatic loading and every configuration source. Source methods such
+    /// as [`Self::with_env_config`] do not replace it, whether they are called before or after it.
+    /// [`Self::config`], [`Self::build_config`], and `load_config` replace each other: the last
+    /// call wins. Start from
     /// [`ConfigBuilder::framework_defaults`](crate::config::ConfigBuilder::framework_defaults) to
     /// keep the typed server defaults that automatic loading has.
     ///
@@ -640,8 +643,9 @@ where
         self
     }
 
-    /// Install the subscriber that [`GotchaApp`](crate::GotchaApp) applications install by
-    /// default: formatted output filtered by `RUST_LOG`, at `INFO` when it is unset.
+    /// Install [`default_logger`](crate::default_logger) at startup, the subscriber that
+    /// [`GotchaApp`](crate::GotchaApp) applications install by default: formatted output filtered
+    /// by `RUST_LOG`, at `INFO` when it is unset.
     ///
     /// An already installed global subscriber is kept, so this never fails, and several
     /// applications in one process can call it. See [`Self::logger`] for when it runs.
@@ -1985,6 +1989,9 @@ mod tests {
             .load_config(|| async { Err(GotchaError::message("replaced")) })
             .config(ConfigWrapper::default());
         assert_eq!(app.config.resolve().await.unwrap().server.port, ServerConfig::default().port);
+
+        let mut app = Gotcha::new().config(ConfigWrapper::default()).load_config(move || async move { Ok(loaded()) });
+        assert_eq!(app.config.resolve().await.unwrap().server.port, 4100, "the last of config and load_config wins");
     }
 
     #[tokio::test]

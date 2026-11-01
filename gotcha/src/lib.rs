@@ -122,6 +122,7 @@ pub mod prelude;
 pub mod response;
 mod startup;
 pub use response::WithStatus;
+pub use startup::default_logger;
 /// A bound but not yet serving application; [`GotchaApp::bind`] and [`Gotcha::bind`] return it.
 pub use startup::BoundServer;
 /// Cancellation token carried by [`GotchaContext::shutdown`]. Cancelled when shutdown starts,

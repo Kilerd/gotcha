@@ -368,9 +368,15 @@ impl Drop for BoundLifecycle {
     }
 }
 
-/// The default tracing subscriber: formatted output filtered by `RUST_LOG`, at `INFO` when it is
-/// unset. A subscriber that is already installed is kept, so calling this twice is harmless.
-pub(crate) fn default_logger() -> GotchaResult<()> {
+/// Install gotcha's default `tracing` subscriber: formatted output filtered by `RUST_LOG`, at
+/// `INFO` when it is unset.
+///
+/// [`GotchaApp::logger`](crate::GotchaApp::logger) installs it by default, and
+/// [`Gotcha::with_default_logger`](crate::Gotcha::with_default_logger) installs it at startup.
+/// Call it yourself when you serve an assembled router on your own listener, since nothing else
+/// installs a subscriber there. A global subscriber that is already installed is kept, so this
+/// never fails and calling it more than once is harmless.
+pub fn default_logger() -> GotchaResult<()> {
     tracing_subscriber::registry()
         .with(fmt::layer())
         .with(
