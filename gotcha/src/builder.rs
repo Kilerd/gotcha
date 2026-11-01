@@ -298,7 +298,9 @@ impl Gotcha {
         S: Clone + Send + Sync + 'static,
         C: Clone + Send + Sync + 'static,
     {
-        Gotcha::from_sources(StateSource::Provided(context.state), Configuration::Provided(context.config))
+        // The context is consumed: reuse its configuration when nothing else shares it.
+        let config = std::sync::Arc::try_unwrap(context.config).unwrap_or_else(|config| (*config).clone());
+        Gotcha::from_sources(StateSource::Provided(context.state), Configuration::Provided(config))
     }
 }
 

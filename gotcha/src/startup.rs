@@ -207,7 +207,7 @@ pub(crate) async fn prepare_with_context<A: Application>(
     let cancel_on_failure = shutdown.clone().drop_guard();
     let state = app.state(&config).await?;
     let context = GotchaContext {
-        config,
+        config: std::sync::Arc::new(config),
         state,
         shutdown: shutdown.clone(),
     };

@@ -1,5 +1,6 @@
 # Migration Guide
 
+- [Unreleased: shared configuration](#unreleased-shared-configuration)
 - [Unreleased: removed unused public items](#unreleased-removed-unused-public-items)
 - [Unreleased: duplicate operation ids are suffixed](#unreleased-duplicate-operation-ids-are-suffixed)
 - [Unreleased: validation `length` keywords follow the schema type](#unreleased-validation-length-keywords-follow-the-schema-type)
@@ -33,6 +34,44 @@
 
 ---
 
+# Unreleased: shared configuration
+
+`GotchaContext::config` is now an `Arc<ConfigWrapper<C>>` rather than a `ConfigWrapper<C>`. axum
+clones the state passed through `with_state` for every request, so the previous representation
+deep-cloned the whole application configuration on each request; a request now clones the `Arc`
+instead. How much this saves grows with the configuration: string fields dominate.
+
+- `GotchaContext::new(state, config)` keeps its signature and wraps the configuration in an `Arc`.
+- Reading is unchanged: `context.config.server.port` and `context.config.field` still work through
+  `Arc`'s `Deref`, `&*context.config` yields `&ConfigWrapper<C>`, and extractors such as
+  `State<ConfigWrapper<C>>`, `State<ServerConfig>`, and the `#[config]` types are unaffected. Deref
+  coercion also keeps `let config: &ConfigWrapper<C> = &context.config;` compiling.
+- Writing through the field no longer compiles (`context.config.app.field = ..` is E0594: the
+  `Arc` only hands out shared access). Use `Arc::make_mut(&mut context.config).app.field = ..`
+  while the configuration implements `Clone`, or `Arc::get_mut(&mut context.config)` while the
+  `Arc` is unique (no `Clone` needed). For a shared, non-`Clone` configuration, rebuild a
+  `ConfigWrapper` from its parts and assign `context.config = Arc::new(config)`.
+- Serializing the field needs a dereference: `serde_json::to_string(&context.config)` and
+  `Json(context.config.clone())` stop compiling because serde's `rc` feature is off by default. Use
+  `serde_json::to_string(&*context.config)` and `Json((*context.config).clone())`.
+- Cloning a context no longer requires `Config: Clone`: the shared configuration is only refcounted.
+- `GotchaContext` is `Send`/`Sync` only when the stored `ConfigWrapper<C>` is `Send + Sync`, because
+  `Arc<T>` requires both; a hand-built context whose configuration was only `Send` is no longer
+  `Send`. Application configurations are normally `Send + Sync`.
+- `Gotcha::from_context` reuses the supplied configuration without cloning when nothing else
+  shares it.
+
+```rust,ignore
+// Before
+fn app_config(context: &GotchaContext<AppState, AppConfig>) -> ConfigWrapper<AppConfig> {
+    context.config.clone()
+}
+
+// After
+fn app_config(context: &GotchaContext<AppState, AppConfig>) -> ConfigWrapper<AppConfig> {
+    (*context.config).clone()
+}
+```
 # Unreleased: removed unused public items
 
 Several public items that nothing in the framework, examples, or documentation used are gone.
@@ -600,8 +639,8 @@ Return `router.layer(auth_layer)` from it to cover the complete application. Thi
 documentation is mounted, without requiring an override of `build_router`. An existing custom
 `build_router` still owns its whole assembly and must invoke any desired finalization itself.
 The builder's `.finish_router(|router, context| ..)` is the equivalent hook; it receives a clone
-of the application context (configuration duplicated, state shared behind an `Arc` still the same
-value), and `app_layer` middleware remains outermost around whatever the hook mounts.
+of the application context (configuration shared behind an `Arc`, state shared behind an `Arc`
+still the same value), and `app_layer` middleware remains outermost around whatever the hook mounts.
 Routes added through these native Axum hooks do not contribute OpenAPI metadata.
 
 ## Export without HTTP
