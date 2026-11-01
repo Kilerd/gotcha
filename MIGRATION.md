@@ -51,7 +51,9 @@ rejection responses, and the values the built-in extractors report do not change
 - `ExtractorKind` gains `Provider(ProviderKey)`, built by `gotcha::extract::kind::<P>()` for any
   `gotcha::extract::RejectionProvider`, and `All(KindList)`, built by `ExtractorKind::all(..)`,
   which stands for every kind another extractor reports. The enum was already
-  `#[non_exhaustive]`.
+  `#[non_exhaustive]`, so `match` is unaffected, but it now has variants that carry data:
+  **casting it with `as` (`ExtractorKind::Json as u8`) no longer compiles.** `ExtractorKind` is
+  not in a published release yet.
 - `kind::<JsonProvider>()` documents exactly like `ExtractorKind::Json`, including the
   application's `JsonConfig`, and likewise for the other built-in providers. The two are still
   different values: Gotcha's own extractors keep reporting the unit variants, so code that matches

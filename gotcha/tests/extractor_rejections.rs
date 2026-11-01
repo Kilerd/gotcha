@@ -6,7 +6,7 @@
 use std::collections::HashMap;
 
 use gotcha::axum::body::{to_bytes, Body as AxumBody};
-use gotcha::axum::extract::{Form as AxumForm, FromRequest, Json as AxumJson, Path as AxumPath, Query as AxumQuery};
+use gotcha::axum::extract::{Form as AxumForm, FromRequest, FromRequestParts, Json as AxumJson, Path as AxumPath, Query as AxumQuery};
 use gotcha::axum::http::{HeaderMap, Method, Request, StatusCode};
 use gotcha::extract::{kind, CookieProvider, HeaderProvider, JsonProvider, ValidProvider};
 use gotcha::{
@@ -450,12 +450,22 @@ fn all_of_json() -> &'static [ExtractorKind] {
 #[test]
 fn built_in_providers_keep_reporting_their_kind_variants() {
     assert_eq!(<Json<Payload> as ParameterProvider>::extractor_kinds(), [ExtractorKind::Json]);
+    assert_eq!(<Form<Payload> as ParameterProvider>::extractor_kinds(), [ExtractorKind::Form]);
+    assert_eq!(<Query<Filter> as ParameterProvider>::extractor_kinds(), [ExtractorKind::Query]);
+    assert_eq!(<Path<u32> as ParameterProvider>::extractor_kinds(), [ExtractorKind::Path]);
+    assert_eq!(<Multipart as ParameterProvider>::extractor_kinds(), [ExtractorKind::Multipart]);
+    assert_eq!(
+        <TypedHeader<gotcha::headers::UserAgent> as ParameterProvider>::extractor_kinds(),
+        [ExtractorKind::TypedHeader]
+    );
+    assert_eq!(<Header<RequestId> as ParameterProvider>::extractor_kinds(), [ExtractorKind::Header]);
+    assert_eq!(<Cookie<Session> as ParameterProvider>::extractor_kinds(), [ExtractorKind::Cookie]);
     assert_eq!(
         <Valid<Json<Checked>> as ParameterProvider>::extractor_kinds(),
         [ExtractorKind::Valid, ExtractorKind::Json]
     );
-    assert_eq!(<Header<RequestId> as ParameterProvider>::extractor_kinds(), [ExtractorKind::Header]);
-    assert_eq!(<Cookie<Session> as ParameterProvider>::extractor_kinds(), [ExtractorKind::Cookie]);
+    assert_eq!(<Valid<AxumJson<Checked>> as ParameterProvider>::extractor_kinds(), [ExtractorKind::Valid]);
+    assert_eq!(<Option<Json<Payload>> as ParameterProvider>::extractor_kinds(), [ExtractorKind::Json]);
 
     // A key documents like its variant but is a different value.
     assert_ne!(kind::<JsonProvider>(), ExtractorKind::Json);
@@ -464,6 +474,80 @@ fn built_in_providers_keep_reporting_their_kind_variants() {
     assert_ne!(kind::<HeaderProvider>(), kind::<CookieProvider>());
     assert!(format!("{:?}", kind::<ValidProvider>()).contains("ValidProvider"));
     assert_eq!(ExtractorKind::all(all_of_json), ExtractorKind::all(all_of_json));
+}
+
+/// A header parameter written outside Gotcha that names the built-in `Header` provider by its key.
+struct KeyedHeader(RequestId);
+
+impl<S: Send + Sync> FromRequestParts<S> for KeyedHeader {
+    type Rejection = <Header<RequestId> as FromRequestParts<S>>::Rejection;
+
+    async fn from_request_parts(parts: &mut gotcha::axum::http::request::Parts, state: &S) -> Result<Self, Self::Rejection> {
+        let Header(id) = Header::<RequestId>::from_request_parts(parts, state).await?;
+        Ok(KeyedHeader(id))
+    }
+}
+
+impl ParameterProvider for KeyedHeader {
+    fn generate(url: String) -> gotcha::Either<Vec<gotcha::oas::Parameter>, gotcha::oas::RequestBody> {
+        <Header<RequestId> as ParameterProvider>::generate(url)
+    }
+
+    fn extractor_kinds() -> &'static [ExtractorKind] {
+        const { &[kind::<HeaderProvider>()] }
+    }
+}
+
+#[api]
+async fn keyed_header_and_cookie(KeyedHeader(_id): KeyedHeader, Cookie(_session): Cookie<Session>) -> String {
+    String::new()
+}
+
+#[test]
+fn a_key_and_its_unit_variant_on_one_operation_document_one_provider() {
+    static BOTH: Operable = Operable {
+        type_name: "extractor_rejections::both",
+        id: "json_body",
+        group: None,
+        summary: None,
+        description: None,
+        deprecated: false,
+        security: None,
+        parameters: &[<Json<Payload> as ParameterProvider>::generate],
+        extractors: &[
+            <Json<Payload> as ParameterProvider>::extractor_kinds,
+            <KeyedJson as ParameterProvider>::extractor_kinds,
+        ],
+        responses: <String as Responsible>::response,
+    };
+    let built_in = one(operable(json_body), "/json");
+    let both = one(&BOTH, "/json");
+    assert_eq!(both, built_in);
+    assert_eq!(responses(&both, "/json")["400"]["description"], "Request rejected: invalid JSON body");
+}
+
+#[test]
+fn a_header_key_and_a_cookie_variant_stay_two_providers() {
+    let defaults = serde_json::to_value(Gotcha::new().post("/params", keyed_header_and_cookie).into_openapi()).unwrap();
+    assert_eq!(statuses(&defaults, "/params"), ["200", "400"]);
+    let bad_request = &responses(&defaults, "/params")["400"];
+    assert_eq!(
+        bad_request["description"],
+        "Request rejected: missing or invalid header parameter / missing or invalid cookie parameter"
+    );
+    assert_eq!(error_body_ref(bad_request), "#/components/schemas/ErrorBody");
+
+    let configured = Gotcha::new()
+        .extractor_config(gotcha::HeaderConfig::default().error_handler(|_| (StatusCode::BAD_REQUEST, Problem { code: 7 })))
+        .post("/params", keyed_header_and_cookie);
+    let spec = serde_json::to_value(configured.into_openapi()).unwrap();
+    assert_eq!(
+        responses(&spec, "/params")["400"]["content"]["application/json"]["schema"],
+        json!({"oneOf": [
+            {"$ref": "#/components/schemas/Problem"},
+            {"$ref": "#/components/schemas/ErrorBody"}
+        ]})
+    );
 }
 
 #[test]

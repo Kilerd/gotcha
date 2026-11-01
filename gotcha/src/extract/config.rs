@@ -278,7 +278,8 @@ impl ExtractorConfigs {
                 }
                 return;
             }
-            // A hand-written `ParameterProvider` may still name a built-in provider by its variant.
+            // The built-in extractors, and providers written before keys existed, name the built-in
+            // providers by their unit variants.
             ExtractorKind::Json => provider_key::<JsonProvider>(),
             ExtractorKind::Form => provider_key::<FormProvider>(),
             ExtractorKind::Query => provider_key::<QueryProvider>(),
