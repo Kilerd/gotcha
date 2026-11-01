@@ -1,5 +1,6 @@
 # Migration Guide
 
+- [Unreleased: extractor provider keys](#unreleased-extractor-provider-keys)
 - [Unreleased: the macro crate needs Rust 1.88](#unreleased-the-macro-crate-needs-rust-188)
 - [Unreleased: untagged enums use anyOf](#unreleased-untagged-enums-use-anyof)
 - [Unreleased: variant-level schematic attributes](#unreleased-variant-level-schematic-attributes)
@@ -38,6 +39,25 @@
 - [Unreleased: default configuration sources](#unreleased-default-configuration-sources)
 - [0.3 → 0.4](#03--04) — **every application must edit its route paths and configuration file**
 - [0.2 → 0.3: API simplification](#02--03-api-simplification)
+
+---
+
+# Unreleased: extractor provider keys
+
+Rejection configurations and their documentation are keyed by the provider's type, so an extractor
+defined outside Gotcha can be configured and documented like the built-in ones. Documents and
+rejection responses do not change.
+
+- `ExtractorKind` gains `Provider(ProviderKey)`, built by `gotcha::extract::kind::<P>()` for any
+  `gotcha::extract::RejectionProvider`, and `All(KindList)`, built by `ExtractorKind::all(..)`,
+  which stands for every kind another extractor reports. The enum was already
+  `#[non_exhaustive]`.
+- The built-in extractors' `ParameterProvider::extractor_kinds()` now return provider keys:
+  `<Json<T> as ParameterProvider>::extractor_kinds()` is `[kind::<JsonProvider>()]` instead of
+  `[ExtractorKind::Json]`. Code that compares those values with the unit variants must compare with
+  `kind::<P>()` instead. A hand-written `ParameterProvider` or static `Operable` that returns
+  `&[ExtractorKind::Json]` still documents exactly like `Json<T>`, including the application's
+  `JsonConfig`.
 
 ---
 

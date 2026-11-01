@@ -7,9 +7,11 @@
 //! overlap — i.e. that a tuple does not implement [`Schematic`] — in the crate where
 //! `Schematic` is defined.
 
+use std::any::TypeId;
 use std::collections::BTreeMap;
 
 use axum::extract::{Extension, Form, Json, Path, Query, Request, State};
+use axum::http::StatusCode;
 use either::Either;
 use oas::{MediaType, Parameter, ParameterIn, RequestBody, Schema};
 
@@ -20,6 +22,10 @@ use crate::Schematic;
 /// [`ParameterProvider::extractor_kinds`] reports which of these an argument uses, so document
 /// assembly can add the rejection responses the application is configured to send. Axum's own
 /// extractors report none: their rejections keep Axum's plain-text response.
+///
+/// A provider is named by [`Provider`](Self::Provider), built with `gotcha::extract::kind::<P>()`
+/// for any `gotcha::extract::RejectionProvider`. The unit variants name Gotcha's built-in
+/// providers and document exactly like their `kind::<P>()`.
 ///
 /// This enum is `#[non_exhaustive]`: a later release may add a provider, so a `match` outside this
 /// crate needs a wildcard arm.
@@ -44,6 +50,131 @@ pub enum ExtractorKind {
     Cookie,
     /// The `Valid` wrapper's validation failure. Configured with `ValidConfig`.
     Valid,
+    /// A rejection provider identified by its type. Built by `gotcha::extract::kind::<P>()`.
+    Provider(ProviderKey),
+    /// Every kind another extractor reports, built with [`ExtractorKind::all`].
+    All(KindList),
+}
+
+impl ExtractorKind {
+    /// Every kind `kinds` reports, resolved when a document is generated.
+    ///
+    /// A wrapper extractor uses this to document the rejections of the extractor it wraps:
+    /// `ExtractorKind::all(<E as ParameterProvider>::extractor_kinds)`.
+    pub const fn all(kinds: fn() -> &'static [ExtractorKind]) -> Self {
+        ExtractorKind::All(KindList(kinds))
+    }
+}
+
+/// The identity of a rejection provider and the statuses it documents by default.
+///
+/// Only `gotcha::extract::kind` builds one, so the default statuses always come from the provider
+/// itself. Keys compare, order, and hash by the provider's [`TypeId`].
+#[derive(Clone, Copy)]
+pub struct ProviderKey {
+    id: fn() -> TypeId,
+    name: fn() -> &'static str,
+    statuses: fn() -> &'static [(StatusCode, &'static str)],
+}
+
+impl ProviderKey {
+    #[doc(hidden)]
+    pub const fn from_parts(id: fn() -> TypeId, name: fn() -> &'static str, statuses: fn() -> &'static [(StatusCode, &'static str)]) -> Self {
+        Self { id, name, statuses }
+    }
+
+    /// The provider's type id.
+    pub fn id(&self) -> TypeId {
+        (self.id)()
+    }
+
+    /// The provider's type name, for diagnostics.
+    pub fn name(&self) -> &'static str {
+        (self.name)()
+    }
+
+    /// The statuses the provider documents when the application declares none, each with the
+    /// phrase that describes it.
+    pub fn default_statuses(&self) -> &'static [(StatusCode, &'static str)] {
+        (self.statuses)()
+    }
+}
+
+impl std::fmt::Debug for ProviderKey {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(self.name())
+    }
+}
+
+impl PartialEq for ProviderKey {
+    fn eq(&self, other: &Self) -> bool {
+        self.id() == other.id()
+    }
+}
+
+impl Eq for ProviderKey {}
+
+impl PartialOrd for ProviderKey {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for ProviderKey {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.id().cmp(&other.id())
+    }
+}
+
+impl std::hash::Hash for ProviderKey {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.id().hash(state)
+    }
+}
+
+/// Another extractor's kinds, expanded when a document is generated. See [`ExtractorKind::all`].
+///
+/// Lists compare, order, and hash by the kinds they expand to.
+#[derive(Clone, Copy)]
+pub struct KindList(fn() -> &'static [ExtractorKind]);
+
+impl KindList {
+    /// The kinds this list stands for.
+    pub fn kinds(&self) -> &'static [ExtractorKind] {
+        (self.0)()
+    }
+}
+
+impl std::fmt::Debug for KindList {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.debug_list().entries(self.kinds()).finish()
+    }
+}
+
+impl PartialEq for KindList {
+    fn eq(&self, other: &Self) -> bool {
+        self.kinds() == other.kinds()
+    }
+}
+
+impl Eq for KindList {}
+
+impl PartialOrd for KindList {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for KindList {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.kinds().cmp(other.kinds())
+    }
+}
+
+impl std::hash::Hash for KindList {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.kinds().hash(state)
+    }
 }
 
 /// ParameterProvider is a trait that defines the value which can be used as a parameter.
