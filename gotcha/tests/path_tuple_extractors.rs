@@ -1,5 +1,7 @@
 #![cfg(feature = "openapi")]
 #![allow(dead_code)]
+// These tests also cover `GotchaApp`, which stays supported until it is removed.
+#![allow(deprecated)]
 
 use either::Either;
 use gotcha::axum::body::{to_bytes, Body};

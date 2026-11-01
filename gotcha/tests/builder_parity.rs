@@ -28,6 +28,9 @@
 //! | `on_shutdown()`                              | `on_shutdown`                                  | `shutdown_lifecycles_match`            |
 //! | `run()`, `bind()`                            | `run`, `bind`                                  | `shutdown_lifecycles_match`            |
 
+// The comparison needs the deprecated trait.
+#![allow(deprecated)]
+
 use std::convert::Infallible;
 use std::future::{Future, IntoFuture};
 use std::net::SocketAddr;

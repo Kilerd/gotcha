@@ -1,6 +1,8 @@
 //! The opt-in Prometheus endpoint: mounting, rendering, custom paths, and the process-wide recorder.
 
 #![cfg(feature = "prometheus")]
+// These tests also cover `GotchaApp`, which stays supported until it is removed.
+#![allow(deprecated)]
 
 use gotcha::axum::body::{to_bytes, Body};
 use gotcha::axum::http::{header, Request, StatusCode};

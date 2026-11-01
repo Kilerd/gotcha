@@ -1,5 +1,7 @@
 #![cfg(feature = "openapi")]
 #![allow(dead_code)]
+// These tests also cover `GotchaApp`, which stays supported until it is removed.
+#![allow(deprecated)]
 
 //! Operations document the rejection responses of Gotcha's extractor providers by default.
 

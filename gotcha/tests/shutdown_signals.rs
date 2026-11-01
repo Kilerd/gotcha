@@ -1,4 +1,6 @@
 #![cfg(unix)]
+// These tests also cover `GotchaApp`, which stays supported until it is removed.
+#![allow(deprecated)]
 
 use gotcha::{ConfigWrapper, GotchaApp, GotchaContext, GotchaResult, GotchaRouter, ServerConfig};
 use std::io::{Read, Write};

@@ -29,7 +29,10 @@ pub use crate::config::{ConfigErrorPolicy, ConfigWrapper, GotchaConfigLoader, Se
 pub use crate::error::{ErrorBody, GotchaError, GotchaResult, HttpError};
 pub use crate::response::WithStatus;
 pub use crate::router::Responder;
-pub use crate::{config, state, GotchaApp, GotchaContext, GotchaRouter};
+pub use crate::{config, state, GotchaContext, GotchaRouter};
+// Kept for applications that still implement the trait, until it is removed.
+#[allow(deprecated)]
+pub use crate::GotchaApp;
 
 // Method routing with OpenAPI metadata
 pub use crate::routing::{delete, get, head, on, options, patch, post, put, trace, MethodRouter};

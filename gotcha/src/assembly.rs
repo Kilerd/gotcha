@@ -52,6 +52,7 @@ pub(crate) fn assemble<State: Clone + Send + Sync + 'static>(
 }
 
 #[cfg(test)]
+#[allow(deprecated)] // Both application APIs are covered until `GotchaApp` is removed.
 mod tests {
     use axum::{
         body::{to_bytes, Body},

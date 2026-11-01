@@ -231,8 +231,11 @@ impl<State, Config> FromRef<GotchaContext<State, Config>> for crate::config::Ser
 
 /// The trait API: implement it to describe an application, then call `run()`.
 ///
-/// The builder ([`Gotcha`]) is the simpler alternative; both assemble the router through the same
-/// path, so they behave identically.
+/// Deprecated: the builder ([`Gotcha`]) covers every method of this trait, and both assemble the
+/// router through the same path, so they behave identically. Each method's documentation names its
+/// builder equivalent, and the migration guide maps them in one table. The trait will be removed in
+/// a later release.
+#[deprecated(note = "describe the application with the `Gotcha` builder; MIGRATION.md maps each method to its builder equivalent")]
 pub trait GotchaApp: Sized + Send + Sync {
     /// The application state, shared by every handler.
     type State: Clone + Send + Sync + 'static;

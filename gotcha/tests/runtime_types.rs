@@ -1,3 +1,6 @@
+// These tests also cover `GotchaApp`, which stays supported until it is removed.
+#![allow(deprecated)]
+
 use gotcha::axum::{
     body::{to_bytes, Body},
     extract::FromRef,
