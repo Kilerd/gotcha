@@ -264,13 +264,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
   through `config_error_policy`, as automatic loading's do.
 - `try_tasks(|scheduler| Box::pin(async move { .. }))` registers background tasks with a
   registrar that can await and fail; `tasks(|scheduler| ..)` covers the simple case.
-- `finish_router` mounts services built from the application state, and `app_layer` adds
-  middleware that covers every endpoint.
+- `finish_router` mounts services built from the application state (`try_finish_router` when that
+  can fail), and `app_layer` adds middleware that covers every endpoint. `extractor_configs` sets
+  every extractor's rejection response from one shared `ExtractorConfigs`.
 - `into_router(context)` assembles the router for a context you build, without loading
-  configuration or binding: use it in tests or to serve the application from your own listener.
+  configuration or binding: use it in tests or to serve the application from your own listener,
+  for example with `into_make_service_with_connect_info` when middleware reads `ConnectInfo`.
   `into_openapi()` exports the document.
-- `with_default_logger()` installs a `RUST_LOG`-filtered `tracing` subscriber. The builder installs
-  none unless asked, so applications that set up their own logging keep it.
+- `with_default_logger()` installs a `RUST_LOG`-filtered `tracing` subscriber at startup, and
+  `gotcha::default_logger()` installs the same one where you serve an `into_router` router. The
+  builder installs none unless asked, so applications that set up their own logging keep it.
 
 ```rust
 use gotcha::prelude::*;

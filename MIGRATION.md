@@ -45,21 +45,21 @@
 
 # Unreleased: moving from GotchaApp to the builder
 
-The `Gotcha` builder now covers every `GotchaApp` method, so an application can be described with
-the builder alone. Nothing changes for existing trait applications. Each trait method has a builder
-equivalent:
+Every `GotchaApp` method now has a `Gotcha` builder equivalent, so an application can be described
+with the builder alone. Nothing changes for existing trait applications. The table maps each method;
+[the differences below](#differences-to-account-for) matter when moving an application over.
 
 | `GotchaApp` | `Gotcha` builder |
 | --- | --- |
 | `type State`, `type Config` | `Gotcha<S, C>`, from `Gotcha::from_state_fn(..)`, `with_types::<S, C>()`, `from_state(value)`, or `from_context(context)` |
 | `config()` override | `.load_config(\|\| async { .. })` |
 | `config_error_policy()` | `.config_error_policy(policy)` |
-| `logger()` | `.with_default_logger()` for the trait's default subscriber, or `.logger(\|\| { .. })` |
+| `logger()` | `.with_default_logger()` for the trait's default subscriber, or `.logger(\|\| { .. })`; `gotcha::default_logger()` when serving an `into_router` router yourself |
 | `state(&config)` | `Gotcha::from_state_fn(\|config: Arc<ConfigWrapper<C>>\| async move { .. })` |
 | `routes(router)` | `.get(..)`, `.route(..)`, `.method_route(..)`, `.fallback_service(..)`, `.nest(..)`, `.merge(..)`, or `.routes(\|router\| ..)` with the same body |
 | `tasks(scheduler)` | `.try_tasks(\|scheduler\| Box::pin(async move { ..; Ok(()) }))`, or `.tasks(\|scheduler\| ..)` when registration neither awaits nor fails |
-| `extractor_configs()` | `.extractor_config(config)`, once per provider |
-| `finish_router(router, context)` | `.finish_router(\|router, context\| ..)` |
+| `extractor_configs()` | `.extractor_configs(configs)`, or `.extractor_config(config)` per provider |
+| `finish_router(router, context)` | `.finish_router(\|router, context\| ..)`, or `.try_finish_router(..)` for a hook that can fail |
 | `build_router(context)` | `.into_router(context)` |
 | `openapi_endpoints()` | `.with_openapi()` or `.openapi_endpoints(..)` |
 | `openapi_info()` | `.openapi_info(info)` |
@@ -103,20 +103,44 @@ fn app() -> Gotcha<AppState, Config> {
 app().run().await?;
 ```
 
-Differences to account for:
+## Differences to account for
 
-- **The builder installs no `tracing` subscriber unless asked.** Trait applications installed one
-  through the default `logger()`; add `.with_default_logger()` to keep that output.
-- A builder is consumed by `run`, `bind`, `into_router`, and `into_openapi`, where the trait value
-  could be reused. Write a function that returns the builder, as above, and call it for each use:
-  `app().into_openapi()` in an export command, `app().into_router(context)` in each test.
-- Builder hooks are `Send + 'static` closures. Data a trait method borrowed from `self` is moved
-  or cloned into the closure; share it behind an `Arc`.
-- `from_state_fn` receives the configuration as `Arc<ConfigWrapper<C>>`, the same value handlers
-  later share. Automatic loading needs `C: Deserialize`, as `GotchaApp::run` does; a configuration
-  supplied with `load_config` or `from_context` needs no serde traits.
-- Work that a `build_router` override did before assembly, including fallible work, belongs in
-  `from_state_fn`; `finish_router` then mounts services from `context.state`.
+**Logging.** The builder installs no `tracing` subscriber unless asked; trait applications got one
+from the default `logger()`. Add `.with_default_logger()` for `run()` and `bind()`. Nothing installs
+a subscriber on the `into_router` path, so an application that serves the assembled router itself
+calls `gotcha::default_logger()?` first, where its trait version called `self.logger()?`.
+
+**Repeated use.** A builder is consumed by `run`, `bind`, `into_router`, and `into_openapi`, while a
+trait value could be used again. Write a function that returns the builder, as above, and call it
+for each use: `app().into_openapi()` in an export command, `app().into_router(context)` per test.
+
+**Borrowed data.** Builder hooks are `Send + 'static` closures. Data a trait method borrowed from
+`self` is moved or cloned into the closure; share it behind an `Arc`. Two places can still borrow:
+`BoundServer::serve_with_shutdown` accepts a signal future that is not `'static`, and cleanup that
+needs borrowed data can run after `serve().await` returns instead of in `on_shutdown`.
+
+**When settings are read.** The trait calls `routes`, `openapi_endpoints`, `http_shutdown_timeout`,
+and its other settings methods after `config()` and `state()`, so they can read values those two
+stored on `self`. Builder settings are given before startup. When a setting depends on the
+configuration, load the configuration first, handle a loading error yourself (`config_error_policy`
+only covers loading during startup), and build the application from it with `.config(loaded)` or
+`Gotcha::from_context`.
+
+**The `into_router` path.** Builder methods only record settings; there are no getters, so keep the
+values you need in your own variables. `into_router` assembles the router and nothing else:
+registrations from `tasks`/`try_tasks`, `on_shutdown` hooks, the shutdown signal, and the logger
+are dropped. A trait application serving `build_router` itself could still call `tasks()` and
+`on_shutdown()`; with the builder, start a `TaskScheduler::new(context.clone())` and run the
+cleanup after serving in that code instead.
+
+**Configuration types.** `from_state_fn` and `with_types` need `C: Deserialize`, as `GotchaApp::run`
+does, even when `load_config` replaces automatic loading. A configuration without serde traits
+starts from `Gotcha::from_context`, optionally with `load_config`. `from_state_fn` receives the
+configuration as `Arc<ConfigWrapper<C>>`, the same value handlers later share.
+
+**Fallible assembly.** Work that a `build_router` override did and that can fail goes into
+`try_finish_router`, or into `from_state_fn` when it does not need the router; `finish_router` and
+`try_finish_router` then mount services from `context.state`.
 
 ---
 

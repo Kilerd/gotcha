@@ -138,9 +138,9 @@ This example uses the following Gotcha features:
 
 ## Migration from the Trait API
 
-The builder covers everything the `GotchaApp` trait does: state built from the loaded
-configuration (`Gotcha::from_state_fn`), custom configuration loading (`load_config`), lifecycle
-hooks (`on_shutdown`, `finish_router`), fallible task registration (`try_tasks`), and in-memory
-router assembly for tests (`into_router`). See the
+Every `GotchaApp` method has a builder equivalent: state built from the loaded configuration
+(`Gotcha::from_state_fn`), custom configuration loading (`load_config`), lifecycle hooks
+(`on_shutdown`, `finish_router`), fallible task registration (`try_tasks`), and in-memory router
+assembly for tests (`into_router`). See the
 [migration guide](../../MIGRATION.md#unreleased-moving-from-gotchaapp-to-the-builder) for a
-method-by-method table.
+method-by-method table and the differences to account for.
