@@ -6,7 +6,7 @@ use crate::{GotchaResult, GotchaRouter};
 
 pub(crate) fn assemble<State: Clone + Send + Sync + 'static>(
     mut router: GotchaRouter<State>, state: State, #[cfg(feature = "openapi")] endpoints: Option<crate::OpenApiEndpoints>,
-    #[cfg(feature = "prometheus")] metrics: Option<crate::MetricsEndpoint>, finish: impl FnOnce(Router, &State) -> Router,
+    #[cfg(feature = "prometheus")] metrics: Option<crate::MetricsEndpoint>, finish: impl FnOnce(Router, &State) -> GotchaResult<Router>,
 ) -> GotchaResult<Router> {
     // `with_state` consumes the state, so keep the context the finish hook should observe.
     let context = state.clone();
@@ -45,7 +45,7 @@ pub(crate) fn assemble<State: Clone + Send + Sync + 'static>(
         Some((endpoints, spec)) => endpoints.mount(router, spec),
         None => router,
     };
-    let router = finish(router, &context);
+    let router = finish(router, &context)?;
     // Outermost: routes added by `finish_router`, and `app_layer` middleware, must also see the
     // configs. Without this layer (for example a custom `build_router`), extractors use defaults.
     Ok(extractor_configs.layer(router))
