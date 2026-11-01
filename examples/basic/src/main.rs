@@ -1,4 +1,4 @@
-use gotcha::{async_trait, ConfigWrapper, GotchaApp, GotchaContext, GotchaRouter, Responder, State};
+use gotcha::{ConfigWrapper, GotchaApp, GotchaContext, GotchaRouter, Responder, State};
 use serde::{Deserialize, Serialize};
 
 pub async fn hello_world(_state: State<ConfigWrapper<Config>>) -> impl Responder {
@@ -12,7 +12,6 @@ pub struct Config {
 
 pub struct App {}
 
-#[async_trait]
 impl GotchaApp for App {
     type State = ();
 
@@ -22,9 +21,8 @@ impl GotchaApp for App {
         router.get("/", hello_world)
     }
 
-    #[allow(clippy::manual_async_fn)]
-    fn state(&self, _config: &ConfigWrapper<Self::Config>) -> impl std::future::Future<Output = Result<Self::State, gotcha::GotchaError>> + Send {
-        async move { Ok(()) }
+    async fn state(&self, _config: &ConfigWrapper<Self::Config>) -> Result<Self::State, gotcha::GotchaError> {
+        Ok(())
     }
 }
 

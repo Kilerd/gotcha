@@ -1,6 +1,6 @@
 //! Example demonstrating `Extension<T>` usage with OpenAPI generation
 
-use gotcha::{api, async_trait, ConfigWrapper, Extension, GotchaApp, GotchaContext, GotchaRouter, Json, Responder, Schematic, State};
+use gotcha::{api, ConfigWrapper, Extension, GotchaApp, GotchaContext, GotchaRouter, Json, Responder, Schematic, State};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone)]
@@ -64,7 +64,6 @@ pub async fn health() -> Json<serde_json::Value> {
 
 pub struct App {}
 
-#[async_trait]
 impl GotchaApp for App {
     type State = ();
     type Config = Config;
@@ -82,9 +81,8 @@ impl GotchaApp for App {
             .layer(axum::middleware::from_fn(inject_auth_context))
     }
 
-    #[allow(clippy::manual_async_fn)]
-    fn state(&self, _config: &ConfigWrapper<Self::Config>) -> impl std::future::Future<Output = Result<Self::State, gotcha::GotchaError>> + Send {
-        async { Ok(()) }
+    async fn state(&self, _config: &ConfigWrapper<Self::Config>) -> Result<Self::State, gotcha::GotchaError> {
+        Ok(())
     }
 }
 

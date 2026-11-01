@@ -48,10 +48,6 @@ async fn hello(State(messager): State<Messager<AppState, EmptyConfig>>) -> Resul
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    Gotcha::with_state::<AppState>()
-        .state(AppState { greeting: "Hello".to_string() })
-        .get("/", hello)
-        .run()
-        .await?;
+    Gotcha::from_state(AppState { greeting: "Hello".to_string() }).get("/", hello).run().await?;
     Ok(())
 }
