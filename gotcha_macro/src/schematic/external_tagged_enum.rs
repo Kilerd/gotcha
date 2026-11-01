@@ -28,12 +28,16 @@ pub(crate) fn handler(
             // `T`'s schema — including scalars. (Reconstructing from `T::fields()` produced an
             // empty object for scalar inners like `u32`.)
             let is_newtype = matches!(variant.fields.style, darling::ast::Style::Tuple) && variant.fields.fields.len() == 1;
+            // A tuple variant `V(A, B)` (including `V()`) serializes as `{"V": [a, b]}`.
+            let is_tuple = matches!(variant.fields.style, darling::ast::Style::Tuple) && !is_newtype;
 
             let content_expr: TokenStream2 = if is_newtype {
                 let inner_ty = variant.fields.fields[0].schema_type().clone();
                 quote! {
                     <#inner_ty as #core::Schematic>::generate_schema().schema.to_value()
                 }
+            } else if is_tuple {
+                crate::schematic::tuple_variant_schema(core, &variant.fields.fields)
             } else {
                 let fields_stream: Vec<TokenStream2> = variant
                     .fields

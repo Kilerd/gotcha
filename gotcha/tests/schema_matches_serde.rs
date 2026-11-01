@@ -293,6 +293,24 @@ enum ZeroFieldUntagged {
     Other(u32),
 }
 
+/// Tuple variants serialize as arrays of their fields, including zero-field `V()`.
+#[derive(Schematic, Serialize, Deserialize)]
+enum ExternalTuple {
+    Pair(u8, String),
+    Named { id: u32 },
+    Empty {},
+    Tuple(),
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "data")]
+enum AdjacentTuple {
+    Pair(u8, String),
+    Named { id: u32 },
+    Empty {},
+    Tuple(),
+}
+
 /// An all-unit enum: the wire form is a plain string.
 #[derive(Schematic, Serialize, Deserialize)]
 enum SimpleEnum {
@@ -437,7 +455,8 @@ fn enums_match_serde() {
     // objects. (The zero-field tuple variant of the same enum is a known mismatch below.)
     assert_serialization_matches(&ZeroFieldExternal::Named {});
     assert_serialization_matches(&ZeroFieldUntagged::Named {});
-    // A zero-field tuple variant in an untagged enum is an empty array.
+    // A zero-field tuple variant is an empty array in the external and untagged forms.
+    assert_serialization_matches(&ZeroFieldExternal::Tuple {});
     assert_serialization_matches(&ZeroFieldUntagged::Tuple {});
 
     // Unit variants follow the tag form: a string in the default representation, an object with
@@ -451,6 +470,18 @@ fn enums_match_serde() {
     assert_serialization_matches(&UntaggedUnitOnly::Unit);
     assert_serialization_matches(&UntaggedWithUnit::Unit);
     assert_serialization_matches(&UntaggedWithUnit::Number(1));
+}
+
+#[test]
+fn tuple_variants_match_serde() {
+    assert_serialization_matches(&ExternalTuple::Pair(1, "x".into()));
+    assert_serialization_matches(&ExternalTuple::Named { id: 2 });
+    assert_serialization_matches(&ExternalTuple::Empty {});
+    assert_serialization_matches(&ExternalTuple::Tuple {});
+    assert_serialization_matches(&AdjacentTuple::Pair(1, "x".into()));
+    assert_serialization_matches(&AdjacentTuple::Named { id: 2 });
+    assert_serialization_matches(&AdjacentTuple::Empty {});
+    assert_serialization_matches(&AdjacentTuple::Tuple {});
 }
 
 #[test]
@@ -553,17 +584,13 @@ fn component_references_resolve() {
 //
 // - A flattened externally tagged enum's unit variant: serde writes `{"A": null}` next to the
 //   parent's fields, while the flattened schema documents `"A"`.
-// - A zero-field tuple variant in an externally tagged enum: serde writes `{"A": []}`, while the
-//   schema documents the object shape.
-// - A zero-field struct variant (`A {}`) in an adjacently tagged enum: serde writes
-//   `{"kind": "A", "data": {}}`, while the schema documents only the tag.
 // - An externally tagged enum whose variants are all zero-field struct variants (`A {}`): it is
 //   still routed to the string-enum shape (the dispatch checks emptiness, not `Style::Unit`).
 // - Struct-variant fields ignore `#[serde(skip)]`, `#[serde(flatten)]` and
 //   `#[serde(rename_all_fields = "..")]`.
 // - `#[serde(transparent)]` types are documented as objects with the inner field as a property.
-// - A multi-field tuple variant in an externally or adjacently tagged enum is documented as an
-//   empty object, while serde writes an array.
+// - `#[serde(skip)]` on a tuple-variant field: serde writes the remaining elements, while the
+//   schema still requires one item per declared field.
 // - Untagged enums use `oneOf`, so a value matching several branches fails validation (`u32|f64`
 //   with `1`). Struct variants whose fields are subsets only pass because strict validation
 //   rejects the superset branch's extra fields; the schema itself still overlaps.

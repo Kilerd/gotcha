@@ -34,29 +34,8 @@ pub(crate) fn handler(
                     <#inner_ty as #core::Schematic>::generate_schema().schema.to_value()
                 }
             } else if is_tuple {
-                // Multi-field tuple variant `V(A, B)` serializes as `[a, b]`. Emit an array that
-                // preserves every element's schema (previously only the last field survived).
-                let field_schemas: Vec<TokenStream2> = variant
-                    .fields
-                    .fields
-                    .iter()
-                    .map(|field| {
-                        let field_ty = field.schema_type().clone();
-                        quote! { <#field_ty as #core::Schematic>::generate_schema().schema.to_value() }
-                    })
-                    .collect();
-                quote! {
-                    {
-                        let prefix_items: Vec<#core::serde_json::Value> = vec![ #( #field_schemas ),* ];
-                        let item_count = prefix_items.len();
-                        let mut array_schema: ::std::collections::HashMap<String, #core::serde_json::Value> = ::std::collections::HashMap::new();
-                        array_schema.insert("type".to_string(), #core::serde_json::to_value("array").expect("cannot convert type to value"));
-                        array_schema.insert("prefixItems".to_string(), #core::serde_json::to_value(prefix_items).expect("cannot convert prefixItems to value"));
-                        array_schema.insert("minItems".to_string(), #core::serde_json::to_value(item_count).expect("cannot convert minItems to value"));
-                        array_schema.insert("maxItems".to_string(), #core::serde_json::to_value(item_count).expect("cannot convert maxItems to value"));
-                        #core::serde_json::to_value(array_schema).expect("cannot convert array schema to value")
-                    }
-                }
+                // Tuple variant `V(A, B)` (including `V()`) serializes as `[a, b]`.
+                crate::schematic::tuple_variant_schema(core, &variant.fields.fields)
             } else {
                 // Named (struct) variant: an object schema built from its fields.
                 let fields_stream: Vec<TokenStream2> = variant
