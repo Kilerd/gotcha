@@ -691,7 +691,12 @@ by application code (including `Messager::spawn`) remain outside this ownership.
 
 Single-execution panics are logged and the schedule continues, including a panic while constructing
 the execution future. Interval tasks retain their existing immediate first tick and non-overlapping
-executions. Invalid cron expressions and zero intervals are logged and skipped during registration.
+executions. A slow execution no longer causes catch-up runs: an interval execution runs the
+already-due tick once when it finishes and then resumes at the next period boundary
+(tokio's `MissedTickBehavior::Skip`), and cron tasks compute the next trigger from the current
+time, anchored to the last trigger that fired so a wall-clock step back cannot repeat it. The
+low-level `cron_proc_macro_wrapper` and `interval_proc_macro_wrapper` drivers share these rules.
+Invalid cron expressions and zero intervals are logged and skipped during registration.
 
 ---
 
