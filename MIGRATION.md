@@ -1,5 +1,6 @@
 # Migration Guide
 
+- [Unreleased: variant-level schematic attributes](#unreleased-variant-level-schematic-attributes)
 - [Unreleased: derive documents serde's wire shapes](#unreleased-derive-documents-serdes-wire-shapes)
 - [Unreleased: invalid task registrations fail startup](#unreleased-invalid-task-registrations-fail-startup)
 - [Unreleased: non-exhaustive extractor enums](#unreleased-non-exhaustive-extractor-enums)
@@ -35,6 +36,20 @@
 - [Unreleased: default configuration sources](#unreleased-default-configuration-sources)
 - [0.3 → 0.4](#03--04) — **every application must edit its route paths and configuration file**
 - [0.2 → 0.3: API simplification](#02--03-api-simplification)
+
+---
+
+# Unreleased: variant-level schematic attributes
+
+Enum variants accept `#[schematic(title = "...", description = "...")]`. The annotations are
+added to the variant's schema branch, and a doc comment on the variant is the description
+fallback (an explicit `description` wins). Only these two keys are accepted; other keys are now
+compile errors, where they previously compiled and were ignored.
+
+Generated documents change for enums with doc-commented or annotated variants: those variants
+gain a `description`/`title` they did not have. Regenerate clients built from them. Doc comments
+on tuple/newtype *fields* are still not descriptions (only explicit attributes document those);
+named struct-variant fields keep their doc comments, as before.
 
 ---
 

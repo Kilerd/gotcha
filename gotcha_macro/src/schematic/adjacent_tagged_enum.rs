@@ -20,6 +20,7 @@ pub(crate) fn handler(
             let variant_rename = parse_serde_rename(&variant.attrs);
             let variant_string = get_serde_name(&variant_ident_str, variant_rename.as_deref(), naming.variants);
             let field_rename_all = parse_serde_rename_all(&variant.attrs).or(naming.fields);
+            let variant_annotations = variant.variant_customizations(core);
 
             let tag_enum = quote! {
                 let mut tag_enum: ::std::collections::HashMap<String, #core::serde_json::Value> = ::std::collections::HashMap::new();
@@ -42,6 +43,7 @@ pub(crate) fn handler(
                             variant_object.insert("type".to_string(), #core::serde_json::to_value("object").unwrap());
                             variant_object.insert("properties".to_string(), #core::serde_json::to_value(properties).unwrap());
                             variant_object.insert("required".to_string(), #core::serde_json::to_value(vec![#tag_name_str, #content_name_str]).unwrap());
+                            #( #variant_annotations )*
                             variant_object
                         }
                     }
@@ -58,6 +60,7 @@ pub(crate) fn handler(
                             variant_object.insert("type".to_string(), #core::serde_json::to_value("object").unwrap());
                             variant_object.insert("properties".to_string(), #core::serde_json::to_value(properties).unwrap());
                             variant_object.insert("required".to_string(), #core::serde_json::to_value(vec![#tag_name_str]).unwrap());
+                            #( #variant_annotations )*
                             variant_object
                         }
                     }
@@ -93,6 +96,7 @@ pub(crate) fn handler(
                             variant_object.insert("type".to_string(), #core::serde_json::to_value("object").unwrap());
                             variant_object.insert("properties".to_string(), #core::serde_json::to_value(properties).unwrap());
                             variant_object.insert("required".to_string(), #core::serde_json::to_value(vec![#tag_name_str, #content_name_str]).unwrap());
+                            #( #variant_annotations )*
                             variant_object
                         }
                     }

@@ -237,6 +237,24 @@ pub fn api(args: TokenStream, input_stream: TokenStream) -> TokenStream {
 /// }
 /// ```
 ///
+/// ## Variant attributes
+///
+/// An enum variant accepts `#[schematic(title = "...", description = "...")]`. They are added
+/// to that variant's schema branch; a doc comment on the variant is the description fallback,
+/// and an explicit `description` wins over it. When the branch also receives a field
+/// description (an internally tagged newtype variant), the variant's description wins over the
+/// field's.
+///
+/// Only these two keys are accepted: `example`/`default`/`format` are field metadata and a
+/// literal cannot be valid on an object-shaped branch. Unknown keys are compile errors.
+///
+/// Branches that are not objects (an untagged newtype/tuple variant, or a unit variant of an
+/// `untagged` enum) and all-unit *externally tagged* enums (a plain string enum) have nowhere
+/// to put the annotations and drop them.
+///
+/// Doc comments on tuple/newtype *fields* are not descriptions; only an explicit
+/// `#[schematic(description = "...")]` documents them.
+///
 /// ## Example
 ///
 /// ```rust,ignore
