@@ -34,9 +34,6 @@ pub use routing::{delete, get, head, on, options, patch, post, put, trace, Metho
 pub use router::GotchaRouter;
 use serde::Deserialize;
 use std::sync::Arc;
-use tracing::level_filters::LevelFilter;
-use tracing_subscriber::prelude::*;
-use tracing_subscriber::{fmt, EnvFilter};
 pub use {axum, axum_extra, inventory, tracing};
 
 pub use crate::builder::{EmptyConfig, EmptyState, Gotcha};
@@ -125,6 +122,7 @@ pub mod prelude;
 pub mod response;
 mod startup;
 pub use response::WithStatus;
+pub use startup::default_logger;
 /// A bound but not yet serving application; [`GotchaApp::bind`] and [`Gotcha::bind`] return it.
 pub use startup::BoundServer;
 /// Cancellation token carried by [`GotchaContext::shutdown`]. Cancelled when shutdown starts,
@@ -254,6 +252,7 @@ pub trait GotchaApp: Sized + Send + Sync {
     /// [`ConfigBuilder::framework_defaults`](config::ConfigBuilder::framework_defaults) to keep
     /// that typed base, and can add application defaults with
     /// [`ConfigBuilder::defaults`](config::ConfigBuilder::defaults).
+    /// [`Gotcha::load_config`] is the builder equivalent of an override.
     fn config(&self) -> impl std::future::Future<Output = GotchaResult<ConfigWrapper<Self::Config>>> + Send
     where
         Self::Config: for<'de> Deserialize<'de>,
@@ -318,28 +317,21 @@ pub trait GotchaApp: Sized + Send + Sync {
     }
 
     /// Install the tracing subscriber. The default reads `RUST_LOG`.
+    /// [`Gotcha::with_default_logger`] installs the same subscriber on the builder.
     fn logger(&self) -> GotchaResult<()> {
-        tracing_subscriber::registry()
-            .with(fmt::layer())
-            .with(
-                EnvFilter::builder()
-                    .with_default_directive(LevelFilter::INFO.into())
-                    .with_env_var("RUST_LOG")
-                    .from_env_lossy(),
-            )
-            .try_init()
-            .ok();
-        Ok(())
+        startup::default_logger()
     }
 
     /// Register the application's routes.
     fn routes(&self, router: GotchaRouter<GotchaContext<Self::State, Self::Config>>) -> GotchaRouter<GotchaContext<Self::State, Self::Config>>;
 
     /// Build the application state, given the loaded configuration.
+    /// [`Gotcha::from_state_fn`] is the builder equivalent.
     fn state(&self, config: &ConfigWrapper<Self::Config>) -> impl std::future::Future<Output = GotchaResult<Self::State>> + Send;
 
     /// Register background tasks without starting them. Returning an error discards all registrations.
     /// Tasks start with serving after successful initialization. The default registers none.
+    /// The builder equivalent is [`Gotcha::try_tasks`], or [`Gotcha::tasks`] for infallible registration.
     fn tasks(&self, _task_scheduler: &mut TaskScheduler<Self::State, Self::Config>) -> impl std::future::Future<Output = GotchaResult<()>> + Send {
         async { Ok(()) }
     }

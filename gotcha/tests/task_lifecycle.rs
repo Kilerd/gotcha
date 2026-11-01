@@ -130,29 +130,46 @@ impl GotchaApp for App {
         self.timeout
     }
     async fn tasks(&self, scheduler: &mut TaskScheduler<Controls, ()>) -> GotchaResult<()> {
-        if matches!(self.registration, Registration::Normal) {
-            register(scheduler);
-            return Ok(());
-        }
-        let resource = Dropped(self.controls.dropped.clone());
-        scheduler.interval("partial-registration", Duration::from_millis(1), move |ctx| {
-            let _ = &resource;
-            ctx.state.executions.fetch_add(1, Ordering::SeqCst);
-            async {}
-        });
-        self.controls.registered.notify_one();
-        tokio::task::yield_now().await; // An eagerly spawned registration would run here.
-        match self.registration {
-            Registration::Fail => Err(GotchaError::message("registration failed")),
-            Registration::Wait => std::future::pending().await,
-            #[cfg(feature = "task")]
-            Registration::InvalidCron => {
-                scheduler.cron("bad-cron", "not a schedule".into(), |_| async {});
-                Ok(())
-            }
-            Registration::Normal => unreachable!(),
-        }
+        register_as(self.controls.clone(), self.registration, scheduler).await
     }
+}
+
+/// The registration both APIs run: the trait's `tasks` and the builder's `try_tasks`.
+async fn register_as(controls: Controls, registration: Registration, scheduler: &mut TaskScheduler<Controls, ()>) -> GotchaResult<()> {
+    if matches!(registration, Registration::Normal) {
+        register(scheduler);
+        return Ok(());
+    }
+    let resource = Dropped(controls.dropped.clone());
+    scheduler.interval("partial-registration", Duration::from_millis(1), move |ctx| {
+        let _ = &resource;
+        ctx.state.executions.fetch_add(1, Ordering::SeqCst);
+        async {}
+    });
+    controls.registered.notify_one();
+    tokio::task::yield_now().await; // An eagerly spawned registration would run here.
+    match registration {
+        Registration::Fail => Err(GotchaError::message("registration failed")),
+        Registration::Wait => std::future::pending().await,
+        #[cfg(feature = "task")]
+        Registration::InvalidCron => {
+            scheduler.cron("bad-cron", "not a schedule".into(), |_| async {});
+            Ok(())
+        }
+        Registration::Normal => unreachable!(),
+    }
+}
+
+/// The builder equivalent of [`App`]: state from the loaded configuration, fallible async tasks.
+fn builder(controls: Controls, registration: Registration) -> Gotcha<Controls, ()> {
+    let state = controls.clone();
+    Gotcha::from_state_fn(move |config: Arc<ConfigWrapper<()>>| async move {
+        state.addresses.send(address(&config)).unwrap();
+        Ok(state)
+    })
+    .load_config(|| async { Ok(config()) })
+    .get("/hold", hold)
+    .try_tasks(move |scheduler| Box::pin(register_as(controls, registration, scheduler)))
 }
 
 async fn within<F: Future>(future: F) -> F::Output {
@@ -283,14 +300,23 @@ async fn both_public_apis_share_http_and_task_shutdown_and_own_current_execution
 
 #[tokio::test]
 async fn failed_or_cancelled_registration_discards_tasks_and_releases_the_listener() {
-    for registration in [Registration::Fail, Registration::Wait] {
+    for (trait_api, registration) in [
+        (true, Registration::Fail),
+        (true, Registration::Wait),
+        (false, Registration::Fail),
+        (false, Registration::Wait),
+    ] {
         let (controls, mut addresses, _starts, mut drops) = controls();
-        let app = App {
-            controls: controls.clone(),
-            timeout: Duration::from_secs(30),
-            registration,
+        let server = if trait_api {
+            let app = App {
+                controls: controls.clone(),
+                timeout: Duration::from_secs(30),
+                registration,
+            };
+            tokio::spawn(app.run())
+        } else {
+            tokio::spawn(builder(controls.clone(), registration).run())
         };
-        let server = tokio::spawn(app.run());
         let address = within(addresses.recv()).await.unwrap();
         within(controls.registered.notified()).await;
         if matches!(registration, Registration::Wait) {
@@ -355,6 +381,32 @@ async fn zero_interval_fails_startup() {
     .expect("a zero interval must fail bind");
     let message = error.to_string();
     assert!(message.contains("bad-interval") && message.contains("zero interval"), "{message}");
+}
+
+#[tokio::test]
+async fn builder_async_registration_starts_its_tasks_with_serving() {
+    let (controls, mut addresses, mut starts, _drops) = controls();
+    let (stop, stopping) = (controls.stop.clone(), controls.stopping.clone());
+    let server = tokio::spawn(
+        builder(controls.clone(), Registration::Normal)
+            .shutdown_signal(async move {
+                stop.notified().await;
+                stopping.notify_one();
+            })
+            .run(),
+    );
+    let bound = within(addresses.recv()).await.unwrap();
+    within(starts.recv()).await.unwrap();
+    assert_eq!(
+        within(addresses.recv()).await.unwrap(),
+        bound,
+        "the task sees the address the state was built with"
+    );
+    // Release the execution only after shutdown is requested, so no further tick starts one.
+    controls.stop.notify_one();
+    within(controls.stopping.notified()).await;
+    controls.finish_task.notify_one();
+    within(server).await.unwrap().unwrap();
 }
 
 #[tokio::test]

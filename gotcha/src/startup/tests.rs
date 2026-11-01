@@ -166,6 +166,96 @@ async fn both_apis_serve_the_loaded_config_and_actual_bound_address() {
     assert_eq!(*app.events.lock().unwrap(), ["logger", "config", "state", "router", "tasks"]);
 }
 
+/// The builder counterpart of [`TraitApp`]: every stage is a builder hook recording into `events`.
+/// `finish_router` cannot fail, so only the other stages honour `fail_at`.
+fn staged_builder(path: &Path, events: &Events, bound: &Arc<Mutex<Option<SocketAddr>>>, fail_at: Option<&'static str>) -> Gotcha<(), Settings> {
+    let stage = {
+        let events = events.clone();
+        move |name: &'static str| -> GotchaResult<()> {
+            events.lock().unwrap().push(name);
+            if fail_at == Some(name) {
+                return Err(GotchaError::message(name));
+            }
+            Ok(())
+        }
+    };
+    let (source, bound) = (ConfigBuilder::new().file(path), bound.clone());
+    let state_stage = stage.clone();
+    let config_stage = stage.clone();
+    let router_stage = stage.clone();
+    let builder = Gotcha::from_state_fn(move |config: Arc<ConfigWrapper<Settings>>| async move {
+        assert_ne!(config.server.port, 0, "state must see the actual port before initialization");
+        *bound.lock().unwrap() = Some(SocketAddr::new(config.server.host.parse().unwrap(), config.server.port));
+        state_stage("state")
+    })
+    .logger({
+        let stage = stage.clone();
+        move || stage("logger")
+    })
+    .load_config(move || async move {
+        config_stage("config")?;
+        Ok(source.build()?)
+    })
+    .get("/config", read)
+    .finish_router(move |router, _| {
+        router_stage("router").unwrap();
+        router
+    });
+    builder.try_tasks(move |_| Box::pin(async move { stage("tasks") }))
+}
+
+#[tokio::test]
+async fn builder_startup_hooks_run_in_the_trait_order() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    std::fs::write(&path, "label = 'loaded'\n[server]\nhost = '127.0.0.1'\nport = 0").unwrap();
+    let (events, bound) = (Events::default(), Arc::default());
+    let prepared = prepare(&mut staged_builder(&path, &events, &bound, None), None).await.unwrap();
+    assert_eq!(*bound.lock().unwrap(), Some(prepared.local_addr()));
+    assert_http(prepared, "loaded").await;
+    assert_eq!(*events.lock().unwrap(), ["logger", "config", "state", "router", "tasks"]);
+}
+
+#[tokio::test]
+async fn builder_initialization_errors_stop_startup_and_release_the_listener() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    std::fs::write(&path, "label = 'ready'\n[server]\nhost = '127.0.0.1'\nport = 0").unwrap();
+    for stage in ["logger", "state", "tasks"] {
+        let (events, bound) = (Events::default(), Arc::<Mutex<Option<SocketAddr>>>::default());
+        // A config fallback must not swallow errors from other stages.
+        let mut builder = staged_builder(&path, &events, &bound, Some(stage)).config_error_policy(ConfigErrorPolicy::Fallback(fallback_settings));
+        assert!(matches!(prepare(&mut builder, None).await, Err(GotchaError::Message(message)) if message == stage));
+        assert_eq!(events.lock().unwrap().last(), Some(&stage));
+        if stage == "logger" {
+            assert_eq!(*events.lock().unwrap(), ["logger"], "the logger runs before configuration loads");
+            assert!(bound.lock().unwrap().is_none());
+            continue;
+        }
+        let bound = bound.lock().unwrap().unwrap();
+        let _rebound = TcpListener::bind(bound)
+            .await
+            .unwrap_or_else(|error| panic!("failed startup at {stage} must release its listener: {error}"));
+    }
+}
+
+#[tokio::test]
+async fn custom_config_loader_errors_follow_the_error_policy() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    std::fs::write(&path, "label = 'unused'").unwrap();
+    let (events, bound) = (Events::default(), Arc::default());
+    let mut builder = staged_builder(&path, &events, &bound, Some("config"));
+    assert!(matches!(prepare(&mut builder, None).await, Err(GotchaError::Message(message)) if message == "config"));
+    assert_eq!(
+        *events.lock().unwrap(),
+        ["logger", "config"],
+        "a strict loader error stops startup before binding"
+    );
+    let mut builder = staged_builder(&path, &events, &bound, Some("config")).config_error_policy(ConfigErrorPolicy::Fallback(fallback_settings));
+    assert_http(prepare(&mut builder, None).await.unwrap(), "fallback").await;
+}
+
 #[tokio::test]
 async fn run_uses_configured_address_and_does_not_initialize_after_bind_failure() {
     let occupied = TcpListener::bind("127.0.0.1:0").await.unwrap();

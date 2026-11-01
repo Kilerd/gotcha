@@ -37,28 +37,42 @@ use crate::routing::MethodRouter;
 use crate::startup::{self, ListenOptions};
 use crate::GotchaContext;
 
+type BoxFuture<'a, T> = std::pin::Pin<Box<dyn std::future::Future<Output = T> + Send + 'a>>;
+
 /// A one-shot closure that registers background tasks on the scheduler when the
-/// server starts.
-type TaskRegistrar<S, C> = Box<dyn FnOnce(&mut crate::TaskScheduler<S, C>) + Send>;
+/// server starts. Asynchronous and fallible, like `GotchaApp::tasks`.
+type TaskRegistrar<S, C> = Box<dyn for<'a> FnOnce(&'a mut crate::TaskScheduler<S, C>) -> BoxFuture<'a, GotchaResult<()>> + Send>;
+
+/// Installs the tracing subscriber when the server starts. See [`Gotcha::logger`].
+type Logger = Box<dyn FnOnce() -> GotchaResult<()> + Send>;
 
 type AppLayer = Box<dyn FnOnce(axum::Router) -> axum::Router + Send>;
 
 /// A post-assembly hook with access to the application context. See [`Gotcha::finish_router`].
 type FinishRouter<S, C> = Box<dyn FnOnce(axum::Router, &GotchaContext<S, C>) -> axum::Router + Send>;
 
-enum StateSource<S> {
+/// Builds the state from the loaded configuration. See [`Gotcha::from_state_fn`].
+type StateInit<S, C> = Box<dyn FnOnce(std::sync::Arc<ConfigWrapper<C>>) -> BoxFuture<'static, GotchaResult<S>> + Send>;
+
+enum StateSource<S, C> {
     Provided(S),
     Default(fn() -> S),
+    // Startup prepares an application once, so the initializer is taken when it runs.
+    Initialize(Option<StateInit<S, C>>),
 }
 
-impl<S: Clone> StateSource<S> {
-    fn resolve(&self) -> S {
+impl<S: Clone, C> StateSource<S, C> {
+    async fn resolve(&mut self, config: &std::sync::Arc<ConfigWrapper<C>>) -> GotchaResult<S> {
         match self {
-            Self::Provided(state) => state.clone(),
-            Self::Default(create) => create(),
+            Self::Provided(state) => Ok(state.clone()),
+            Self::Default(create) => Ok(create()),
+            Self::Initialize(init) => init.take().expect("state was already initialized")(config.clone()).await,
         }
     }
 }
+
+/// A custom configuration loader. See [`Gotcha::load_config`].
+type ConfigLoader<C> = Box<dyn FnOnce() -> BoxFuture<'static, GotchaResult<ConfigWrapper<C>>> + Send>;
 
 enum Configuration<C> {
     Provided(ConfigWrapper<C>),
@@ -66,6 +80,8 @@ enum Configuration<C> {
         sources: Option<ConfigBuilder>,
         load: fn(Option<&ConfigBuilder>) -> GotchaResult<ConfigWrapper<C>>,
     },
+    // Taken when it runs, like `StateSource::Initialize`.
+    Custom(Option<ConfigLoader<C>>),
 }
 
 impl<C> Configuration<C> {
@@ -86,13 +102,14 @@ impl<C> Configuration<C> {
         }
     }
 
-    fn resolve(&self) -> GotchaResult<ConfigWrapper<C>>
+    async fn resolve(&mut self) -> GotchaResult<ConfigWrapper<C>>
     where
         C: Clone,
     {
         match self {
             Self::Provided(config) => Ok(config.clone()),
             Self::Deferred { sources, load } => load(sources.as_ref()),
+            Self::Custom(load) => load.take().expect("configuration was already loaded")().await,
         }
     }
 }
@@ -150,11 +167,12 @@ where
     #[cfg(feature = "prometheus")]
     metrics_endpoint: Option<crate::MetricsEndpoint>,
     listen_options: ListenOptions,
+    logger: Option<Logger>,
     config_error_policy: ConfigErrorPolicy<C>,
     shutdown_signal: Option<std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>>,
     shutdown_hooks: Vec<ShutdownHook<S, C>>,
     http_shutdown_timeout: std::time::Duration,
-    state: StateSource<S>,
+    state: StateSource<S, C>,
     config: Configuration<C>,
     tasks: Vec<TaskRegistrar<S, C>>,
     task_shutdown_timeout: std::time::Duration,
@@ -282,6 +300,48 @@ impl Gotcha {
         Gotcha::from_sources(StateSource::Provided(state), Configuration::automatic())
     }
 
+    /// Create an application whose state is built at startup from the loaded configuration.
+    ///
+    /// This is the builder equivalent of [`GotchaApp::state`](crate::GotchaApp::state). The
+    /// initializer runs once, after configuration is loaded and the listener is bound, so
+    /// `config.server` holds the effective address, including the port chosen for port 0. It
+    /// receives the configuration that handlers later share. An error stops startup and releases
+    /// the listener before routes are assembled or tasks registered.
+    ///
+    /// The state does not need `Default`. The configuration must implement `Deserialize`, as for
+    /// [`GotchaApp::run`](crate::GotchaApp::run), even when [`Self::load_config`], [`Self::config`],
+    /// or the configuration source methods replace automatic loading later: the builder starts with
+    /// automatic loading.
+    ///
+    /// ```no_run
+    /// use gotcha::prelude::*;
+    /// use std::sync::Arc;
+    ///
+    /// #[config]
+    /// #[derive(Clone, Deserialize)]
+    /// struct AppConfig { database_url: String }
+    ///
+    /// #[state]
+    /// #[derive(Clone)]
+    /// struct AppState { public_url: String }
+    ///
+    /// let app = Gotcha::from_state_fn(|config: Arc<ConfigWrapper<AppConfig>>| async move {
+    ///     // Open connections from `config.database_url` here.
+    ///     Ok(AppState { public_url: format!("http://{}:{}", config.server.host, config.server.port) })
+    /// })
+    /// .get("/", |State(state): State<AppState>| async move { state.public_url });
+    /// ```
+    pub fn from_state_fn<S, C, F, Fut>(init: F) -> Gotcha<S, C>
+    where
+        S: Clone + Send + Sync + 'static,
+        C: Clone + Send + Sync + 'static + DeserializeOwned,
+        F: FnOnce(std::sync::Arc<ConfigWrapper<C>>) -> Fut + Send + 'static,
+        Fut: std::future::Future<Output = GotchaResult<S>> + Send + 'static,
+    {
+        let init: StateInit<S, C> = Box::new(move |config| Box::pin(init(config)));
+        Gotcha::from_sources(StateSource::Initialize(Some(init)), Configuration::automatic())
+    }
+
     /// Create an application from initialized state and configuration, without loading files.
     /// Neither type needs `Default`; the configuration does not need serde traits.
     /// `run()` uses the supplied server settings unless `host`/`port` or `listen` override them.
@@ -306,7 +366,7 @@ where
     S: Clone + Send + Sync + 'static,
     C: Clone + Send + Sync + 'static,
 {
-    fn from_sources(state: StateSource<S>, config: Configuration<C>) -> Self {
+    fn from_sources(state: StateSource<S, C>, config: Configuration<C>) -> Self {
         Self {
             router: GotchaRouter::default(),
             app_layers: Vec::new(),
@@ -316,6 +376,7 @@ where
             #[cfg(feature = "prometheus")]
             metrics_endpoint: None,
             listen_options: ListenOptions::default(),
+            logger: None,
             config_error_policy: ConfigErrorPolicy::Strict,
             shutdown_signal: None,
             shutdown_hooks: Vec::new(),
@@ -339,8 +400,42 @@ where
         self
     }
 
+    /// Load the configuration at startup with a custom asynchronous loader.
+    ///
+    /// This is the builder equivalent of overriding [`GotchaApp::config`](crate::GotchaApp::config).
+    /// The loader runs once, after the logger and before the listener is bound, and an error it
+    /// returns goes through [`Self::config_error_policy`], as automatic loading does. The loader
+    /// adds no serde bound, so it also works on a builder from [`Gotcha::from_context`];
+    /// [`Gotcha::from_state_fn`] and [`Gotcha::with_types`] require `Deserialize` regardless.
+    ///
+    /// The loader replaces automatic loading and every configuration source. Source methods such
+    /// as [`Self::with_env_config`] do not replace it, whether they are called before or after it.
+    /// [`Self::config`], [`Self::build_config`], and `load_config` replace each other: the last
+    /// call wins. Start from
+    /// [`ConfigBuilder::framework_defaults`](crate::config::ConfigBuilder::framework_defaults) to
+    /// keep the typed server defaults that automatic loading has.
+    ///
+    /// ```no_run
+    /// use gotcha::config::ConfigBuilder;
+    /// use gotcha::{ConfigWrapper, EmptyConfig, Gotcha};
+    ///
+    /// let app = Gotcha::new().load_config(|| async {
+    ///     let config: ConfigWrapper<EmptyConfig> = ConfigBuilder::framework_defaults().env("MYAPP").build()?;
+    ///     Ok(config)
+    /// });
+    /// ```
+    pub fn load_config<F, Fut>(mut self, load: F) -> Self
+    where
+        F: FnOnce() -> Fut + Send + 'static,
+        Fut: std::future::Future<Output = GotchaResult<ConfigWrapper<C>>> + Send + 'static,
+    {
+        self.config = Configuration::Custom(Some(Box::new(move || Box::pin(load()))));
+        self
+    }
+
     /// Choose how startup handles configuration loading errors. The default is strict.
-    /// Applies to automatic and registered sources, but not eager `build_config()` calls.
+    /// Applies to automatic and registered sources and to [`Self::load_config`], but not eager
+    /// `build_config()` calls.
     ///
     /// ```no_run
     /// use gotcha::{ConfigErrorPolicy, Gotcha};
@@ -523,6 +618,45 @@ where
         self.config
             .update_sources(|builder| builder.unwrap_or_else(ConfigBuilder::framework_defaults).enable_vars());
         self
+    }
+
+    /// Install the tracing subscriber at startup with `install`, the builder equivalent of
+    /// [`GotchaApp::logger`](crate::GotchaApp::logger).
+    ///
+    /// The builder installs no subscriber unless this or [`Self::with_default_logger`] is called.
+    /// `install` runs once, first: before configuration is loaded and the listener is bound. An
+    /// error it returns stops startup. The last call wins.
+    ///
+    /// ```no_run
+    /// use gotcha::Gotcha;
+    ///
+    /// let app = Gotcha::new().logger(|| {
+    ///     // Install a subscriber here, for example with `tracing_subscriber::fmt::try_init()`.
+    ///     Ok(())
+    /// });
+    /// ```
+    pub fn logger<F>(mut self, install: F) -> Self
+    where
+        F: FnOnce() -> GotchaResult<()> + Send + 'static,
+    {
+        self.logger = Some(Box::new(install));
+        self
+    }
+
+    /// Install [`default_logger`](crate::default_logger) at startup, the subscriber that
+    /// [`GotchaApp`](crate::GotchaApp) applications install by default: formatted output filtered
+    /// by `RUST_LOG`, at `INFO` when it is unset.
+    ///
+    /// An already installed global subscriber is kept, so this never fails, and several
+    /// applications in one process can call it. See [`Self::logger`] for when it runs.
+    ///
+    /// ```no_run
+    /// use gotcha::Gotcha;
+    ///
+    /// let app = Gotcha::new().with_default_logger().get("/", || async { "Hello World" });
+    /// ```
+    pub fn with_default_logger(self) -> Self {
+        self.logger(startup::default_logger)
     }
 
     /// Set the host address
@@ -938,9 +1072,9 @@ where
     ///
     /// The closure receives a [`TaskScheduler`](crate::TaskScheduler) when the
     /// server starts, on which you can register `spawn` / `interval` / `cron` jobs (`cron`
-    /// requires the `task` feature). This brings the builder to parity with `GotchaApp::tasks`.
-    /// Jobs start only after all registrations succeed and are owned by the application until
-    /// shutdown.
+    /// requires the `task` feature). Use [`Self::try_tasks`] for registration that awaits or
+    /// fails. Jobs start only after all registrations succeed and are owned by the application
+    /// until shutdown.
     /// Register module tasks here on the top-level application; `nest` and `merge` accept
     /// only route modules and cannot accept another application's task registrations.
     ///
@@ -955,9 +1089,42 @@ where
     ///     });
     /// });
     /// ```
-    pub fn tasks<F>(mut self, register: F) -> Self
+    pub fn tasks<F>(self, register: F) -> Self
     where
         F: FnOnce(&mut crate::TaskScheduler<S, C>) + Send + 'static,
+    {
+        self.try_tasks(move |scheduler| {
+            register(scheduler);
+            Box::pin(std::future::ready(Ok(())))
+        })
+    }
+
+    /// Register background tasks with an asynchronous, fallible registrar, the builder
+    /// equivalent of [`GotchaApp::tasks`](crate::GotchaApp::tasks).
+    ///
+    /// The registrar runs at startup, after state and routes are initialized, and returns a
+    /// boxed future that may borrow the scheduler. An error stops startup: every registration
+    /// is discarded, no task starts, and the listener is released. Registrars run in
+    /// registration order, together with those from [`Self::tasks`].
+    ///
+    /// ```no_run
+    /// use gotcha::Gotcha;
+    /// use std::time::Duration;
+    /// # async fn load_period() -> gotcha::GotchaResult<Duration> { Ok(Duration::from_secs(60)) }
+    ///
+    /// let app = Gotcha::new().try_tasks(|scheduler| {
+    ///     Box::pin(async move {
+    ///         let period = load_period().await?;
+    ///         scheduler.interval("report", period, |_ctx| async {});
+    ///         Ok(())
+    ///     })
+    /// });
+    /// ```
+    pub fn try_tasks<F>(mut self, register: F) -> Self
+    where
+        F: for<'a> FnOnce(&'a mut crate::TaskScheduler<S, C>) -> std::pin::Pin<Box<dyn std::future::Future<Output = GotchaResult<()>> + Send + 'a>>
+            + Send
+            + 'static,
     {
         self.tasks.push(Box::new(register));
         self
@@ -1176,6 +1343,13 @@ where
     type State = S;
     type Config = C;
 
+    fn logger(&mut self) -> GotchaResult<()> {
+        match self.logger.take() {
+            Some(install) => install(),
+            None => Ok(()),
+        }
+    }
+
     fn listen_options(&mut self) -> ListenOptions {
         std::mem::take(&mut self.listen_options)
     }
@@ -1227,11 +1401,11 @@ where
     }
 
     async fn config(&mut self) -> GotchaResult<ConfigWrapper<C>> {
-        self.config.resolve()
+        self.config.resolve().await
     }
 
-    async fn state(&mut self, _: &ConfigWrapper<C>) -> GotchaResult<S> {
-        Ok(self.state.resolve())
+    async fn state(&mut self, config: &std::sync::Arc<ConfigWrapper<C>>) -> GotchaResult<S> {
+        self.state.resolve(config).await
     }
 
     async fn router(&mut self, context: GotchaContext<S, C>) -> GotchaResult<axum::Router> {
@@ -1254,7 +1428,7 @@ where
 
     async fn tasks(&mut self, scheduler: &mut crate::TaskScheduler<S, C>) -> GotchaResult<()> {
         for register in std::mem::take(&mut self.tasks) {
-            register(scheduler);
+            register(scheduler).await?;
         }
         Ok(())
     }
@@ -1590,8 +1764,8 @@ mod tests {
         reference: String,
     }
 
-    #[test]
-    fn configuration_sources_preserve_order_and_explicit_error_policy() {
+    #[tokio::test]
+    async fn configuration_sources_preserve_order_and_explicit_error_policy() {
         const CHILD: &str = "GOTCHA_CONFIG_BUILDER_CHILD";
         if std::env::var_os(CHILD).is_none() {
             let dir = tempfile::tempdir().unwrap();
@@ -1645,20 +1819,20 @@ mod tests {
                 "custom-env",
             ),
         ] {
-            let config = builder.enable_variable_substitution().config.resolve().unwrap();
+            let config = builder.enable_variable_substitution().config.resolve().await.unwrap();
             assert_eq!(config.value, expected);
             assert_eq!(config.reference, expected, "variables use the final merged configuration");
         }
 
         std::fs::write("configurations/application.toml", "value = [").unwrap();
-        assert!(matches!(app().with_default_config().config.resolve(), Err(GotchaError::Config(_))));
-        assert!(matches!(app().config.resolve(), Err(GotchaError::Config(_))));
+        assert!(matches!(app().with_default_config().config.resolve().await, Err(GotchaError::Config(_))));
+        assert!(matches!(app().config.resolve().await, Err(GotchaError::Config(_))));
     }
 
     /// `with_default_config` starts from the framework's typed server defaults, so an
     /// environment-only `APP_SERVER__PORT` coerces even without a configuration file.
-    #[test]
-    fn default_sources_install_typed_server_defaults() {
+    #[tokio::test]
+    async fn default_sources_install_typed_server_defaults() {
         const CHILD: &str = "GOTCHA_BUILDER_ENV_ONLY_CHILD";
         if std::env::var_os(CHILD).is_none() {
             let dir = tempfile::tempdir().unwrap();
@@ -1683,19 +1857,19 @@ mod tests {
         }
 
         // No configuration file exists in the child's working directory.
-        let app = Gotcha::with_config::<EmptyConfig>().with_default_config();
-        let config = app.config.resolve().expect("environment-only configuration loads");
+        let mut app = Gotcha::with_config::<EmptyConfig>().with_default_config();
+        let config = app.config.resolve().await.expect("environment-only configuration loads");
         assert_eq!(config.server.port, 9000);
         assert_eq!(config.server.host, ServerConfig::default().host);
     }
 
-    #[test]
-    fn build_config_accepts_application_defaults_above_framework_defaults() {
+    #[tokio::test]
+    async fn build_config_accepts_application_defaults_above_framework_defaults() {
         #[derive(Serialize)]
         struct Defaults {
             server: ServerConfig,
         }
-        let app = Gotcha::with_config::<EmptyConfig>()
+        let mut app = Gotcha::with_config::<EmptyConfig>()
             .build_config(|builder| {
                 builder
                     .defaults(Defaults {
@@ -1707,14 +1881,14 @@ mod tests {
                     .expect("defaults serialize")
             })
             .unwrap();
-        let config = app.config.resolve().unwrap();
+        let config = app.config.resolve().await.unwrap();
         assert_eq!(config.server.port, 8700);
         assert_eq!(config.server.host, "0.0.0.0");
     }
 
     /// Default files resolve environment and path variables through `with_default_config()`.
-    #[test]
-    fn default_sources_resolve_variables() {
+    #[tokio::test]
+    async fn default_sources_resolve_variables() {
         const CHILD: &str = "GOTCHA_BUILDER_DEFAULT_VARS_CHILD";
         if std::env::var_os(CHILD).is_none() {
             let dir = tempfile::tempdir().unwrap();
@@ -1747,19 +1921,24 @@ mod tests {
             return;
         }
 
-        let resolve = |app: Gotcha<EmptyState, EmptyConfig>| app.config.resolve().unwrap().server;
-        let config = resolve(Gotcha::with_config::<EmptyConfig>().with_default_config());
+        let config = Gotcha::with_config::<EmptyConfig>()
+            .with_default_config()
+            .config
+            .resolve()
+            .await
+            .unwrap()
+            .server;
         assert_eq!(config.host, "10.0.0.1", "the path variable resolves to the environment-resolved file value");
         assert_eq!(config.port, 9000, "the environment still wins over the file");
 
-        let config = resolve(Gotcha::with_config::<EmptyConfig>().with_default_files());
+        let config = Gotcha::with_config::<EmptyConfig>().with_default_files().config.resolve().await.unwrap().server;
         assert_eq!(config.host, "10.0.0.1", "with_default_files resolves variables in the default files");
         assert_eq!(config.port, 18080, "file values win over framework defaults");
     }
 
     /// `with_default_env` resolves `${VAR}` in environment values.
-    #[test]
-    fn default_environment_source_resolves_variables() {
+    #[tokio::test]
+    async fn default_environment_source_resolves_variables() {
         const CHILD: &str = "GOTCHA_BUILDER_DEFAULT_ENV_CHILD";
         if std::env::var_os(CHILD).is_none() {
             let dir = tempfile::tempdir().unwrap();
@@ -1784,9 +1963,35 @@ mod tests {
             return;
         }
 
-        let app = Gotcha::with_config::<EmptyConfig>().with_default_env();
-        let config = app.config.resolve().unwrap();
+        let mut app = Gotcha::with_config::<EmptyConfig>().with_default_env();
+        let config = app.config.resolve().await.unwrap();
         assert_eq!(config.server.host, "10.0.0.2");
+    }
+
+    #[tokio::test]
+    async fn custom_loader_replaces_sources_until_configuration_is_set() {
+        let loaded = || {
+            let mut config = ConfigWrapper::<EmptyConfig>::default();
+            config.server.port = 4100;
+            config
+        };
+        let mut app = Gotcha::new()
+            .with_file_config("missing-before.toml")
+            .load_config(move || async move { Ok(loaded()) })
+            .with_file_config("missing-after.toml");
+        assert_eq!(
+            app.config.resolve().await.unwrap().server.port,
+            4100,
+            "sources registered around a loader are unused"
+        );
+
+        let mut app = Gotcha::new()
+            .load_config(|| async { Err(GotchaError::message("replaced")) })
+            .config(ConfigWrapper::default());
+        assert_eq!(app.config.resolve().await.unwrap().server.port, ServerConfig::default().port);
+
+        let mut app = Gotcha::new().config(ConfigWrapper::default()).load_config(move || async move { Ok(loaded()) });
+        assert_eq!(app.config.resolve().await.unwrap().server.port, 4100, "the last of config and load_config wins");
     }
 
     #[tokio::test]
