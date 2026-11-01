@@ -14,6 +14,16 @@ pub(crate) fn handler(
             let variant_rename = parse_serde_rename(&variant.attrs);
             let varient_string = get_serde_name(&variant_ident_str, variant_rename.as_deref(), rename_all);
 
+            // A unit variant serializes as the bare string `"V"`, not as `{"V": {}}`.
+            if matches!(variant.fields.style, darling::ast::Style::Unit) {
+                return quote! {
+                    let mut variant_object: ::std::collections::HashMap<String, #core::serde_json::Value> = ::std::collections::HashMap::new();
+                    variant_object.insert("title".to_string(), #core::serde_json::to_value(#varient_string).expect("cannot convert title to value"));
+                    variant_object.insert("type".to_string(), #core::serde_json::to_value("string").expect("cannot convert type to value"));
+                    variant_object.insert("enum".to_string(), #core::serde_json::to_value(vec![#varient_string.to_string()]).expect("cannot convert values to value"));
+                };
+            }
+
             // A newtype variant `V(T)` serializes as `{"V": <T>}`, so its content is exactly
             // `T`'s schema — including scalars. (Reconstructing from `T::fields()` produced an
             // empty object for scalar inners like `u32`.)

@@ -15,9 +15,19 @@ pub(crate) fn handler(
             let variant_string = get_serde_name(&variant_ident_str, variant_rename.as_deref(), rename_all);
 
             let is_tuple = matches!(variant.fields.style, darling::ast::Style::Tuple);
+            let is_unit = matches!(variant.fields.style, darling::ast::Style::Unit);
             let field_count = variant.fields.fields.len();
 
-            if is_tuple && field_count == 1 {
+            if is_unit {
+                // A unit variant in an untagged enum serializes as null.
+                quote! {
+                    {
+                        let mut null_schema: ::std::collections::HashMap<String, #core::serde_json::Value> = ::std::collections::HashMap::new();
+                        null_schema.insert("type".to_string(), #core::serde_json::to_value("null").expect("cannot convert type to value"));
+                        #core::serde_json::to_value(null_schema).expect("cannot convert null schema to value")
+                    }
+                }
+            } else if is_tuple && field_count == 1 {
                 // Single unnamed field (newtype): the inner type's schema directly.
                 let inner_ty = variant.fields.fields[0].schema_type().clone();
                 quote! {

@@ -458,30 +458,29 @@ pub(crate) fn handler(input: TokenStream2) -> Result<TokenStream2, (Span, &'stat
 
     let impl_stream = match param_opts.data {
         Data::Enum(enum_variants) => {
-            // Check if all enum variants have empty fields
+            // An all-unit enum is a plain string enum only in the default, externally tagged
+            // representation. A tag turns it into an object and `untagged` writes null, so the
+            // shape must come from the tag handler, not from the variant count.
             let is_simple_enum = enum_variants.iter().all(|variant| variant.fields.is_empty());
-            if is_simple_enum {
-                simple_enum::handler(&core, schema_name.clone(), doc, enum_variants, extra_field.rename_all)?
-            } else {
-                match extra_field.tag_kind {
-                    None => {
-                        // Default: externally tagged
-                        external_tagged_enum::handler(&core, schema_name.clone(), doc, enum_variants, extra_field.rename_all)?
-                    }
-                    Some(SerdeTagKind::Internal(ref tag_name)) => {
-                        tagged_enum::handler(&core, schema_name.clone(), doc, enum_variants, extra_field.rename_all, tag_name.clone())?
-                    }
-                    Some(SerdeTagKind::Adjacent { ref tag, ref content }) => adjacent_tagged_enum::handler(
-                        &core,
-                        schema_name.clone(),
-                        doc,
-                        enum_variants,
-                        extra_field.rename_all,
-                        tag.clone(),
-                        content.clone(),
-                    )?,
-                    Some(SerdeTagKind::Untagged) => untagged_enum::handler(&core, schema_name.clone(), doc, enum_variants, extra_field.rename_all)?,
+            match extra_field.tag_kind {
+                None if is_simple_enum => simple_enum::handler(&core, schema_name.clone(), doc, enum_variants, extra_field.rename_all)?,
+                None => {
+                    // Default: externally tagged
+                    external_tagged_enum::handler(&core, schema_name.clone(), doc, enum_variants, extra_field.rename_all)?
                 }
+                Some(SerdeTagKind::Internal(ref tag_name)) => {
+                    tagged_enum::handler(&core, schema_name.clone(), doc, enum_variants, extra_field.rename_all, tag_name.clone())?
+                }
+                Some(SerdeTagKind::Adjacent { ref tag, ref content }) => adjacent_tagged_enum::handler(
+                    &core,
+                    schema_name.clone(),
+                    doc,
+                    enum_variants,
+                    extra_field.rename_all,
+                    tag.clone(),
+                    content.clone(),
+                )?,
+                Some(SerdeTagKind::Untagged) => untagged_enum::handler(&core, schema_name.clone(), doc, enum_variants, extra_field.rename_all)?,
             }
         }
         Data::Struct(fields) => {
