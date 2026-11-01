@@ -14,10 +14,10 @@ enum Untagged {
 
 fn main() {
     let schema = serde_json::to_value(Untagged::generate_schema().schema).unwrap();
-    let one_of = schema["oneOf"].as_array().expect("oneOf array");
+    let any_of = schema["anyOf"].as_array().expect("anyOf array");
 
     // The two-field tuple variant becomes an array preserving BOTH element schemas.
-    let pair = one_of.iter().find(|b| b["type"] == "array").expect("array branch");
+    let pair = any_of.iter().find(|b| b["type"] == "array").expect("array branch");
     let prefix = pair["prefixItems"].as_array().expect("prefixItems");
     assert_eq!(prefix.len(), 2, "both tuple elements must be present");
     assert_eq!(prefix[0]["type"], "integer");
@@ -26,5 +26,5 @@ fn main() {
     assert_eq!(pair["maxItems"], 2);
 
     // The newtype variant stays transparent to its inner type.
-    assert!(one_of.iter().any(|b| b["type"] == "boolean"), "boolean branch present");
+    assert!(any_of.iter().any(|b| b["type"] == "boolean"), "boolean branch present");
 }

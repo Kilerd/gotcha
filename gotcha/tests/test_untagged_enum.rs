@@ -18,14 +18,14 @@ fn test_basic_untagged_multiple_types() {
     let schema = BasicUntagged::generate_schema();
     let json = schema.schema.to_value();
 
-    assert!(json.get("oneOf").is_some());
+    assert!(json.get("anyOf").is_some());
     assert!(json.get("discriminator").is_none());
 
-    let one_of = json.get("oneOf").unwrap().as_array().unwrap();
-    assert_eq!(one_of.len(), 3);
+    let any_of = json.get("anyOf").unwrap().as_array().unwrap();
+    assert_eq!(any_of.len(), 3);
 
     // Check each variant type
-    let types: Vec<&str> = one_of.iter().filter_map(|v| v.get("type").and_then(|t| t.as_str())).collect();
+    let types: Vec<&str> = any_of.iter().filter_map(|v| v.get("type").and_then(|t| t.as_str())).collect();
     assert!(types.contains(&"string"));
     assert!(types.contains(&"integer"));
     assert!(types.contains(&"boolean"));
@@ -44,17 +44,17 @@ fn test_untagged_named_variants() {
     let schema = UntaggedNamed::generate_schema();
     let json = schema.schema.to_value();
 
-    let one_of = json.get("oneOf").unwrap().as_array().unwrap();
-    assert_eq!(one_of.len(), 2);
+    let any_of = json.get("anyOf").unwrap().as_array().unwrap();
+    assert_eq!(any_of.len(), 2);
 
     // First variant should have name and age
-    let user = &one_of[0];
+    let user = &any_of[0];
     let user_props = user.get("properties").unwrap().as_object().unwrap();
     assert!(user_props.contains_key("name"));
     assert!(user_props.contains_key("age"));
 
     // Second variant should have title and price
-    let product = &one_of[1];
+    let product = &any_of[1];
     let product_props = product.get("properties").unwrap().as_object().unwrap();
     assert!(product_props.contains_key("title"));
     assert!(product_props.contains_key("price"));
@@ -74,15 +74,15 @@ fn test_untagged_mixed_variants() {
     let json = schema.schema.to_value();
     println!("Mixed untagged: {}", serde_json::to_string_pretty(&json).unwrap());
 
-    let one_of = json.get("oneOf").unwrap().as_array().unwrap();
-    assert_eq!(one_of.len(), 2);
+    let any_of = json.get("anyOf").unwrap().as_array().unwrap();
+    assert_eq!(any_of.len(), 2);
 
     // Simple variant should be just a string
-    let simple = &one_of[0];
+    let simple = &any_of[0];
     assert_eq!(simple.get("type").unwrap().as_str().unwrap(), "string");
 
     // Complex variant should be an object
-    let complex = &one_of[1];
+    let complex = &any_of[1];
     assert_eq!(complex.get("type").unwrap().as_str().unwrap(), "object");
 }
 
@@ -100,16 +100,16 @@ fn test_untagged_with_rename_all() {
     let json = schema.schema.to_value();
     println!("Untagged with rename: {}", serde_json::to_string_pretty(&json).unwrap());
 
-    let one_of = json.get("oneOf").unwrap().as_array().unwrap();
+    let any_of = json.get("anyOf").unwrap().as_array().unwrap();
 
     // `rename_all` names the variants, which untagged serialization never writes; serde keeps
     // the fields' Rust names, and so does the schema.
-    let request = &one_of[0];
+    let request = &any_of[0];
     let req_props = request.get("properties").unwrap().as_object().unwrap();
     assert!(req_props.contains_key("user_name"), "untagged fields keep their Rust names");
     assert!(req_props.contains_key("request_id"));
 
-    let response = &one_of[1];
+    let response = &any_of[1];
     let resp_props = response.get("properties").unwrap().as_object().unwrap();
     assert!(resp_props.contains_key("status_code"));
     assert!(resp_props.contains_key("response_body"));
@@ -135,11 +135,11 @@ fn test_untagged_with_nested_struct() {
     let json = schema.schema.to_value();
     println!("Untagged with nested: {}", serde_json::to_string_pretty(&json).unwrap());
 
-    let one_of = json.get("oneOf").unwrap().as_array().unwrap();
-    assert_eq!(one_of.len(), 2);
+    let any_of = json.get("anyOf").unwrap().as_array().unwrap();
+    assert_eq!(any_of.len(), 2);
 
     // Detailed variant should have Address properties
-    let detailed = &one_of[1];
+    let detailed = &any_of[1];
     let props = detailed.get("properties").unwrap().as_object().unwrap();
     assert!(props.contains_key("street"));
     assert!(props.contains_key("city"));
@@ -159,10 +159,10 @@ fn test_untagged_with_vec() {
     let json = schema.schema.to_value();
     println!("Untagged with vec: {}", serde_json::to_string_pretty(&json).unwrap());
 
-    let one_of = json.get("oneOf").unwrap().as_array().unwrap();
+    let any_of = json.get("anyOf").unwrap().as_array().unwrap();
 
     // One should be string, one should be array
-    let types: Vec<&str> = one_of.iter().filter_map(|v| v.get("type").and_then(|t| t.as_str())).collect();
+    let types: Vec<&str> = any_of.iter().filter_map(|v| v.get("type").and_then(|t| t.as_str())).collect();
     assert!(types.contains(&"string"));
     assert!(types.contains(&"array"));
 }
@@ -181,8 +181,8 @@ fn test_untagged_with_optional_fields() {
     let json = schema.schema.to_value();
     println!("Untagged with optional: {}", serde_json::to_string_pretty(&json).unwrap());
 
-    let one_of = json.get("oneOf").unwrap().as_array().unwrap();
-    let full = &one_of[1];
+    let any_of = json.get("anyOf").unwrap().as_array().unwrap();
+    let full = &any_of[1];
 
     // Check required fields
     let required = full.get("required").unwrap().as_array().unwrap();
@@ -216,7 +216,7 @@ fn test_flatten_untagged_in_struct() {
     let props = base.get("properties").unwrap().as_object().unwrap();
     assert!(props.contains_key("id"));
 
-    // Second should be oneOf
+    // Second should be anyOf (serde picks the first matching variant)
     let enum_schema = &all_of[1];
-    assert!(enum_schema.get("oneOf").is_some());
+    assert!(enum_schema.get("anyOf").is_some());
 }

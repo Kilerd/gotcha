@@ -287,8 +287,10 @@ enum Untagged {
 }
 
 fn branch<'a>(schema: &'a Value, title: &str) -> &'a Value {
-    schema["oneOf"]
-        .as_array()
+    schema
+        .get("oneOf")
+        .or_else(|| schema.get("anyOf"))
+        .and_then(Value::as_array)
         .unwrap()
         .iter()
         .find(|branch| branch["title"] == title)

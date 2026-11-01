@@ -78,7 +78,7 @@ fn main() {
     assert_eq!(content["description"], "adjacent payload");
 
     let untagged = serde_json::to_value(Untagged::generate_schema().schema).unwrap();
-    assert_eq!(first_branch(&untagged, "oneOf")["description"], "untagged payload");
+    assert_eq!(first_branch(&untagged, "anyOf")["description"], "untagged payload");
 
     let doc_fields = serde_json::to_value(DocFields::generate_schema().schema).unwrap();
     let branches = doc_fields["oneOf"].as_array().expect("oneOf branches");

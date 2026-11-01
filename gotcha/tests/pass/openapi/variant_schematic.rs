@@ -67,5 +67,5 @@ fn main() {
     let simple = serde_json::to_value(Simple::generate_schema().schema).unwrap();
     assert_eq!(simple["type"], "string");
     let untagged = serde_json::to_value(Untagged::generate_schema().schema).unwrap();
-    assert_eq!(first_branch(&untagged, "oneOf")["type"], "integer");
+    assert_eq!(first_branch(&untagged, "anyOf")["type"], "integer");
 }
