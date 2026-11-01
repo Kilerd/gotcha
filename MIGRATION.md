@@ -151,6 +151,10 @@ queue before its last drain: `send` fails from then on, and every `send` that su
 unless the deadline aborts the consumer first. The handler has to check that result. Ignoring it and
 answering `200` loses the job, so this one answers `503`.
 
+This covers one queue. Stages that feed each other are not covered: if a later stage closes first, it
+refuses jobs the stage before it had already accepted, and no client is left to tell. Stop such
+stages in order yourself, so that each one keeps receiving until the stage before it has finished.
+
 Together with the module above, this is a complete application. It needs `tokio` with the `macros`,
 `rt-multi-thread`, and `sync` features. See [`examples/message`](examples/message/src/main.rs) for
 the same pattern with nested commands.
@@ -215,6 +219,9 @@ async fn main() -> GotchaResult<()> {
         .await
 }
 ```
+
+---
+
 # Unreleased: deny_unknown_fields closes schemas
 
 `#[serde(deny_unknown_fields)]` now adds `additionalProperties: false` to the schema, where serde
