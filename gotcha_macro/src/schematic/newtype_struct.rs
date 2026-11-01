@@ -37,14 +37,30 @@ pub(crate) fn handler(core: &TokenStream2, fields: Vec<ParameterStructFieldOpt>,
             }
         },
     };
+    // Apply the inner field's `#[schematic(..)]` documentation to the schema this newtype
+    // delegates to. Only override the inner description when the field documents one; the inner
+    // type's own documentation stays otherwise.
+    // Only explicit attributes document this field; a doc comment here never did.
+    let (field_description, customizations) = fields[0].value_schema_customizations(core);
+    let annotated_schema = quote! {
+        {
+            let mut field_schema = <#inner_ty as #core::Schematic>::generate_schema();
+            let description: Option<String> = #field_description;
+            if let Some(description) = description {
+                field_schema.schema.description = Some(description);
+            }
+            #( #customizations )*
+            field_schema
+        }
+    };
     let schema_impl = if name.is_some() {
         quote! {
             #core::registry::schema_or_ref_for::<Self>(Self::schema_name(), module_path!(), Self::required(), || {
-                <#inner_ty as #core::Schematic>::generate_schema()
+                #annotated_schema
             })
         }
     } else {
-        quote! { <#inner_ty as #core::Schematic>::generate_schema() }
+        annotated_schema
     };
     quote! {
         fn name() -> &'static str {
