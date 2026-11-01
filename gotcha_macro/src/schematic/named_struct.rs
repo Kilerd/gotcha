@@ -1,12 +1,10 @@
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 
-use crate::schematic::serde_model::CaseRules;
 use crate::schematic::ParameterStructFieldOpt;
 
 pub(crate) fn handler(
-    core: &TokenStream2, ident_string: String, doc: TokenStream2, fields: darling::ast::Fields<ParameterStructFieldOpt>, rename_all: CaseRules,
-    container_default: bool,
+    core: &TokenStream2, ident_string: String, doc: TokenStream2, fields: darling::ast::Fields<ParameterStructFieldOpt>, container_default: bool,
 ) -> syn::Result<TokenStream2> {
     let mut normal_fields_stream: Vec<TokenStream2> = Vec::new();
     let mut flatten_fields_stream: Vec<TokenStream2> = Vec::new();
@@ -30,7 +28,7 @@ pub(crate) fn handler(
             let entry = if field.serde.flatten {
                 quote! { #core::WireField::new(#ident_str, #ident_str).flatten() }
             } else {
-                let wire_name = field.serde.wire_name(&ident_str, rename_all.deserialize());
+                let wire_name = field.serde.wire_name();
                 quote! { #core::WireField::new(#ident_str, #wire_name) }
             };
             wire_fields_stream.push(entry);
@@ -73,11 +71,11 @@ pub(crate) fn handler(
             });
         } else {
             // Normal field: static field entry
-            let field_name = field.serde.schema_name(&ident_str, rename_all.schema());
+            let field_name = field.serde.schema_name();
             // Validation errors use the names serde accepts on input, which differ from the
             // schema-side name when only `rename(deserialize = ..)` / `rename_all(deserialize = ..)`
             // is given.
-            let wire_name = field.serde.wire_name(&ident_str, rename_all.deserialize());
+            let wire_name = field.serde.wire_name();
             wire_fields_stream.push(quote! {
                 #core::WireField::new(#ident_str, #wire_name)
                     .nested(<#field_ty as #core::Schematic>::wire_fields)

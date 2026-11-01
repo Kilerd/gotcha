@@ -1,7 +1,7 @@
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 
-use crate::schematic::{ParameterEnumVariantOpt, VariantNaming};
+use crate::schematic::ParameterEnumVariantOpt;
 
 /// Whether the field carries documentation worth copying onto the variant object.
 fn has_annotations(description: &TokenStream2, customizations: &[TokenStream2]) -> bool {
@@ -9,15 +9,14 @@ fn has_annotations(description: &TokenStream2, customizations: &[TokenStream2]) 
 }
 
 pub(crate) fn handler(
-    core: &TokenStream2, ident_string: String, doc: TokenStream2, variants: Vec<ParameterEnumVariantOpt>, naming: VariantNaming, tag_name: String,
+    core: &TokenStream2, ident_string: String, doc: TokenStream2, variants: Vec<ParameterEnumVariantOpt>, tag_name: String,
 ) -> syn::Result<TokenStream2> {
     let tag_name_str = tag_name.as_str();
 
     let variants_codegen: Vec<TokenStream2> = variants
         .into_iter()
         .map(|variant| {
-            let varient_string = variant.serde_name(naming);
-            let field_rename_all = variant.field_rename_all(naming);
+            let varient_string = variant.serde_name();
             let variant_annotations = variant.variant_customizations(core);
 
             let tag_property = quote! {
@@ -30,7 +29,7 @@ pub(crate) fn handler(
 
             match variant.fields.style {
                 darling::ast::Style::Struct => {
-                    let object = crate::schematic::named_variant_object(core, Some((tag_name_str, &varient_string)), variant.fields.fields, field_rename_all);
+                    let object = crate::schematic::named_variant_object(core, Some((tag_name_str, &varient_string)), variant.fields.fields);
                     quote! {
                         let mut variant_object = #object;
                         variant_object.insert("title".to_string(), #core::serde_json::to_value(#varient_string).expect("cannot convert title to value"));

@@ -103,6 +103,18 @@ struct UpdateAccount {
     legacy: Token,
 }
 
+/// Errors use serde's own names: no raw prefix, and a convention does not re-split `userID`.
+#[allow(non_snake_case)]
+#[derive(Debug, Deserialize, Serialize, Schematic, Validate)]
+#[validate(crate = "gotcha::validator")]
+#[serde(rename_all = "camelCase")]
+struct SerdeNames {
+    #[validate(length(min = 1))]
+    r#type: String,
+    #[validate(length(min = 1))]
+    userID: String,
+}
+
 fn reject_everything(_: &Whole) -> Result<(), gotcha::validator::ValidationError> {
     Err(gotcha::validator::ValidationError::new("some_custom_rule"))
 }
@@ -129,6 +141,10 @@ async fn deserialize_only(Valid(Json(payload)): Valid<Json<DeserializeOnly>>) ->
 
 async fn update_account(Valid(Json(account)): Valid<Json<UpdateAccount>>) -> String {
     account.new_password
+}
+
+async fn serde_names(Valid(Json(names)): Valid<Json<SerdeNames>>) -> String {
+    names.r#type + &names.userID
 }
 
 async fn create_users(Valid(Json(users)): Valid<Json<Vec<User>>>) -> String {
@@ -175,6 +191,7 @@ impl GotchaApp for App {
             .post("/whole", whole)
             .post("/deserialize-only", deserialize_only)
             .post("/account", update_account)
+            .post("/serde-names", serde_names)
             .post("/users-list", create_users)
             .post("/rejected", rejected)
     }
@@ -315,6 +332,19 @@ async fn skip_serializing_fields_still_use_their_input_name() {
         json!({
             "error": "validation failed",
             "fields": {"newPassword": ["length must be at least 8"]}
+        })
+    );
+}
+
+#[tokio::test]
+async fn raw_identifiers_and_acronyms_use_the_names_serde_reads() {
+    let (status, body) = send(&app().await, "/serde-names", r#"{"type":"","userID":""}"#).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(
+        body["fields"],
+        json!({
+            "type": ["length must be at least 1"],
+            "userID": ["length must be at least 1"]
         })
     );
 }

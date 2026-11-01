@@ -1,13 +1,12 @@
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 
-use crate::schematic::{ParameterEnumVariantOpt, VariantNaming};
+use crate::schematic::ParameterEnumVariantOpt;
 
 /// Handler for adjacently tagged enums: #[serde(tag = "kind", content = "data")]
 /// JSON format: { "kind": "VariantName", "data": { ...variant fields... } }
 pub(crate) fn handler(
-    core: &TokenStream2, ident_string: String, doc: TokenStream2, variants: Vec<ParameterEnumVariantOpt>, naming: VariantNaming, tag_name: String,
-    content_name: String,
+    core: &TokenStream2, ident_string: String, doc: TokenStream2, variants: Vec<ParameterEnumVariantOpt>, tag_name: String, content_name: String,
 ) -> syn::Result<TokenStream2> {
     let tag_name_str = tag_name.as_str();
     let content_name_str = content_name.as_str();
@@ -15,8 +14,7 @@ pub(crate) fn handler(
     let variants_codegen: Vec<TokenStream2> = variants
         .into_iter()
         .map(|variant| {
-            let variant_string = variant.serde_name(naming);
-            let field_rename_all = variant.field_rename_all(naming);
+            let variant_string = variant.serde_name();
             let variant_annotations = variant.variant_customizations(core);
 
             let tag_enum = quote! {
@@ -27,7 +25,7 @@ pub(crate) fn handler(
 
             match variant.fields.style {
                 darling::ast::Style::Struct => {
-                    let content = crate::schematic::named_variant_object(core, None, variant.fields.fields, field_rename_all);
+                    let content = crate::schematic::named_variant_object(core, None, variant.fields.fields);
                     quote! {
                         {
                             #tag_enum

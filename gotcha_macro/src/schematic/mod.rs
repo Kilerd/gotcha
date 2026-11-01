@@ -2,6 +2,7 @@ use darling::ast::Data;
 use darling::{FromDeriveInput, FromField, FromVariant};
 use proc_macro2::{Delimiter, Group, TokenStream as TokenStream2, TokenTree};
 use quote::quote;
+use serde_derive_internals::attr::RenameAllRules;
 use syn::{parse2, DeriveInput};
 
 pub mod adjacent_tagged_enum;
@@ -13,7 +14,7 @@ pub mod simple_enum;
 pub mod tagged_enum;
 pub mod untagged_enum;
 
-use crate::utils::{expr_lit, AttributesExt, RenameAll};
+use crate::utils::{expr_lit, AttributesExt};
 use serde_model::{SerdeContainer, SerdeField, SerdeVariant, Tagging};
 
 #[derive(Debug, FromDeriveInput)]
@@ -26,6 +27,17 @@ pub(crate) struct ParameterOpts {
     crate_path: Option<syn::Path>,
     data: Data<ParameterEnumVariantOpt, ParameterStructFieldOpt>,
     attrs: Vec<syn::Attribute>,
+}
+
+impl ParameterOpts {
+    /// Read the serde attributes of the variants and fields. Their names depend on the container's
+    /// case conventions, so this runs on darling's finished parse.
+    fn parse_serde(&mut self, container: &SerdeContainer) {
+        match &mut self.data {
+            Data::Enum(variants) => variants.iter_mut().for_each(|variant| variant.parse_serde(container)),
+            Data::Struct(fields) => fields.fields.iter_mut().for_each(|field| field.parse_serde(container.rename_all)),
+        }
+    }
 }
 
 /// A literal JSON value (`= 42`, `= "x"`, `= true`) whose JSON type is preserved. Used for
@@ -101,12 +113,12 @@ impl SchemaValue {
 }
 
 #[derive(Debug, FromField)]
-#[darling(attributes(schematic), forward_attrs(allow, doc, cfg, serde, validate), and_then = Self::parse_serde)]
+#[darling(attributes(schematic), forward_attrs(allow, doc, cfg, serde, validate))]
 pub(crate) struct ParameterStructFieldOpt {
     ident: Option<syn::Ident>,
     ty: syn::Type,
     attrs: Vec<syn::Attribute>,
-    /// The `#[serde(..)]` attributes among `attrs`, parsed once.
+    /// The `#[serde(..)]` attributes among `attrs`, parsed once by [`ParameterOpts::parse_serde`].
     #[darling(skip)]
     serde: SerdeField,
 
@@ -333,9 +345,8 @@ fn lit_to_u64(lit: &syn::Lit) -> Option<u64> {
 }
 
 impl ParameterStructFieldOpt {
-    fn parse_serde(mut self) -> darling::Result<Self> {
-        self.serde = SerdeField::from_attrs(&self.attrs);
-        Ok(self)
+    fn parse_serde(&mut self, rules: RenameAllRules) {
+        self.serde = SerdeField::parse(self.ident.as_ref(), &self.attrs, rules);
     }
 
     /// The type whose `Schematic` describes this field: the `#[schematic(as = "...")]` type when
@@ -471,15 +482,6 @@ pub(crate) fn tuple_variant_schema(core: &TokenStream2, fields: &[ParameterStruc
     }
 }
 
-/// The case conventions serde applies to an enum's variants and their struct-variant fields.
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct VariantNaming {
-    /// `#[serde(rename_all = "..")]`: names variants, not their fields.
-    pub variants: Option<RenameAll>,
-    /// `#[serde(rename_all_fields = "..")]`: names struct-variant fields.
-    pub fields: Option<RenameAll>,
-}
-
 /// Emit an expression of type `HashMap<String, Value>` for one named-field variant object.
 ///
 /// Every tag form builds the same object: the tag property (internally tagged only), the named
@@ -487,9 +489,7 @@ pub(crate) struct VariantNaming {
 /// schema. One emitter keeps `skip`, `rename_all` / `rename_all_fields`, `flatten` and
 /// `#[schematic(..)]` identical for externally, internally, adjacently and untagged enums
 /// instead of drifting per copy.
-pub(crate) fn named_variant_object(
-    core: &TokenStream2, tag: Option<(&str, &str)>, fields: Vec<ParameterStructFieldOpt>, field_rename_all: Option<RenameAll>,
-) -> TokenStream2 {
+pub(crate) fn named_variant_object(core: &TokenStream2, tag: Option<(&str, &str)>, fields: Vec<ParameterStructFieldOpt>) -> TokenStream2 {
     let tag_code = match tag {
         Some((tag_name, variant_name)) => quote! {
             {
@@ -506,7 +506,6 @@ pub(crate) fn named_variant_object(
     let field_statements: Vec<TokenStream2> = fields
         .into_iter()
         .filter_map(|field| {
-            let ident = field.ident.as_ref()?;
             // `skip` / `skip_serializing` fields are not written; a field skipped only for
             // deserialization is still serialized and must stay in the schema.
             if field.serde.skip_serializing {
@@ -537,7 +536,7 @@ pub(crate) fn named_variant_object(
                     }
                 });
             }
-            let field_name = field.serde.schema_name(&ident.to_string(), field_rename_all);
+            let field_name = field.serde.schema_name();
             let presence = field.serde.presence(&field_ty, false);
             let schema_ty = presence.schema_type;
             let required_override = match presence.required {
@@ -597,11 +596,11 @@ pub(crate) fn named_variant_object(
 }
 
 #[derive(Debug, FromVariant)]
-#[darling(attributes(schematic), forward_attrs(allow, doc, cfg, serde), and_then = Self::parse_serde)]
+#[darling(attributes(schematic), forward_attrs(allow, doc, cfg, serde))]
 pub(crate) struct ParameterEnumVariantOpt {
     ident: syn::Ident,
     attrs: Vec<syn::Attribute>,
-    /// The `#[serde(..)]` attributes among `attrs`, parsed once.
+    /// The `#[serde(..)]` attributes among `attrs`, parsed once by [`ParameterOpts::parse_serde`].
     #[darling(skip)]
     serde: SerdeVariant,
     fields: darling::ast::Fields<ParameterStructFieldOpt>,
@@ -613,20 +612,17 @@ pub(crate) struct ParameterEnumVariantOpt {
 }
 
 impl ParameterEnumVariantOpt {
-    fn parse_serde(mut self) -> darling::Result<Self> {
-        self.serde = SerdeVariant::from_attrs(&self.attrs);
-        Ok(self)
+    fn parse_serde(&mut self, container: &SerdeContainer) {
+        let (serde, field_rules) = SerdeVariant::parse(&self.ident, &self.attrs, container);
+        self.serde = serde;
+        for field in &mut self.fields.fields {
+            field.parse_serde(field_rules);
+        }
     }
 
     /// The name the schema documents for this variant.
-    pub(crate) fn serde_name(&self, naming: VariantNaming) -> String {
-        self.serde.schema_name(&self.ident.to_string(), naming.variants)
-    }
-
-    /// The case convention for this struct variant's fields: its own `rename_all`, else the
-    /// container's `rename_all_fields`.
-    pub(crate) fn field_rename_all(&self, naming: VariantNaming) -> Option<RenameAll> {
-        self.serde.rename_all.schema().or(naming.fields)
+    pub(crate) fn serde_name(&self) -> String {
+        self.serde.schema_name().to_owned()
     }
 
     /// Statements that add the variant's `#[schematic(..)]` documentation to `variant_object`.
@@ -662,7 +658,7 @@ fn core_crate_path() -> Option<TokenStream2> {
 
 pub(crate) fn handler(input: TokenStream2) -> syn::Result<TokenStream2> {
     let x1 = parse2::<DeriveInput>(input)?;
-    let param_opts = ParameterOpts::from_derive_input(&x1)?;
+    let mut param_opts = ParameterOpts::from_derive_input(&x1)?;
     if let Some(name) = &param_opts.name {
         if name.is_empty() || !name.bytes().all(|c| c.is_ascii_alphanumeric() || matches!(c, b'_' | b'-' | b'.')) {
             return Err(syn::Error::new(
@@ -686,6 +682,7 @@ pub(crate) fn handler(input: TokenStream2) -> syn::Result<TokenStream2> {
         None => quote! { None },
     };
     let serde = SerdeContainer::from_input(&x1);
+    param_opts.parse_serde(&serde);
     let ident = param_opts.ident.clone();
     let doc = match param_opts.attrs.get_doc() {
         None => {
@@ -704,16 +701,12 @@ pub(crate) fn handler(input: TokenStream2) -> syn::Result<TokenStream2> {
             // representation. A tag turns it into an object and `untagged` writes null, so the
             // shape must come from the tag handler, not from the variant count.
             let is_simple_enum = enum_variants.iter().all(|variant| variant.fields.is_empty());
-            let naming = VariantNaming {
-                variants: serde.rename_all.schema(),
-                fields: serde.rename_all_fields.schema(),
-            };
             match serde.tagging {
-                Tagging::External if is_simple_enum => simple_enum::handler(&core, schema_name.clone(), doc, enum_variants, naming)?,
-                Tagging::External => external_tagged_enum::handler(&core, schema_name.clone(), doc, enum_variants, naming)?,
-                Tagging::Internal(tag_name) => tagged_enum::handler(&core, schema_name.clone(), doc, enum_variants, naming, tag_name)?,
-                Tagging::Adjacent { tag, content } => adjacent_tagged_enum::handler(&core, schema_name.clone(), doc, enum_variants, naming, tag, content)?,
-                Tagging::Untagged => untagged_enum::handler(&core, schema_name.clone(), doc, enum_variants, naming)?,
+                Tagging::External if is_simple_enum => simple_enum::handler(&core, schema_name.clone(), doc, enum_variants)?,
+                Tagging::External => external_tagged_enum::handler(&core, schema_name.clone(), doc, enum_variants)?,
+                Tagging::Internal(tag_name) => tagged_enum::handler(&core, schema_name.clone(), doc, enum_variants, tag_name)?,
+                Tagging::Adjacent { tag, content } => adjacent_tagged_enum::handler(&core, schema_name.clone(), doc, enum_variants, tag, content)?,
+                Tagging::Untagged => untagged_enum::handler(&core, schema_name.clone(), doc, enum_variants)?,
             }
         }
         Data::Struct(fields) => {
@@ -743,7 +736,7 @@ pub(crate) fn handler(input: TokenStream2) -> syn::Result<TokenStream2> {
                     "#[derive(Schematic)] does not support multi-field tuple structs; use a named struct",
                 ));
             } else {
-                named_struct::handler(&core, schema_name.clone(), doc, fields, serde.rename_all, serde.default)?
+                named_struct::handler(&core, schema_name.clone(), doc, fields, serde.default)?
             }
         }
     };
