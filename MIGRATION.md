@@ -124,7 +124,10 @@ and its other settings methods after `config()` and `state()`, so they can read 
 stored on `self`. Builder settings are given before startup. When a setting depends on the
 configuration, load the configuration first, handle a loading error yourself (`config_error_policy`
 only covers loading during startup), and build the application from it with `.config(loaded)` or
-`Gotcha::from_context`.
+`Gotcha::from_context`. Documented routes that depend on the state or on the actual bound port are
+also registered before startup, so they need both before the builder exists: bind your own
+listener, build the state, register the routes from it, and serve `into_router` on that listener.
+`finish_router` hooks see the context, but the routes they add are not documented.
 
 **The `into_router` path.** Builder methods only record settings; there are no getters, so keep the
 values you need in your own variables. `into_router` assembles the router and nothing else:
@@ -138,9 +141,14 @@ does, even when `load_config` replaces automatic loading. A configuration withou
 starts from `Gotcha::from_context`, optionally with `load_config`. `from_state_fn` receives the
 configuration as `Arc<ConfigWrapper<C>>`, the same value handlers later share.
 
-**Fallible assembly.** Work that a `build_router` override did and that can fail goes into
-`try_finish_router`, or into `from_state_fn` when it does not need the router; `finish_router` and
-`try_finish_router` then mount services from `context.state`.
+**Synchronous assembly.** `into_router`, `finish_router`, and `try_finish_router` do not `await`,
+while a `build_router` override could. Work that an override did and that can fail goes into
+`try_finish_router`. Work that must `await` goes into `from_state_fn`, or before `into_router` when
+you build the context yourself; `finish_router` and `try_finish_router` then mount services from
+`context.state`. `from_state_fn` runs before the context exists, so it has no shutdown token: a
+startup step that awaits, can fail, and needs `GotchaContext::shutdown` has no builder equivalent
+on the `run`/`bind` path. It is the one capability of a `build_router` override the builder does
+not cover.
 
 ---
 
