@@ -15,9 +15,9 @@ rustdoc-args = ["--cfg", "docsrs"]
 proc-macro = true
 
 [dependencies]
-syn = "1.0"
-quote = "1.0"
-proc-macro2 = "1.0.47"
-darling = "0.14.2"
-proc-macro-error = { version = "1", default-features = false }
+# `full` for `ItemFn` (`#[api]`), `extra-traits` for the `Debug` derives on the parsed options.
+syn = { version = "2.0.15", features = ["full", "extra-traits"] }
+quote = "1.0.18"
+proc-macro2 = "1.0.86"
+darling = "0.23"
 proc-macro-crate = "3"

@@ -1,6 +1,6 @@
 use darling::ast::Data;
 use darling::{FromDeriveInput, FromField, FromVariant};
-use proc_macro2::{Delimiter, Group, Span, TokenStream as TokenStream2, TokenTree};
+use proc_macro2::{Delimiter, Group, TokenStream as TokenStream2, TokenTree};
 use quote::quote;
 use syn::{parse2, DeriveInput};
 
@@ -13,8 +13,9 @@ pub mod tagged_enum;
 pub mod untagged_enum;
 
 use crate::utils::{
-    get_serde_name, has_serde_default, has_serde_flatten, has_serde_skip, has_serde_skip_serializing, has_serde_transparent, parse_serde_rename,
-    parse_serde_rename_all, parse_serde_rename_all_deserialize, parse_serde_rename_all_fields, serde_field_presence, AttributesExt, RenameAll,
+    expr_lit, get_serde_name, has_serde_default, has_serde_flatten, has_serde_skip, has_serde_skip_serializing, has_serde_transparent, lit_str,
+    parse_serde_rename, parse_serde_rename_all, parse_serde_rename_all_deserialize, parse_serde_rename_all_fields, serde_field_presence, AttributesExt,
+    RenameAll,
 };
 
 #[derive(Debug, PartialEq, Eq)]
@@ -50,20 +51,18 @@ impl ParameterExtraField {
         let rename_all_deserialize = parse_serde_rename_all_deserialize(attrs);
 
         for attr in attrs {
-            if attr.path.is_ident("serde") {
-                if let Ok(nested) =
-                    attr.parse_args_with(|input: syn::parse::ParseStream| syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated(input))
-                {
+            if attr.path().is_ident("serde") {
+                if let Ok(nested) = attr.parse_args_with(syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated) {
                     for meta in nested {
                         match meta {
                             syn::Meta::NameValue(name_value) => {
                                 if name_value.path.is_ident("tag") {
-                                    if let syn::Lit::Str(lit_str) = name_value.lit {
-                                        tag_name = Some(lit_str.value());
+                                    if let Some(tag) = lit_str(&name_value.value) {
+                                        tag_name = Some(tag);
                                     }
                                 } else if name_value.path.is_ident("content") {
-                                    if let syn::Lit::Str(lit_str) = name_value.lit {
-                                        content_name = Some(lit_str.value());
+                                    if let Some(content) = lit_str(&name_value.value) {
+                                        content_name = Some(content);
                                     }
                                 }
                             }
@@ -116,6 +115,26 @@ pub(crate) struct ParameterOpts {
 struct SchemaValue(TokenStream2);
 
 impl darling::FromMeta for SchemaValue {
+    /// A negative number is a literal, as it was before syn 2: syn 2 parses `-1` as a literal
+    /// only when it ends the attribute, and as a negation expression when an item follows.
+    fn from_expr(expr: &syn::Expr) -> darling::Result<Self> {
+        match expr {
+            syn::Expr::Lit(lit) => Self::from_value(&lit.lit),
+            syn::Expr::Group(group) => Self::from_expr(&group.expr),
+            // `-$x` with a `macro_rules!` fragment negates an invisible group around the literal.
+            syn::Expr::Unary(syn::ExprUnary {
+                op: syn::UnOp::Neg(_),
+                expr: inner,
+                ..
+            }) => match expr_lit(inner) {
+                Some(lit) => Self::negative(lit),
+                None => Err(darling::Error::unexpected_expr_type(expr)),
+            },
+            _ => Err(darling::Error::unexpected_expr_type(expr)),
+        }
+        .map_err(|error| error.with_span(expr))
+    }
+
     fn from_value(value: &syn::Lit) -> darling::Result<Self> {
         let tokens = match value {
             syn::Lit::Str(v) => {
@@ -135,6 +154,28 @@ impl darling::FromMeta for SchemaValue {
                 quote! { #v }
             }
             _ => return Err(darling::Error::unexpected_lit_type(value)),
+        };
+        Ok(SchemaValue(tokens))
+    }
+}
+
+impl SchemaValue {
+    /// `-<lit>` for a number literal, keeping the integer/float distinction of [`Self::from_value`].
+    fn negative(lit: &syn::Lit) -> darling::Result<Self> {
+        let tokens = match lit {
+            syn::Lit::Int(v) => {
+                let v = format!("-{}", v.base10_digits())
+                    .parse::<i64>()
+                    .map_err(|error| syn::Error::new(v.span(), error))?;
+                quote! { #v }
+            }
+            syn::Lit::Float(v) => {
+                let v = format!("-{}", v.base10_digits())
+                    .parse::<f64>()
+                    .map_err(|error| syn::Error::new(v.span(), error))?;
+                quote! { #v }
+            }
+            _ => return Err(darling::Error::unexpected_lit_type(lit)),
         };
         Ok(SchemaValue(tokens))
     }
@@ -183,18 +224,17 @@ struct ValidateConstraints {
 /// The items of a `#[validate(...)]` attribute, parsed leniently.
 ///
 /// The validator crate accepts arguments that are not literals — `regex(path = *RE)`,
-/// `length(max = MAX_LEN)` — which `syn::Meta` cannot represent. Rather than dropping the whole
+/// `length(max = MAX_LEN)` — whose values are unknown at expansion time. Rather than dropping the whole
 /// attribute (and with it every constraint it declares), each list is rewritten to the literal
 /// name-value items it contains, so the constraints that map to JSON Schema are still read.
 fn validate_items(attr: &syn::Attribute) -> Vec<syn::Meta> {
-    let mut tokens = attr.tokens.clone().into_iter();
-    let Some(TokenTree::Group(group)) = tokens.next() else {
+    let syn::Meta::List(list) = &attr.meta else {
         return Vec::new();
     };
-    if tokens.next().is_some() || group.delimiter() != Delimiter::Parenthesis {
+    if !matches!(list.delimiter, syn::MacroDelimiter::Paren(_)) {
         return Vec::new();
     }
-    split_top_level_commas(group.stream()).into_iter().filter_map(lenient_meta).collect()
+    split_top_level_commas(list.tokens.clone()).into_iter().filter_map(lenient_meta).collect()
 }
 
 /// Split a token stream on its top-level commas. Commas inside a group are part of that group.
@@ -216,11 +256,11 @@ fn split_top_level_commas(tokens: TokenStream2) -> Vec<TokenStream2> {
     items
 }
 
-/// Parse one comma-separated item of `#[validate(...)]`, dropping the parts `syn` cannot
-/// represent. A `name(args)` item with a non-literal argument keeps its literal arguments, so
+/// Parse one comma-separated item of `#[validate(...)]`, dropping the parts that are not
+/// literal. A `name(args)` item with a non-literal argument keeps its literal arguments, so
 /// `length(min = 1, max = MAX_LEN)` still yields `length(min = 1)`.
 fn lenient_meta(tokens: TokenStream2) -> Option<syn::Meta> {
-    if let Ok(meta) = syn::parse2::<syn::Meta>(tokens.clone()) {
+    if let Some(meta) = literal_meta(tokens.clone()) {
         return Some(meta);
     }
     let mut path_tokens = Vec::new();
@@ -241,16 +281,60 @@ fn lenient_meta(tokens: TokenStream2) -> Option<syn::Meta> {
         let nested_tokens = quote! { #(#nested),* };
         let mut rebuilt = quote! { #path };
         rebuilt.extend([TokenTree::Group(Group::new(Delimiter::Parenthesis, nested_tokens))]);
-        return syn::parse2::<syn::Meta>(rebuilt).ok();
+        return literal_meta(rebuilt);
     }
     None
+}
+
+/// `tokens` as a `Meta` whose arguments are all literals: a path, `name = <literal>`, or a
+/// parenthesized list of such items and bare literals. Anything else is `None`.
+///
+/// syn 2 parses any expression after `=`, so the literal-only shape the schema mirrors is checked
+/// here. List items are parsed one at a time, as syn 2 reads a negative number as a literal only
+/// when nothing follows it.
+fn literal_meta(tokens: TokenStream2) -> Option<syn::Meta> {
+    let meta = syn::parse2::<syn::Meta>(tokens).ok()?;
+    let literal = match &meta {
+        syn::Meta::Path(_) => true,
+        syn::Meta::NameValue(name_value) => expr_lit(&name_value.value).is_some(),
+        syn::Meta::List(list) => {
+            matches!(list.delimiter, syn::MacroDelimiter::Paren(_))
+                && list_items(list.tokens.clone()).is_some_and(|items| {
+                    items
+                        .into_iter()
+                        .all(|item| syn::parse2::<syn::Lit>(item.clone()).is_ok() || literal_meta(item).is_some())
+                })
+        }
+    };
+    literal.then_some(meta)
+}
+
+/// The comma-separated items of a list, or `None` when an item is empty. Only one trailing comma
+/// is accepted, as in `Punctuated::parse_terminated`.
+fn list_items(tokens: TokenStream2) -> Option<Vec<TokenStream2>> {
+    let mut items = Vec::new();
+    let mut current = TokenStream2::new();
+    for token in tokens {
+        if matches!(&token, TokenTree::Punct(punct) if punct.as_char() == ',') {
+            if current.is_empty() {
+                return None;
+            }
+            items.push(std::mem::take(&mut current));
+        } else {
+            current.extend([token]);
+        }
+    }
+    if !current.is_empty() {
+        items.push(current);
+    }
+    Some(items)
 }
 
 impl ValidateConstraints {
     fn from_attrs(attrs: &[syn::Attribute]) -> Self {
         let mut c = ValidateConstraints::default();
         for attr in attrs {
-            if !attr.path.is_ident("validate") {
+            if !attr.path().is_ident("validate") {
                 continue;
             }
             for item in validate_items(attr) {
@@ -258,15 +342,15 @@ impl ValidateConstraints {
                     syn::Meta::List(list) if list.path.is_ident("range") => {
                         for (name, lit) in name_values(&list) {
                             match name.as_str() {
-                                "min" => c.minimum = lit_to_f64(lit),
-                                "max" => c.maximum = lit_to_f64(lit),
+                                "min" => c.minimum = lit_to_f64(&lit),
+                                "max" => c.maximum = lit_to_f64(&lit),
                                 // JSON Schema stores exclusive bounds as numbers.
                                 "exclusive_min" => {
-                                    c.minimum = lit_to_f64(lit);
+                                    c.minimum = lit_to_f64(&lit);
                                     c.exclusive_minimum = true;
                                 }
                                 "exclusive_max" => {
-                                    c.maximum = lit_to_f64(lit);
+                                    c.maximum = lit_to_f64(&lit);
                                     c.exclusive_maximum = true;
                                 }
                                 _ => {}
@@ -276,12 +360,12 @@ impl ValidateConstraints {
                     syn::Meta::List(list) if list.path.is_ident("length") => {
                         for (name, lit) in name_values(&list) {
                             match name.as_str() {
-                                "min" => c.min_length = lit_to_u64(lit),
-                                "max" => c.max_length = lit_to_u64(lit),
+                                "min" => c.min_length = lit_to_u64(&lit),
+                                "max" => c.max_length = lit_to_u64(&lit),
                                 // `equal` fixes both bounds.
                                 "equal" => {
-                                    c.min_length = lit_to_u64(lit);
-                                    c.max_length = lit_to_u64(lit);
+                                    c.min_length = lit_to_u64(&lit);
+                                    c.max_length = lit_to_u64(&lit);
                                 }
                                 _ => {}
                             }
@@ -301,11 +385,11 @@ impl ValidateConstraints {
 }
 
 /// The `name = <lit>` pairs inside a `range(..)` / `length(..)` list.
-fn name_values(list: &syn::MetaList) -> Vec<(String, &syn::Lit)> {
-    list.nested
-        .iter()
-        .filter_map(|n| match n {
-            syn::NestedMeta::Meta(syn::Meta::NameValue(nv)) => Some((nv.path.get_ident()?.to_string(), &nv.lit)),
+fn name_values(list: &syn::MetaList) -> Vec<(String, syn::Lit)> {
+    split_top_level_commas(list.tokens.clone())
+        .into_iter()
+        .filter_map(|item| match syn::parse2::<syn::Meta>(item).ok()? {
+            syn::Meta::NameValue(name_value) => Some((name_value.path.get_ident()?.to_string(), expr_lit(&name_value.value)?.clone())),
             _ => None,
         })
         .collect()
@@ -624,25 +708,20 @@ impl ParameterEnumVariantOpt {
 // Resolve once per derive, then pass the same path through every schema generator.
 // Libraries can stay on core alone; applications can use gotcha's re-export. Cargo
 // dependency aliases are resolved by package name, including workspace dependencies.
-fn core_crate_path() -> Result<TokenStream2, &'static str> {
+fn core_crate_path() -> Option<TokenStream2> {
     if let Some(core) = crate::utils::crate_path("gotcha_core") {
-        return Ok(core);
+        return Some(core);
     }
-    if let Some(gotcha) = crate::utils::crate_path("gotcha") {
-        return Ok(quote! { #gotcha::gotcha_core });
-    }
-    Err("Schematic requires a gotcha_core or gotcha dependency; use #[schematic(crate = \"path::to::gotcha_core\")] for a custom re-export")
+    let gotcha = crate::utils::crate_path("gotcha")?;
+    Some(quote! { #gotcha::gotcha_core })
 }
 
-pub(crate) fn handler(input: TokenStream2) -> Result<TokenStream2, (Span, &'static str)> {
-    let x1 = parse2::<DeriveInput>(input).unwrap();
-    let param_opts: ParameterOpts = match ParameterOpts::from_derive_input(&x1) {
-        Ok(opts) => opts,
-        Err(error) => return Ok(error.write_errors()),
-    };
+pub(crate) fn handler(input: TokenStream2) -> syn::Result<TokenStream2> {
+    let x1 = parse2::<DeriveInput>(input)?;
+    let param_opts = ParameterOpts::from_derive_input(&x1)?;
     if let Some(name) = &param_opts.name {
         if name.is_empty() || !name.bytes().all(|c| c.is_ascii_alphanumeric() || matches!(c, b'_' | b'-' | b'.')) {
-            return Err((
+            return Err(syn::Error::new(
                 param_opts.ident.span(),
                 "schema name must be nonempty and contain only ASCII letters, digits, '.', '-' or '_'",
             ));
@@ -650,7 +729,12 @@ pub(crate) fn handler(input: TokenStream2) -> Result<TokenStream2, (Span, &'stat
     }
     let core = match &param_opts.crate_path {
         Some(path) => quote! { #path },
-        None => core_crate_path().map_err(|message| (param_opts.ident.span(), message))?,
+        None => core_crate_path().ok_or_else(|| {
+            syn::Error::new(
+                param_opts.ident.span(),
+                "Schematic requires a gotcha_core or gotcha dependency; use #[schematic(crate = \"path::to::gotcha_core\")] for a custom re-export",
+            )
+        })?,
     };
     let schema_name = param_opts.name.clone().unwrap_or_else(|| param_opts.ident.to_string());
     let name_override = match &param_opts.name {
@@ -699,15 +783,11 @@ pub(crate) fn handler(input: TokenStream2) -> Result<TokenStream2, (Span, &'stat
             // `#[serde(transparent)]` serializes its single non-skipped field; extra
             // `#[serde(skip)]` fields (the typed-ID `PhantomData` pattern) are allowed.
             let transparent_index = if extra_field.transparent && !is_tuple {
-                let mut selected = None;
-                let mut count = 0;
-                for (index, field) in fields.fields.iter().enumerate() {
-                    if !has_serde_skip(&field.attrs) {
-                        count += 1;
-                        selected = Some(index);
-                    }
+                let mut kept = fields.fields.iter().enumerate().filter(|(_, field)| !has_serde_skip(&field.attrs));
+                match (kept.next(), kept.next()) {
+                    (Some((index, _)), None) => Some(index),
+                    _ => None,
                 }
-                (count == 1).then_some(selected.expect("one non-skipped field"))
             } else {
                 None
             };
@@ -715,10 +795,11 @@ pub(crate) fn handler(input: TokenStream2) -> Result<TokenStream2, (Span, &'stat
                 // Newtype struct (e.g. `struct UserId(Uuid);`) — transparent to the inner type.
                 newtype_struct::handler(&core, fields.fields, param_opts.name.as_deref())
             } else if let Some(index) = transparent_index {
-                let field = fields.fields.into_iter().nth(index).expect("transparent field index");
+                let mut fields = fields.fields;
+                let field = fields.swap_remove(index);
                 newtype_struct::handler(&core, vec![field], param_opts.name.as_deref())
             } else if is_tuple {
-                return Err((
+                return Err(syn::Error::new(
                     ident.span(),
                     "#[derive(Schematic)] does not support multi-field tuple structs; use a named struct",
                 ));
@@ -754,15 +835,15 @@ mod name_tests {
     fn component_names_reject_invalid_openapi_keys() {
         for name in ["", "Bad/Name", "Bad~Name", "Bad Name", "Bad<Name>"] {
             let error = handler(quote! { #[schematic(name = #name)] struct Example { value: String } }).unwrap_err();
-            assert!(error.1.contains("schema name must be nonempty"));
+            assert!(error.to_string().contains("schema name must be nonempty"));
         }
         assert!(handler(quote! { #[schematic(crate = "::gotcha_core", name = "public.Result-v1")] struct Example { value: String } }).is_ok());
     }
 
     #[test]
     fn misspelled_container_options_report_compile_errors() {
-        let output = handler(quote! { #[schematic(nmae = "Example")] struct Example { value: String } }).unwrap();
-        assert!(output.to_string().contains("compile_error"));
+        let error = handler(quote! { #[schematic(nmae = "Example")] struct Example { value: String } }).unwrap_err();
+        assert!(error.to_string().contains("Unknown field: `nmae`"));
     }
 }
 
@@ -800,5 +881,31 @@ mod validate_tests {
         })
         .unwrap();
         assert!(output.to_string().contains("Schematic"));
+    }
+}
+
+#[cfg(test)]
+mod schema_value_tests {
+    use super::*;
+
+    fn derive_with_example(value: TokenStream2) -> syn::Result<TokenStream2> {
+        handler(quote! {
+            #[schematic(crate = "::gotcha_core")]
+            struct Example {
+                #[schematic(example = #value, title = "t")]
+                value: i64,
+            }
+        })
+    }
+
+    #[test]
+    fn only_number_literals_are_negated() {
+        for value in [quote!(--1), quote!(-"x"), quote!(-true), quote!(-LIMIT)] {
+            assert!(derive_with_example(value.clone()).is_err(), "{value}");
+        }
+        // A `macro_rules!` fragment arrives in an invisible group, which is looked through.
+        let fragment = Group::new(Delimiter::None, quote!(7));
+        let output = derive_with_example(quote!(-#fragment)).unwrap().to_string().replace(' ', "");
+        assert!(output.contains("[-7i64]"), "{output}");
     }
 }

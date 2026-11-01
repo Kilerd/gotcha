@@ -1,4 +1,4 @@
-error: Unknown field: `unknown`
+error: Unknown field: `unknown`. Available values: `description`, `title`
  --> tests/fail/parameter_attributes/unknown_variant_key.rs:5:17
   |
 5 |     #[schematic(unknown = "x")]

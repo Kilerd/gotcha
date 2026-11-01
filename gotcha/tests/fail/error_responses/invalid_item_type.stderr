@@ -1,4 +1,4 @@
-error: unexpected end of input, expected one of: `for`, parentheses, `fn`, `unsafe`, `extern`, identifier, `::`, `<`, square brackets, `*`, `&`, `!`, `impl`, `_`, lifetime
+error: unexpected end of input, expected one of: `for`, parentheses, `fn`, `unsafe`, `extern`, identifier, `::`, `<`, `dyn`, square brackets, `*`, `&`, `!`, `impl`, `_`, lifetime
  --> tests/fail/error_responses/invalid_item_type.rs:3:98
   |
 3 | #[api(skip_response, responses(response(status = 200, content_type = "text/event-stream", item = "Vec<")))]

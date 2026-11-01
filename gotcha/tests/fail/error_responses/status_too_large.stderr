@@ -1,0 +1,5 @@
+error: number too large to fit in target type
+ --> tests/fail/error_responses/status_too_large.rs:3:35
+  |
+3 | #[api(responses(response(status = 99999)))]
+  |                                   ^^^^^

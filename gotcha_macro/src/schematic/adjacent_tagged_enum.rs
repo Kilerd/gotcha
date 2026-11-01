@@ -1,4 +1,4 @@
-use proc_macro2::{Span, TokenStream as TokenStream2};
+use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 
 use crate::schematic::{ParameterEnumVariantOpt, VariantNaming};
@@ -9,7 +9,7 @@ use crate::utils::{get_serde_name, parse_serde_rename, parse_serde_rename_all};
 pub(crate) fn handler(
     core: &TokenStream2, ident_string: String, doc: TokenStream2, variants: Vec<ParameterEnumVariantOpt>, naming: VariantNaming, tag_name: String,
     content_name: String,
-) -> Result<TokenStream2, (Span, &'static str)> {
+) -> syn::Result<TokenStream2> {
     let tag_name_str = tag_name.as_str();
     let content_name_str = content_name.as_str();
 

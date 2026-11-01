@@ -1,4 +1,4 @@
-error: Unknown field: `item`
+error: Unknown field: `item`. Available values: `body`, `content_type`, `description`, `required`
  --> tests/fail/request_bodies/unknown_field.rs:3:37
   |
 3 | #[api(request_body(body = "String", item = "String"))]

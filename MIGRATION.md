@@ -1,5 +1,6 @@
 # Migration Guide
 
+- [Unreleased: the macro crate needs Rust 1.88](#unreleased-the-macro-crate-needs-rust-188)
 - [Unreleased: untagged enums use anyOf](#unreleased-untagged-enums-use-anyof)
 - [Unreleased: variant-level schematic attributes](#unreleased-variant-level-schematic-attributes)
 - [Unreleased: derive documents serde's wire shapes](#unreleased-derive-documents-serdes-wire-shapes)
@@ -37,6 +38,14 @@
 - [Unreleased: default configuration sources](#unreleased-default-configuration-sources)
 - [0.3 → 0.4](#03--04) — **every application must edit its route paths and configuration file**
 - [0.2 → 0.3: API simplification](#02--03-api-simplification)
+
+---
+
+# Unreleased: the macro crate needs Rust 1.88
+
+`gotcha_macro` now depends on darling 0.23, which declares `rust-version = "1.88"`, so a
+dependency tree with only `gotcha_core` or `gotcha_macro` needs Rust 1.88 (previously 1.85).
+`gotcha` already resolved darling 0.23 through `validator`, so its requirement is unchanged.
 
 ---
 
