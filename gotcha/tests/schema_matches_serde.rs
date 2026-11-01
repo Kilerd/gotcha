@@ -396,6 +396,105 @@ enum VariantFieldsUntagged {
     },
 }
 
+/// A flattened map adds `additionalProperties` to the containing object.
+#[derive(Schematic, Serialize, Deserialize)]
+struct FlattenMap {
+    id: u32,
+    #[serde(flatten)]
+    extra: HashMap<String, String>,
+}
+
+/// An internally tagged newtype variant wrapping a map merges the entries next to the tag.
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(tag = "kind")]
+enum TaggedNewtypeMap {
+    V(HashMap<String, u32>),
+    Named { id: u32 },
+}
+
+/// A flattened enum and a flattened map in one struct: the map must not constrain the parent's
+/// own fields, so it becomes `unevaluatedProperties` next to the `allOf`.
+#[derive(Schematic, Serialize, Deserialize)]
+struct FlattenEnumAndMap {
+    id: u32,
+    #[serde(flatten)]
+    kind: InternallyTagged,
+    #[serde(flatten)]
+    extra: HashMap<String, String>,
+}
+
+/// A map may be flattened through `Option` or an intermediate struct.
+#[derive(Schematic, Serialize, Deserialize)]
+struct FlattenOptionalMap {
+    id: u32,
+    #[serde(flatten)]
+    extra: Option<HashMap<String, String>>,
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+struct MapHolder {
+    #[serde(flatten)]
+    extra: HashMap<String, String>,
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+struct FlattenIntermediateMap {
+    id: u32,
+    #[serde(flatten)]
+    inner: MapHolder,
+}
+
+/// An empty flattened struct contributes nothing and must not register a component.
+#[derive(Schematic, Serialize, Deserialize)]
+struct EmptyFlat {}
+
+#[derive(Schematic, Serialize, Deserialize)]
+struct WithEmptyFlat {
+    id: u32,
+    #[serde(flatten)]
+    empty: EmptyFlat,
+}
+
+/// A named map newtype forwards the map's value schema without registering the wrapper.
+#[derive(Schematic, Serialize, Deserialize)]
+#[schematic(name = "NamedMapWrap")]
+struct NamedMapWrap(HashMap<String, String>);
+
+#[derive(Schematic, Serialize, Deserialize)]
+struct WithNamedMapWrap {
+    id: u32,
+    #[serde(flatten)]
+    map: NamedMapWrap,
+}
+
+/// Flattening an optional map of a derived value must reference that value, not orphan it.
+#[derive(Schematic, Serialize, Deserialize)]
+struct FlattenOptionalAuditMap {
+    id: u32,
+    #[serde(flatten)]
+    extra: Option<HashMap<String, Audit>>,
+}
+
+/// A struct flattening an internally tagged enum whose newtype variant wraps a map: the map's
+/// `additionalProperties` is stripped from the composed branch so it cannot constrain `name`.
+#[derive(Schematic, Serialize, Deserialize)]
+struct FlattensTaggedMap {
+    name: String,
+    #[serde(flatten)]
+    map: TaggedNewtypeMap,
+}
+
+/// A map flattened into a struct variant contributes `additionalProperties` to the branch.
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(tag = "kind")]
+enum VariantWithMap {
+    Mapped {
+        id: u32,
+        #[serde(flatten)]
+        extra: HashMap<String, String>,
+    },
+}
+
 /// An all-unit enum: the wire form is a plain string.
 #[derive(Schematic, Serialize, Deserialize)]
 enum SimpleEnum {
@@ -613,6 +712,68 @@ fn struct_variant_fields_match_serde() {
 }
 
 #[test]
+fn flattened_maps_match_serde() {
+    assert_serialization_matches(&FlattenMap {
+        id: 1,
+        extra: HashMap::from([("a".to_owned(), "b".to_owned())]),
+    });
+    assert_serialization_matches(&TaggedNewtypeMap::V(HashMap::from([("a".to_owned(), 2)])));
+    assert_serialization_matches(&TaggedNewtypeMap::Named { id: 1 });
+    assert_serialization_matches(&FlattenEnumAndMap {
+        id: 1,
+        kind: InternallyTagged::A { x: 2 },
+        extra: HashMap::from([("a".to_owned(), "b".to_owned())]),
+    });
+    assert_serialization_matches(&FlattenOptionalMap {
+        id: 1,
+        extra: Some(HashMap::from([("a".to_owned(), "b".to_owned())])),
+    });
+    assert_serialization_matches(&FlattenOptionalMap { id: 1, extra: None });
+    assert_serialization_matches(&FlattenIntermediateMap {
+        id: 1,
+        inner: MapHolder {
+            extra: HashMap::from([("a".to_owned(), "b".to_owned())]),
+        },
+    });
+    assert_serialization_matches(&WithEmptyFlat { id: 1, empty: EmptyFlat {} });
+    assert_serialization_matches(&WithNamedMapWrap {
+        id: 1,
+        map: NamedMapWrap(HashMap::from([("a".to_owned(), "b".to_owned())])),
+    });
+    assert_serialization_matches(&FlattenOptionalAuditMap {
+        id: 1,
+        extra: Some(HashMap::from([(
+            "a".to_owned(),
+            Audit {
+                created_by: "x".into(),
+                version: 1,
+            },
+        )])),
+    });
+    assert_serialization_matches(&VariantWithMap::Mapped {
+        id: 1,
+        extra: HashMap::from([("a".to_owned(), "b".to_owned())]),
+    });
+}
+
+#[test]
+fn a_flattened_map_variant_does_not_constrain_the_parent() {
+    // Loose validation on purpose: strict mode rejects the undocumented map entry, which is the
+    // known limitation of flattening a map newtype variant.
+    let document = schema_document::<FlattensTaggedMap>();
+    let instance = serde_json::to_value(FlattensTaggedMap {
+        name: "x".into(),
+        map: TaggedNewtypeMap::V(HashMap::from([("a".to_owned(), 2)])),
+    })
+    .expect("sample serializes");
+    let validator = jsonschema::validator_for(&document).expect("generated schema is a valid JSON Schema");
+    assert!(
+        validator.validate(&instance).is_ok(),
+        "the branch map constraint must not apply to the parent's fields: {instance} vs {document}"
+    );
+}
+
+#[test]
 fn flattened_tagged_enums_match_serde() {
     assert_serialization_matches(&FlattensInternallyTagged {
         id: 1,
@@ -714,14 +875,13 @@ fn component_references_resolve() {
 //   parent's fields, while the flattened schema documents `"A"`.
 // - An externally tagged enum whose variants are all zero-field struct variants (`A {}`): it is
 //   still routed to the string-enum shape (the dispatch checks emptiness, not `Style::Unit`).
-// - A `#[serde(flatten)]` field whose type is a map inside a struct variant is dropped from the
-//   variant schema (the named-struct path gains `additionalProperties` only later).
 // - `#[serde(skip)]` on a tuple-variant field: serde writes the remaining elements, while the
 //   schema still requires one item per declared field.
+// - Flattening an internally tagged enum whose newtype variant wraps a map omits the map's
+//   `additionalProperties` from the composed schema: keeping it would constrain the parent's own
+//   declared fields (the variant branch is composed through `allOf`).
+// - Flattening an untagged enum whose newtype variant wraps a struct that itself flattens a map
+//   composes through that struct's `$ref`, so the map's `additionalProperties` still constrains
+//   the parent's fields.
 // - Untagged enums use `oneOf`, so a value matching several branches fails validation (`u32|f64`
-//   with `1`). Struct variants whose fields are subsets only pass because strict validation
-//   rejects the superset branch's extra fields; the schema itself still overlaps.
-// - A `#[serde(flatten)]` field whose type is a map (for example `HashMap<String, String>`) is
-//   dropped from the schema; serde merges its entries into the containing object.
-// - An internally tagged enum with a newtype variant wrapping a map documents only the tag; serde
-//   merges the map's entries next to the tag.
+//   with `1`); #180 changes untagged enums to `anyOf`.

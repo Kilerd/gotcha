@@ -97,15 +97,27 @@ pub(crate) fn handler(
                                         properties_required_fields.push(inner_name.to_string());
                                     }
                                 }
+                                // A map-like inner value merges its entries next to the tag
+                                // through `additionalProperties`; the trait method reports it
+                                // without generating/registering the wrapper's own schema.
+                                if collect_additional {
+                                    if let Some(additional) = <#field_ty as #core::Schematic>::additional_properties() {
+                                        inner_additional = Some(additional);
+                                    }
+                                }
                             }
                         })
                         .collect();
                     quote! {
                         let mut properties: ::std::collections::HashMap<String, #core::serde_json::Value> = ::std::collections::HashMap::new();
                         let mut properties_required_fields: Vec<String> = vec![];
+                        let mut inner_additional: Option<#core::serde_json::Value> = None;
                         #tag_property
                         #( #field_merges )*
                         let mut variant_object: ::std::collections::HashMap<String, #core::serde_json::Value> = ::std::collections::HashMap::new();
+                        if let Some(additional) = inner_additional {
+                            variant_object.insert("additionalProperties".to_string(), additional);
+                        }
                         variant_object.insert("title".to_string(), #core::serde_json::to_value(#varient_string).expect("cannot convert title to value"));
                         variant_object.insert("type".to_string(), #core::serde_json::to_value("object").expect("cannot convert type to value"));
                         variant_object.insert("properties".to_string(), #core::serde_json::to_value(properties).expect("cannot convert properties to value"));
@@ -146,6 +158,9 @@ pub(crate) fn handler(
                     required: Self::required(),
                 };
                 let mut branches = vec![];
+                // `flatten_schema` sets this to false: the map's value schema must not be
+                // registered there when the branch constraint is stripped anyway.
+                let collect_additional = true;
 
                 #(
                     #variants_codegen
@@ -160,12 +175,19 @@ pub(crate) fn handler(
         }
 
         fn flatten_schema() -> Option<#core::serde_json::Value> {
-            // Return the oneOf schema for flattening
+            // Return the oneOf schema for flattening. A branch's `additionalProperties` would
+            // also constrain the fields the parent declares next to the flattened enum, so it is
+            // dropped here (the map's entries stay undocumented at the parent level).
             let mut branches: Vec<::std::collections::HashMap<String, #core::serde_json::Value>> = vec![];
+            let collect_additional = false;
             #(
                 #variants_codegen
                 branches.push(variant_object);
             )*
+            for branch in &mut branches {
+                branch.remove("additionalProperties");
+                branch.remove("unevaluatedProperties");
+            }
             let mut discriminator: ::std::collections::HashMap<String, #core::serde_json::Value> = ::std::collections::HashMap::new();
             discriminator.insert("propertyName".to_string(), #core::serde_json::to_value(#tag_name_str).unwrap());
             let mut obj: ::std::collections::HashMap<String, #core::serde_json::Value> = ::std::collections::HashMap::new();

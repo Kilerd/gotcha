@@ -203,6 +203,14 @@ pub trait Schematic {
     fn flatten_schema() -> Option<serde_json::Value> {
         None
     }
+    /// The schema of the values a map-like type accepts, used by the derive to document
+    /// `#[serde(flatten)]` without generating the map wrapper's own schema (which would
+    /// register components during collection). Non-map types return `None`; transparent
+    /// wrappers forward it so flattening keeps working through `Option`, pointers and newtypes.
+    #[doc(hidden)]
+    fn additional_properties() -> Option<serde_json::Value> {
+        None
+    }
 
     /// The Rust-name to serde-wire-name mapping for this type's fields.
     ///
@@ -631,6 +639,10 @@ impl<T: Schematic> Schematic for Option<T> {
         T::flatten_schema().map(|inner| serde_json::json!({ "anyOf": [inner, {}] }))
     }
 
+    fn additional_properties() -> Option<serde_json::Value> {
+        T::additional_properties()
+    }
+
     fn wire_fields() -> &'static [WireField] {
         T::wire_fields()
     }
@@ -670,6 +682,9 @@ impl<T: Schematic> Schematic for &T {
     }
     fn flatten_schema() -> Option<serde_json::Value> {
         T::flatten_schema()
+    }
+    fn additional_properties() -> Option<serde_json::Value> {
+        T::additional_properties()
     }
     fn wire_fields() -> &'static [WireField] {
         T::wire_fields()
@@ -723,6 +738,10 @@ macro_rules! impl_transparent_pointer {
 
             fn flatten_schema() -> Option<serde_json::Value> {
                 T::flatten_schema()
+            }
+
+            fn additional_properties() -> Option<serde_json::Value> {
+                T::additional_properties()
             }
 
             fn wire_fields() -> &'static [WireField] {
@@ -936,6 +955,10 @@ impl<K: ToString, V: Schematic> Schematic for HashMap<K, V> {
             .insert("additionalProperties".to_string(), V::generate_schema().schema.to_value());
         schema
     }
+
+    fn additional_properties() -> Option<serde_json::Value> {
+        Some(V::generate_schema().schema.to_value())
+    }
     fn wire_fields() -> &'static [WireField] {
         V::wire_fields()
     }
@@ -972,6 +995,10 @@ impl<K: ToString, V: Schematic> Schematic for BTreeMap<K, V> {
             .extras
             .insert("additionalProperties".to_string(), V::generate_schema().schema.to_value());
         schema
+    }
+
+    fn additional_properties() -> Option<serde_json::Value> {
+        Some(V::generate_schema().schema.to_value())
     }
     fn wire_fields() -> &'static [WireField] {
         V::wire_fields()
