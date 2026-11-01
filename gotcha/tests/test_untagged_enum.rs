@@ -86,7 +86,7 @@ fn test_untagged_mixed_variants() {
     assert_eq!(complex.get("type").unwrap().as_str().unwrap(), "object");
 }
 
-// === Untagged with rename_all on variant fields ===
+// === Untagged rename_all names variants, not fields (serde behaviour) ===
 #[derive(Debug, Clone, Serialize, Deserialize, Schematic)]
 #[serde(untagged, rename_all = "camelCase")]
 pub enum UntaggedWithRename {
@@ -102,16 +102,17 @@ fn test_untagged_with_rename_all() {
 
     let one_of = json.get("oneOf").unwrap().as_array().unwrap();
 
-    // Check camelCase field names
+    // `rename_all` names the variants, which untagged serialization never writes; serde keeps
+    // the fields' Rust names, and so does the schema.
     let request = &one_of[0];
     let req_props = request.get("properties").unwrap().as_object().unwrap();
-    assert!(req_props.contains_key("userName"), "should have camelCase userName");
-    assert!(req_props.contains_key("requestId"), "should have camelCase requestId");
+    assert!(req_props.contains_key("user_name"), "untagged fields keep their Rust names");
+    assert!(req_props.contains_key("request_id"));
 
     let response = &one_of[1];
     let resp_props = response.get("properties").unwrap().as_object().unwrap();
-    assert!(resp_props.contains_key("statusCode"));
-    assert!(resp_props.contains_key("responseBody"));
+    assert!(resp_props.contains_key("status_code"));
+    assert!(resp_props.contains_key("response_body"));
 }
 
 // === Untagged with nested struct ===

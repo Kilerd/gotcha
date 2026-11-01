@@ -64,7 +64,9 @@ pub(crate) fn handler(
                         };
                         let field_ident_str = field.ident.as_ref().map(|i| i.to_string()).unwrap_or_default();
                         let field_rename = parse_serde_rename(&field.attrs);
-                        let field_name = get_serde_name(&field_ident_str, field_rename.as_deref(), rename_all);
+                        // `rename_all` on an untagged enum names variants, which untagged
+                        // serialization never writes; serde does not apply it to fields.
+                        let field_name = get_serde_name(&field_ident_str, field_rename.as_deref(), None);
                         quote! {
                             let mut field_schema = <#schema_ty as #core::Schematic>::generate_schema();
                             field_schema.schema.description = #field_description;
