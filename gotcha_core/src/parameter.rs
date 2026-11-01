@@ -34,31 +34,49 @@ use crate::Schematic;
 #[non_exhaustive]
 pub enum ExtractorKind {
     /// The JSON body provider. Rejections are configured with `JsonConfig`.
-    #[deprecated(note = "name the provider with `gotcha::extract::kind::<gotcha::extract::JsonProvider>()`; Gotcha's own extractors report this variant until the next major release")]
+    #[deprecated(
+        note = "name the provider with `gotcha::extract::kind::<gotcha::extract::JsonProvider>()`; Gotcha's own extractors report this variant until the next major release"
+    )]
     Json,
     /// The URL-encoded form body provider. Rejections are configured with `FormConfig`.
-    #[deprecated(note = "name the provider with `gotcha::extract::kind::<gotcha::extract::FormProvider>()`; Gotcha's own extractors report this variant until the next major release")]
+    #[deprecated(
+        note = "name the provider with `gotcha::extract::kind::<gotcha::extract::FormProvider>()`; Gotcha's own extractors report this variant until the next major release"
+    )]
     Form,
     /// The query-string provider. Rejections are configured with `QueryConfig`.
-    #[deprecated(note = "name the provider with `gotcha::extract::kind::<gotcha::extract::QueryProvider>()`; Gotcha's own extractors report this variant until the next major release")]
+    #[deprecated(
+        note = "name the provider with `gotcha::extract::kind::<gotcha::extract::QueryProvider>()`; Gotcha's own extractors report this variant until the next major release"
+    )]
     Query,
     /// The path-parameter provider. Rejections are configured with `PathConfig`.
-    #[deprecated(note = "name the provider with `gotcha::extract::kind::<gotcha::extract::PathProvider>()`; Gotcha's own extractors report this variant until the next major release")]
+    #[deprecated(
+        note = "name the provider with `gotcha::extract::kind::<gotcha::extract::PathProvider>()`; Gotcha's own extractors report this variant until the next major release"
+    )]
     Path,
     /// The multipart form provider. Rejections are configured with `MultipartConfig`.
-    #[deprecated(note = "name the provider with `gotcha::extract::kind::<gotcha::extract::MultipartProvider>()`; Gotcha's own extractors report this variant until the next major release")]
+    #[deprecated(
+        note = "name the provider with `gotcha::extract::kind::<gotcha::extract::MultipartProvider>()`; Gotcha's own extractors report this variant until the next major release"
+    )]
     Multipart,
     /// The typed-header provider. Rejections are configured with `TypedHeaderConfig`.
-    #[deprecated(note = "name the provider with `gotcha::extract::kind::<gotcha::extract::TypedHeaderProvider>()`; Gotcha's own extractors report this variant until the next major release")]
+    #[deprecated(
+        note = "name the provider with `gotcha::extract::kind::<gotcha::extract::TypedHeaderProvider>()`; Gotcha's own extractors report this variant until the next major release"
+    )]
     TypedHeader,
     /// Gotcha's typed header parameter. Rejections are configured with `HeaderConfig`.
-    #[deprecated(note = "name the provider with `gotcha::extract::kind::<gotcha::extract::HeaderProvider>()`; Gotcha's own extractors report this variant until the next major release")]
+    #[deprecated(
+        note = "name the provider with `gotcha::extract::kind::<gotcha::extract::HeaderProvider>()`; Gotcha's own extractors report this variant until the next major release"
+    )]
     Header,
     /// Gotcha's typed cookie parameter. Rejections are configured with `CookieConfig`.
-    #[deprecated(note = "name the provider with `gotcha::extract::kind::<gotcha::extract::CookieProvider>()`; Gotcha's own extractors report this variant until the next major release")]
+    #[deprecated(
+        note = "name the provider with `gotcha::extract::kind::<gotcha::extract::CookieProvider>()`; Gotcha's own extractors report this variant until the next major release"
+    )]
     Cookie,
     /// The `Valid` wrapper's validation failure. Configured with `ValidConfig`.
-    #[deprecated(note = "name the provider with `gotcha::extract::kind::<gotcha::extract::ValidProvider>()`; Gotcha's own extractors report this variant until the next major release")]
+    #[deprecated(
+        note = "name the provider with `gotcha::extract::kind::<gotcha::extract::ValidProvider>()`; Gotcha's own extractors report this variant until the next major release"
+    )]
     Valid,
     /// A rejection provider identified by its type. Built by `gotcha::extract::kind::<P>()`.
     Provider(ProviderKey),

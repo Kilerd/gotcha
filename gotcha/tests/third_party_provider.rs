@@ -1,23 +1,24 @@
 #![allow(dead_code)]
 
-//! An extractor provider written outside Gotcha. This test crate depends on `gotcha` as an
+//! Extractor providers written outside Gotcha. This test crate depends on `gotcha` as an
 //! extension crate would: the `msgpack` module uses only public API.
 
 use gotcha::axum::body::{to_bytes, Body};
 use gotcha::axum::http::{header, Request, StatusCode};
-use gotcha::{ConfigWrapper, EmptyConfig, ExtractorConfigs, GotchaApp, GotchaContext, GotchaResult, GotchaRouter, Json, Schematic};
+use gotcha::{ConfigWrapper, EmptyConfig, ExtractorConfigs, GotchaApp, GotchaContext, GotchaResult, GotchaRouter, Json, JsonConfig, Schematic};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tower::ServiceExt;
 
-use msgpack::{Audited, MsgPack, MsgPackConfig};
+use msgpack::{Audited, MsgPack, MsgPackConfig, NonEmpty, NonEmptyConfig};
 
 mod msgpack {
     use gotcha::axum::body::Bytes;
     use gotcha::axum::extract::{FromRequest, Request};
     use gotcha::axum::http::{header, StatusCode};
+    use gotcha::axum::response::{IntoResponse, Response};
     use gotcha::extract::{RejectionConfig, RejectionProvider, TakenConfigs};
-    use gotcha::{ErrorBody, Rejected};
+    use gotcha::{ErrorBody, Json, Rejected};
     use serde::de::DeserializeOwned;
 
     /// Why a MessagePack body was rejected.
@@ -106,13 +107,73 @@ mod msgpack {
         }
     }
 
+    /// The rejection of a list that decoded but holds no items.
+    #[derive(Debug)]
+    pub struct EmptyList;
+
+    pub enum NonEmptyProvider {}
+
+    impl RejectionProvider for NonEmptyProvider {
+        type Rejection = EmptyList;
+
+        const STATUSES: &'static [(StatusCode, &'static str)] = &[(StatusCode::UNPROCESSABLE_ENTITY, "empty list")];
+        const FALLBACK_PHRASE: &'static str = "empty list";
+
+        fn default_error(_: &EmptyList) -> (StatusCode, ErrorBody) {
+            (StatusCode::UNPROCESSABLE_ENTITY, ErrorBody::new("the list is empty"))
+        }
+    }
+
+    pub type NonEmptyConfig = RejectionConfig<NonEmptyProvider>;
+
+    /// A wrapper that delegates to Gotcha's `Json` and rejects after it succeeds, as `Valid` does.
+    pub struct NonEmpty<T>(pub Vec<T>);
+
+    impl<T, S> FromRequest<S> for NonEmpty<T>
+    where
+        T: DeserializeOwned,
+        S: Send + Sync,
+    {
+        type Rejection = Response;
+
+        async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
+            // `Json` renders its own rejections through `JsonConfig`: share the configurations
+            // rather than taking them, or it would send its defaults.
+            let configs = TakenConfigs::share(req.extensions());
+            let Json(items) = Json::<Vec<T>>::from_request(req, state).await.map_err(IntoResponse::into_response)?;
+            if items.is_empty() {
+                return Err(configs.reject::<NonEmptyProvider>(EmptyList).into_response());
+            }
+            Ok(NonEmpty(items))
+        }
+    }
+
     #[cfg(feature = "openapi")]
     mod openapi {
         use gotcha::extract::kind;
         use gotcha::oas::{Parameter, RequestBody};
-        use gotcha::{Either, ExtractorKind, ParameterProvider, Schematic};
+        use gotcha::{Either, ExtractorKind, Json, ParameterProvider, Schematic};
 
-        use super::{Audited, MsgPack, MsgPackProvider};
+        use super::{Audited, MsgPack, MsgPackProvider, NonEmpty, NonEmptyProvider};
+
+        impl<T: Schematic> ParameterProvider for NonEmpty<T> {
+            fn generate(url: String) -> Either<Vec<Parameter>, RequestBody> {
+                <Json<Vec<T>> as ParameterProvider>::generate(url)
+            }
+
+            fn is_request_body() -> bool {
+                true
+            }
+
+            fn extractor_kinds() -> &'static [ExtractorKind] {
+                const {
+                    &[
+                        kind::<NonEmptyProvider>(),
+                        ExtractorKind::all(<Json<Vec<T>> as ParameterProvider>::extractor_kinds),
+                    ]
+                }
+            }
+        }
 
         impl<T: Schematic> ParameterProvider for MsgPack<T> {
             fn generate(url: String) -> Either<Vec<Parameter>, RequestBody> {
@@ -177,6 +238,11 @@ async fn audited_json(Audited(Json(payload)): Audited<Json<Payload>>) -> String 
     payload.id.to_string()
 }
 
+#[cfg_attr(feature = "openapi", gotcha::api)]
+async fn non_empty(NonEmpty(items): NonEmpty<u32>) -> String {
+    items.len().to_string()
+}
+
 struct App {
     configured: bool,
 }
@@ -199,17 +265,25 @@ impl GotchaApp for App {
             .post("/upload", upload)
             .post("/audited", audited_upload)
             .post("/audited-json", audited_json)
+            .post("/non-empty", non_empty)
     }
 
     fn extractor_configs(&self) -> ExtractorConfigs {
         if !self.configured {
             return ExtractorConfigs::default();
         }
-        ExtractorConfigs::default().set(
-            MsgPackConfig::default()
-                .error_handler(|rejection| (StatusCode::IM_A_TEAPOT, Teapot { reason: rejection.to_string() }))
-                .statuses([StatusCode::IM_A_TEAPOT]),
-        )
+        ExtractorConfigs::default()
+            .set(
+                MsgPackConfig::default()
+                    .error_handler(|rejection| (StatusCode::IM_A_TEAPOT, Teapot { reason: rejection.to_string() }))
+                    .statuses([StatusCode::IM_A_TEAPOT]),
+            )
+            .set(JsonConfig::default().error_handler(|rejection| (rejection.status(), Teapot { reason: rejection.body_text() })))
+            .set(
+                NonEmptyConfig::default()
+                    .error_handler(|_| (StatusCode::CONFLICT, Teapot { reason: "no items".to_owned() }))
+                    .statuses([StatusCode::CONFLICT]),
+            )
     }
 }
 
@@ -325,18 +399,57 @@ async fn a_wrapper_sends_and_documents_the_rejections_of_the_extractor_it_wraps(
     let (status, _, body) = send(&router, "/audited", None, "{}").await;
     assert_eq!(status, StatusCode::IM_A_TEAPOT);
     assert_eq!(json_body(&body), json!({"reason": "expected `Content-Type: application/msgpack`"}));
+    // The application's `JsonConfig` reaches the wrapped `Json`.
     let (status, _, body) = send(&router, "/audited-json", None, "{}").await;
     assert_eq!(status, StatusCode::UNSUPPORTED_MEDIA_TYPE);
-    assert_eq!(json_body(&body), json!({"error": "Expected request with `Content-Type: application/json`"}));
+    assert_eq!(json_body(&body), json!({"reason": "Expected request with `Content-Type: application/json`"}));
 
     #[cfg(feature = "openapi")]
     {
         let spec = served_document(&router).await;
         assert_eq!(responses(&spec, "/audited"), responses(&spec, "/upload"));
         assert_eq!(statuses(&spec, "/audited-json"), ["200", "400", "413", "415", "422"]);
+        let unsupported = &responses(&spec, "/audited-json")["415"];
+        assert_eq!(unsupported["description"], "Request rejected: missing or invalid JSON content type");
+        assert_eq!(unsupported["content"]["application/json"]["schema"]["$ref"], "#/components/schemas/Teapot");
+    }
+}
+
+#[tokio::test]
+async fn a_wrapper_that_delegates_to_a_gotcha_extractor_keeps_both_configurations() {
+    let configured = router(true).await;
+
+    // The inner `Json` still finds the configurations the wrapper shared.
+    let (status, _, body) = send(&configured, "/non-empty", None, "[1]").await;
+    assert_eq!(status, StatusCode::UNSUPPORTED_MEDIA_TYPE);
+    assert_eq!(json_body(&body), json!({"reason": "Expected request with `Content-Type: application/json`"}));
+    // The wrapper rejects after `Json` succeeded, with its own configuration.
+    let (status, _, body) = send(&configured, "/non-empty", Some("application/json"), "[]").await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(json_body(&body), json!({"reason": "no items"}));
+    let (status, _, body) = send(&configured, "/non-empty", Some("application/json"), "[1, 2]").await;
+    assert_eq!((status, body.as_slice()), (StatusCode::OK, &b"2"[..]));
+
+    let defaults = router(false).await;
+    let (status, _, body) = send(&defaults, "/non-empty", Some("application/json"), "[]").await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(json_body(&body), json!({"error": "the list is empty"}));
+
+    #[cfg(feature = "openapi")]
+    {
+        let spec = served_document(&configured).await;
+        assert_eq!(statuses(&spec, "/non-empty"), ["200", "400", "409", "413", "415", "422"]);
+        let conflict = &responses(&spec, "/non-empty")["409"];
+        assert_eq!(conflict["description"], "Request rejected: empty list");
+        assert_eq!(conflict["content"]["application/json"]["schema"]["$ref"], "#/components/schemas/Teapot");
+
+        let spec = served_document(&defaults).await;
+        assert_eq!(statuses(&spec, "/non-empty"), ["200", "400", "413", "415", "422"]);
+        let unprocessable = &responses(&spec, "/non-empty")["422"];
         assert_eq!(
-            responses(&spec, "/audited-json")["415"]["description"],
-            "Request rejected: missing or invalid JSON content type"
+            unprocessable["description"],
+            "Request rejected: empty list / JSON body did not match the expected type"
         );
+        assert_eq!(unprocessable["content"]["application/json"]["schema"]["$ref"], "#/components/schemas/ErrorBody");
     }
 }

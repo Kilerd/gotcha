@@ -466,6 +466,7 @@ where
         true
     }
 
+    #[allow(deprecated)] // Reports the unit variant until the next major release.
     fn extractor_kinds() -> &'static [crate::ExtractorKind] {
         // A malformed body is a `Json` rejection; only a decoded body can fail validation.
         &[crate::ExtractorKind::Valid, crate::ExtractorKind::Json]
@@ -485,6 +486,7 @@ where
         true
     }
 
+    #[allow(deprecated)] // Reports the unit variant until the next major release.
     fn extractor_kinds() -> &'static [crate::ExtractorKind] {
         // Axum's `Json` keeps its plain-text rejection, so only validation failures are Gotcha's.
         &[crate::ExtractorKind::Valid]
