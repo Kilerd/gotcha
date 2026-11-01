@@ -278,6 +278,14 @@ enum Untagged {
     Text(String),
 }
 
+/// Untagged with a container `rename_all`: serde applies it to variant names, which untagged
+/// serialization does not write, so the fields keep their Rust names.
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(untagged, rename_all = "camelCase")]
+enum UntaggedRenamed {
+    Named { some_field: u32 },
+}
+
 #[test]
 fn structs_match_serde() {
     let audit = || Audit {
@@ -369,6 +377,7 @@ fn enums_match_serde() {
     // Untagged.
     assert_serialization_matches(&Untagged::Number(1));
     assert_serialization_matches(&Untagged::Text("x".into()));
+    assert_serialization_matches(&UntaggedRenamed::Named { some_field: 1 });
 }
 
 #[test]
@@ -473,8 +482,6 @@ fn component_references_resolve() {
 //   serde writes `"Unit"`.
 // - An all-unit internally tagged, adjacently tagged or untagged enum: the schema documents a
 //   string enum, while serde writes a tagged object (or `null` when untagged).
-// - Container-level `rename_all` is applied to untagged variant fields by the schema, but serde
-//   uses it for variant names (which untagged serialization does not write).
 // - Struct-variant fields ignore `#[serde(skip)]`, `#[serde(flatten)]` and
 //   `#[serde(rename_all_fields = "..")]`.
 // - `#[serde(transparent)]` types are documented as objects with the inner field as a property.
