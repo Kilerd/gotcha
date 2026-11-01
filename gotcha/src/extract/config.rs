@@ -280,15 +280,18 @@ impl ExtractorConfigs {
     }
 }
 
-/// The configurations taken out of a request that is about to be consumed.
+/// The configurations a body extractor keeps while another extractor consumes the request.
 ///
-/// A body extractor delegates to an inner extractor that consumes the request and its
-/// extensions. Taking the configurations first keeps them without a refcount bump on the success
-/// path; only the inner extractor sees the request, and it is dropped there, so nothing can
-/// observe that the extension is gone. The cost is one extension-map removal per body extraction.
+/// [`take`](Self::take) removes them from the request: use it when the request goes to an extractor
+/// that never reads them, such as Axum's own `Json`. Nothing can then observe that the extension is
+/// gone, and a successful extraction costs one extension-map removal with no refcount bump.
 ///
-/// It dereferences to the [`ExtractorConfigs`] in effect, which are the defaults when the request
-/// carried none.
+/// [`share`](Self::share) keeps them in the request: use it when the request goes to another Gotcha
+/// extractor (or any extractor that renders through these configurations) and the caller may still
+/// reject afterwards. Taking them there would make the inner extractor fall back to its defaults.
+/// It costs one lookup and one refcount increment per extraction.
+///
+/// When neither is needed, render a rejection with [`reject`] before the request is consumed.
 pub struct TakenConfigs(Option<Arc<ExtractorConfigs>>);
 
 impl TakenConfigs {
@@ -297,17 +300,23 @@ impl TakenConfigs {
         Self(extensions.remove::<Arc<ExtractorConfigs>>())
     }
 
+    /// Keep a handle to the configurations and leave them in the request's extensions.
+    pub fn share(extensions: &Extensions) -> Self {
+        Self(extensions.get::<Arc<ExtractorConfigs>>().cloned())
+    }
+
+    /// Render `rejection` with `P`'s configured error handler, or `P`'s default.
+    pub fn render<P: RejectionProvider>(&self, rejection: &P::Rejection) -> Response {
+        self.configs().render::<P>(rejection)
+    }
+
     /// Render `rejection` with `P`'s configuration and keep it next to the response.
     pub fn reject<P: RejectionProvider>(&self, rejection: P::Rejection) -> Rejected<P::Rejection> {
-        let response = self.render::<P>(&rejection);
-        Rejected::new(rejection, response)
+        reject_with::<P>(self.configs(), rejection)
     }
-}
 
-impl std::ops::Deref for TakenConfigs {
-    type Target = ExtractorConfigs;
-
-    fn deref(&self) -> &ExtractorConfigs {
+    /// The configurations in effect: the defaults when the request carried none.
+    fn configs(&self) -> &ExtractorConfigs {
         self.0.as_deref().unwrap_or(&NO_OVERRIDES)
     }
 }
@@ -315,10 +324,15 @@ impl std::ops::Deref for TakenConfigs {
 /// Render a rejection with `P`'s configuration from the request's extensions, which are the
 /// defaults when the request carries none.
 ///
-/// For extractors that only borrow the request parts. Call it from the error path only, so a
-/// successful extraction does no lookup.
+/// For extractors that only borrow the request parts, and for body extractors that reject before
+/// consuming the request. Call it from the error path only, so a successful extraction does no
+/// lookup.
 pub fn reject<P: RejectionProvider>(extensions: &Extensions, rejection: P::Rejection) -> Rejected<P::Rejection> {
     let configs = extensions.get::<Arc<ExtractorConfigs>>().map_or(&NO_OVERRIDES, |configs| &**configs);
+    reject_with::<P>(configs, rejection)
+}
+
+fn reject_with<P: RejectionProvider>(configs: &ExtractorConfigs, rejection: P::Rejection) -> Rejected<P::Rejection> {
     let response = configs.render::<P>(&rejection);
     Rejected::new(rejection, response)
 }
@@ -474,3 +488,44 @@ builtin_provider!(
     "request body failed validation",
     [StatusCode::UNPROCESSABLE_ENTITY => "request body failed validation"]
 );
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::params::ParamRejection;
+
+    fn missing() -> ParamRejection {
+        ParamRejection::Missing {
+            kind: "header",
+            name: "x-request-id",
+        }
+    }
+
+    #[test]
+    fn share_leaves_the_configurations_in_the_request_and_take_removes_them() {
+        let mut extensions = Extensions::new();
+        let configs = ExtractorConfigs::default().set(HeaderConfig::default().error_handler(|_| (StatusCode::IM_A_TEAPOT, ErrorBody::new("teapot"))));
+        extensions.insert(Arc::new(configs));
+
+        let shared = TakenConfigs::share(&extensions);
+        assert!(extensions.get::<Arc<ExtractorConfigs>>().is_some(), "an inner extractor still finds them");
+        assert_eq!(shared.render::<HeaderProvider>(&missing()).status(), StatusCode::IM_A_TEAPOT);
+        assert_eq!(reject::<HeaderProvider>(&extensions, missing()).response().status(), StatusCode::IM_A_TEAPOT);
+
+        let taken = TakenConfigs::take(&mut extensions);
+        assert!(extensions.get::<Arc<ExtractorConfigs>>().is_none());
+        assert_eq!(taken.reject::<HeaderProvider>(missing()).response().status(), StatusCode::IM_A_TEAPOT);
+        // Only `Header` is configured.
+        assert_eq!(taken.render::<CookieProvider>(&missing()).status(), StatusCode::BAD_REQUEST);
+
+        // A request without configurations uses the provider's default.
+        assert_eq!(
+            TakenConfigs::share(&extensions).render::<HeaderProvider>(&missing()).status(),
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            TakenConfigs::take(&mut extensions).reject::<HeaderProvider>(missing()).response().status(),
+            StatusCode::BAD_REQUEST
+        );
+    }
+}

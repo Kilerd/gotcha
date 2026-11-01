@@ -47,7 +47,7 @@ pub use crate::error::{ErrorBody, GotchaError, GotchaResult, HttpError};
 /// `gotcha::axum_extra::TypedHeader`.
 pub use crate::extract::{
     CookieConfig, ErrorBodyResponse, ExtractorConfig, ExtractorConfigs, Form, FormConfig, HeaderConfig, Json, JsonConfig, Multipart, MultipartConfig, Path,
-    PathConfig, Query, QueryConfig, Rejected, RejectionConfig, RejectionProvider, TypedHeader, TypedHeaderConfig, ValidConfig,
+    PathConfig, Query, QueryConfig, Rejected, TypedHeader, TypedHeaderConfig, ValidConfig,
 };
 /// Attribute macro that makes a struct usable as `State<T>` in handlers by
 /// generating a `FromRef<GotchaContext<T, C>>` impl. See [`GotchaContext`].
