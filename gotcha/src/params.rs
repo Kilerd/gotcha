@@ -5,6 +5,10 @@
 //! through the [`HeaderParam`] / [`CookieParam`] traits, so the same declaration both extracts the
 //! value and documents it as an OpenAPI `header` / `cookie` parameter.
 //!
+//! Both wrappers also accept `Option<Header<T>>` / `Option<Cookie<T>>` as handler arguments: an
+//! absent parameter then extracts as `None` and is documented as not required, while a present
+//! but unparseable value is still rejected.
+//!
 //! ```ignore
 //! use gotcha::{Header, HeaderParam, Schematic};
 //!
@@ -36,8 +40,10 @@ pub trait HeaderParam: Sized {
     ///
     /// Setting this to `false` by itself does not make the parameter optional: the extractor
     /// still rejects an absent header unless [`missing`](Self::missing) returns a value, and the
-    /// default `missing` returns `None`. To let the handler see an absent header as `None`, take
-    /// `Option<Header<T>>` as the argument instead; that also documents the parameter as
+    /// default `missing` returns `None`. The generated document follows the same rule: the
+    /// parameter is documented as required unless `REQUIRED` is `false` *and* `missing()`
+    /// returns a value. To let the handler see an absent header as `None`, take
+    /// `Option<Header<T>>` as the argument instead; that documents the parameter as
     /// `required: false` and does not consult either item.
     const REQUIRED: bool = true;
     /// Description for the generated OpenAPI parameter. Worth setting when the type is a newtype
@@ -48,7 +54,8 @@ pub trait HeaderParam: Sized {
     /// The value used when the header is absent and [`REQUIRED`](Self::REQUIRED) is `false`.
     ///
     /// Returning `None` (the default) keeps the rejection, so `REQUIRED = false` alone still
-    /// fails with `400`. Extract `Option<Header<T>>` to accept an absent header as `None`.
+    /// fails with `400` and the parameter is documented as required. Extract
+    /// `Option<Header<T>>` to accept an absent header as `None`.
     fn missing() -> Option<Self> {
         None
     }
@@ -62,8 +69,10 @@ pub trait CookieParam: Sized {
     ///
     /// Setting this to `false` by itself does not make the parameter optional: the extractor
     /// still rejects an absent cookie unless [`missing`](Self::missing) returns a value, and the
-    /// default `missing` returns `None`. To let the handler see an absent cookie as `None`, take
-    /// `Option<Cookie<T>>` as the argument instead; that also documents the parameter as
+    /// default `missing` returns `None`. The generated document follows the same rule: the
+    /// parameter is documented as required unless `REQUIRED` is `false` *and* `missing()`
+    /// returns a value. To let the handler see an absent cookie as `None`, take
+    /// `Option<Cookie<T>>` as the argument instead; that documents the parameter as
     /// `required: false` and does not consult either item.
     const REQUIRED: bool = true;
     /// Description for the generated OpenAPI parameter. Worth setting when the type is a newtype
@@ -74,7 +83,8 @@ pub trait CookieParam: Sized {
     /// The value used when the cookie is absent and [`REQUIRED`](Self::REQUIRED) is `false`.
     ///
     /// Returning `None` (the default) keeps the rejection, so `REQUIRED = false` alone still
-    /// fails with `400`. Extract `Option<Cookie<T>>` to accept an absent cookie as `None`.
+    /// fails with `400` and the parameter is documented as required. Extract
+    /// `Option<Cookie<T>>` to accept an absent cookie as `None`.
     fn missing() -> Option<Self> {
         None
     }
@@ -150,13 +160,19 @@ impl IntoResponse for ParamRejection {
     }
 }
 
+/// Turn a parse failure into the rejection both extractors render, shared by the plain and
+/// optional forms.
+fn parse_value<T>(kind: &'static str, name: &'static str, raw: &str, parse: impl FnOnce(&str) -> Result<T, String>) -> Result<T, ParamRejection> {
+    parse(raw).map_err(|message| ParamRejection::Invalid { kind, name, message })
+}
+
 /// Shared by both extractors: turn an optional raw value into `T`, honouring `REQUIRED`.
 fn resolve<T>(
     kind: &'static str, name: &'static str, required: bool, raw: Option<&str>, parse: impl FnOnce(&str) -> Result<T, String>,
     missing: impl FnOnce() -> Option<T>,
 ) -> Result<T, ParamRejection> {
     match raw {
-        Some(raw) => parse(raw).map_err(|message| ParamRejection::Invalid { kind, name, message }),
+        Some(raw) => parse_value(kind, name, raw, parse),
         None if !required => missing().ok_or(ParamRejection::Missing { kind, name }),
         None => Err(ParamRejection::Missing { kind, name }),
     }
@@ -241,18 +257,12 @@ where
                 return Err(crate::Rejected::new(rejection, response));
             }
         };
-        match T::parse(raw) {
-            Ok(value) => Ok(Some(Header(value))),
-            Err(message) => {
-                let rejection = ParamRejection::Invalid {
-                    kind: "header",
-                    name: T::NAME,
-                    message,
-                };
+        parse_value("header", T::NAME, raw, T::parse)
+            .map(|value| Some(Header(value)))
+            .map_err(|rejection| {
                 let response = crate::extract::config::configs(&parts.extensions).header.render(&rejection);
-                Err(crate::Rejected::new(rejection, response))
-            }
-        }
+                crate::Rejected::new(rejection, response)
+            })
     }
 }
 
@@ -275,18 +285,12 @@ where
         let Some(raw) = raw else {
             return Ok(None);
         };
-        match T::parse(raw) {
-            Ok(value) => Ok(Some(Cookie(value))),
-            Err(message) => {
-                let rejection = ParamRejection::Invalid {
-                    kind: "cookie",
-                    name: T::NAME,
-                    message,
-                };
+        parse_value("cookie", T::NAME, raw, T::parse)
+            .map(|value| Some(Cookie(value)))
+            .map_err(|rejection| {
                 let response = crate::extract::config::configs(&parts.extensions).cookie.render(&rejection);
-                Err(crate::Rejected::new(rejection, response))
-            }
-        }
+                crate::Rejected::new(rejection, response)
+            })
     }
 }
 
@@ -305,6 +309,12 @@ mod openapi {
 
     use super::{Cookie, CookieParam, Header, HeaderParam};
     use crate::{Either, ExtractorKind, ParameterProvider};
+
+    /// Whether an absent parameter is a rejection at runtime, which is what `required` means in
+    /// the document: `REQUIRED` is set, or there is no `missing()` fallback to use instead.
+    fn is_required<T>(required: bool, missing: impl FnOnce() -> Option<T>) -> bool {
+        required || missing().is_none()
+    }
 
     fn parameter<T: Schematic>(name: &'static str, _in: ParameterIn, required: bool, description: Option<&'static str>) -> Either<Vec<Parameter>, RequestBody> {
         let schema = T::generate_schema();
@@ -329,7 +339,7 @@ mod openapi {
 
     impl<T: HeaderParam + Schematic> ParameterProvider for Header<T> {
         fn generate(_url: String) -> Either<Vec<Parameter>, RequestBody> {
-            parameter::<T>(T::NAME, ParameterIn::Header, T::REQUIRED, T::DESCRIPTION)
+            parameter::<T>(T::NAME, ParameterIn::Header, is_required(T::REQUIRED, T::missing), T::DESCRIPTION)
         }
 
         fn extractor_kinds() -> &'static [ExtractorKind] {
@@ -339,7 +349,7 @@ mod openapi {
 
     impl<T: CookieParam + Schematic> ParameterProvider for Cookie<T> {
         fn generate(_url: String) -> Either<Vec<Parameter>, RequestBody> {
-            parameter::<T>(T::NAME, ParameterIn::Cookie, T::REQUIRED, T::DESCRIPTION)
+            parameter::<T>(T::NAME, ParameterIn::Cookie, is_required(T::REQUIRED, T::missing), T::DESCRIPTION)
         }
 
         fn extractor_kinds() -> &'static [ExtractorKind] {
@@ -378,6 +388,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(feature = "openapi", derive(crate::Schematic))]
     struct Tenant(String);
 
     impl HeaderParam for Tenant {
@@ -388,6 +399,45 @@ mod tests {
         }
         fn missing() -> Option<Self> {
             Some(Tenant("default".to_string()))
+        }
+    }
+
+    /// `REQUIRED = false` with the default `missing()`: the runtime still rejects an absent value.
+    #[cfg_attr(feature = "openapi", derive(crate::Schematic))]
+    struct NoFallbackHeader(String);
+
+    impl HeaderParam for NoFallbackHeader {
+        const NAME: &'static str = "x-no-fallback";
+        const REQUIRED: bool = false;
+        fn parse(raw: &str) -> Result<Self, String> {
+            Ok(NoFallbackHeader(raw.to_string()))
+        }
+    }
+
+    /// `REQUIRED = false` with the default `missing()`: the runtime still rejects an absent value.
+    #[cfg_attr(feature = "openapi", derive(crate::Schematic))]
+    struct NoFallbackCookie(String);
+
+    impl CookieParam for NoFallbackCookie {
+        const NAME: &'static str = "no-fallback";
+        const REQUIRED: bool = false;
+        fn parse(raw: &str) -> Result<Self, String> {
+            Ok(NoFallbackCookie(raw.to_string()))
+        }
+    }
+
+    /// `REQUIRED = false` with a fallback: an absent value is accepted.
+    #[cfg_attr(feature = "openapi", derive(crate::Schematic))]
+    struct FallbackCookie(String);
+
+    impl CookieParam for FallbackCookie {
+        const NAME: &'static str = "fallback";
+        const REQUIRED: bool = false;
+        fn parse(raw: &str) -> Result<Self, String> {
+            Ok(FallbackCookie(raw.to_string()))
+        }
+        fn missing() -> Option<Self> {
+            Some(FallbackCookie("default".to_string()))
         }
     }
 
@@ -522,6 +572,58 @@ mod tests {
             .expect("a present but invalid cookie is still rejected");
         assert!(matches!(rejected.rejection(), ParamRejection::Invalid { .. }));
         assert_eq!(rejected.into_response().status(), StatusCode::IM_A_TEAPOT);
+    }
+
+    #[tokio::test]
+    async fn required_false_without_a_missing_fallback_still_rejects_an_absent_value() {
+        let mut parts = parts_with(&[]);
+        let rejected = Header::<NoFallbackHeader>::from_request_parts(&mut parts, &())
+            .await
+            .err()
+            .expect("REQUIRED = false alone does not make the parameter optional");
+        assert!(matches!(rejected.rejection(), ParamRejection::Missing { .. }));
+
+        let mut parts = parts_with(&[]);
+        let rejected = Cookie::<NoFallbackCookie>::from_request_parts(&mut parts, &())
+            .await
+            .err()
+            .expect("REQUIRED = false alone does not make the parameter optional");
+        assert!(matches!(rejected.rejection(), ParamRejection::Missing { .. }));
+    }
+
+    #[cfg(feature = "openapi")]
+    #[test]
+    fn required_parameter_documentation_matches_the_runtime_rule() {
+        use crate::{Either, ParameterProvider};
+
+        fn header_required<T: HeaderParam + crate::Schematic>() -> bool {
+            let Either::Left(params) = <Header<T> as ParameterProvider>::generate("/documented".to_owned()) else {
+                panic!("a header parameter is not a request body");
+            };
+            assert_eq!(params.len(), 1);
+            params[0].required.expect("the document always spells out required")
+        }
+
+        fn cookie_required<T: CookieParam + crate::Schematic>() -> bool {
+            let Either::Left(params) = <Cookie<T> as ParameterProvider>::generate("/documented".to_owned()) else {
+                panic!("a cookie parameter is not a request body");
+            };
+            assert_eq!(params.len(), 1);
+            params[0].required.expect("the document always spells out required")
+        }
+
+        assert!(header_required::<RequestId>(), "the default REQUIRED = true is documented");
+        assert!(!header_required::<Tenant>(), "REQUIRED = false with a missing() fallback is optional");
+        assert!(
+            header_required::<NoFallbackHeader>(),
+            "REQUIRED = false with the default missing() is rejected at runtime, so it is documented as required"
+        );
+        assert!(cookie_required::<Session>(), "the default REQUIRED = true is documented");
+        assert!(!cookie_required::<FallbackCookie>(), "REQUIRED = false with a missing() fallback is optional");
+        assert!(
+            cookie_required::<NoFallbackCookie>(),
+            "REQUIRED = false with the default missing() is rejected at runtime, so it is documented as required"
+        );
     }
 
     #[cfg(feature = "openapi")]
