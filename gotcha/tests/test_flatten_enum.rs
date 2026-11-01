@@ -62,12 +62,12 @@ fn test_untagged_enum_schema() {
     let json = schema.schema.to_value();
     println!("Untagged enum schema: {}", serde_json::to_string_pretty(&json).unwrap());
 
-    // Should have oneOf without discriminator
-    assert!(json.get("oneOf").is_some(), "untagged enum should have oneOf");
+    // Should have anyOf without discriminator
+    assert!(json.get("anyOf").is_some(), "untagged enum should have anyOf");
     assert!(json.get("discriminator").is_none(), "untagged enum should NOT have discriminator");
 
-    let one_of = json.get("oneOf").unwrap().as_array().unwrap();
-    assert_eq!(one_of.len(), 2);
+    let any_of = json.get("anyOf").unwrap().as_array().unwrap();
+    assert_eq!(any_of.len(), 2);
 }
 
 #[test]
@@ -88,7 +88,7 @@ fn test_flatten_untagged_enum() {
 
     // Untagged enum schema
     let enum_schema = &all_of[1];
-    assert!(enum_schema.get("oneOf").is_some());
+    assert!(enum_schema.get("anyOf").is_some());
     assert!(enum_schema.get("discriminator").is_none());
 }
 

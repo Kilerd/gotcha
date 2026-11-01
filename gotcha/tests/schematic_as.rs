@@ -143,6 +143,10 @@ fn branches<T: Schematic>() -> serde_json::Value {
     T::generate_schema().schema.to_value()["oneOf"].clone()
 }
 
+fn untagged_branches<T: Schematic>() -> serde_json::Value {
+    T::generate_schema().schema.to_value()["anyOf"].clone()
+}
+
 #[test]
 fn as_applies_to_newtype_structs() {
     assert_eq!(UrlBox::generate_schema().schema.to_value(), json!({"type": "string"}));
@@ -229,7 +233,7 @@ fn as_applies_to_adjacently_tagged_variants() {
 #[test]
 fn as_applies_to_untagged_variants() {
     assert_eq!(
-        branches::<Untagged>(),
+        untagged_branches::<Untagged>(),
         json!([
             {"type": "string"},
             {

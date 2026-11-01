@@ -1,5 +1,6 @@
 # Migration Guide
 
+- [Unreleased: untagged enums use anyOf](#unreleased-untagged-enums-use-anyof)
 - [Unreleased: variant-level schematic attributes](#unreleased-variant-level-schematic-attributes)
 - [Unreleased: derive documents serde's wire shapes](#unreleased-derive-documents-serdes-wire-shapes)
 - [Unreleased: invalid task registrations fail startup](#unreleased-invalid-task-registrations-fail-startup)
@@ -39,6 +40,19 @@
 
 ---
 
+# Unreleased: untagged enums use anyOf
+
+`#[serde(untagged)]` enums are now documented with `anyOf` instead of `oneOf`. Serde picks the
+first variant that accepts a value, and more than one branch may accept the same value
+(`u32 | f64` with `1`, or struct variants whose fields are subsets), so `oneOf` rejected values
+serde serializes successfully.
+
+Every untagged enum's generated schema and OpenAPI document changes (`oneOf` → `anyOf`).
+Generated clients see "matches at least one branch" instead of "matches exactly one" for those
+fields, so regenerate them.
+
+---
+
 # Unreleased: variant-level schematic attributes
 
 Enum variants accept `#[schematic(title = "...", description = "...")]`. The annotations are
@@ -50,6 +64,8 @@ Generated documents change for enums with doc-commented or annotated variants: t
 gain a `description`/`title` they did not have. Regenerate clients built from them. Doc comments
 on tuple/newtype *fields* are still not descriptions (only explicit attributes document those);
 named struct-variant fields keep their doc comments, as before.
+
+---
 
 ---
 

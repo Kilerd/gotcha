@@ -102,14 +102,15 @@ pub(crate) fn handler(
                     )*
                 ];
 
-                // untagged enum: oneOf without discriminator
-                schema.schema.extras.insert("oneOf".to_string(), #core::serde_json::to_value(branches).unwrap());
+                // untagged enum: anyOf, because serde uses the first matching variant and several
+                // branches can accept the same value
+                schema.schema.extras.insert("anyOf".to_string(), #core::serde_json::to_value(branches).unwrap());
                 schema
             })
         }
 
         fn flatten_schema() -> Option<#core::serde_json::Value> {
-            // Return the oneOf schema for flattening. A branch's `additionalProperties` would
+            // Return the anyOf schema for flattening. A branch's `additionalProperties` would
             // also constrain the fields the parent declares next to the flattened enum, so it is
             // dropped from object branches.
             let mut branches: Vec<#core::serde_json::Value> = vec![
@@ -124,7 +125,7 @@ pub(crate) fn handler(
                 }
             }
             let mut obj: ::std::collections::HashMap<String, #core::serde_json::Value> = ::std::collections::HashMap::new();
-            obj.insert("oneOf".to_string(), #core::serde_json::to_value(branches).unwrap());
+            obj.insert("anyOf".to_string(), #core::serde_json::to_value(branches).unwrap());
             Some(#core::serde_json::to_value(obj).unwrap())
         }
     };

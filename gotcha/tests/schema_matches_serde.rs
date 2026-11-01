@@ -495,6 +495,38 @@ enum VariantWithMap {
     },
 }
 
+/// Untagged branches that accept the same value: `anyOf` accepts it, `oneOf` did not.
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(untagged)]
+enum Overlapping {
+    Integer(u32),
+    Number(f64),
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(untagged)]
+enum SubsetVariants {
+    A { x: u32 },
+    B { x: u32, y: u32 },
+}
+
+/// Flattening the subset enum is the case that fails on main: the value matches both branches
+/// (the extra field is allowed without sealing), which `oneOf` rejects.
+#[derive(Schematic, Serialize, Deserialize)]
+struct FlattenedSubset {
+    id: u32,
+    #[serde(flatten)]
+    u: SubsetVariants,
+}
+
+/// Several unit variants all serialize as null; `anyOf` accepts them.
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(untagged)]
+enum MultiUnit {
+    A,
+    B,
+}
+
 /// An all-unit enum: the wire form is a plain string.
 #[derive(Schematic, Serialize, Deserialize)]
 enum SimpleEnum {
@@ -665,6 +697,17 @@ fn enums_match_serde() {
     assert_serialization_matches(&UntaggedUnitOnly::Unit);
     assert_serialization_matches(&UntaggedWithUnit::Unit);
     assert_serialization_matches(&UntaggedWithUnit::Number(1));
+
+    // Several branches accept the same value; serde picks the first match, so the schema must
+    // accept any branch rather than require exactly one.
+    assert_serialization_matches(&Overlapping::Integer(1));
+    assert_serialization_matches(&Overlapping::Number(1.5));
+    assert_serialization_matches(&FlattenedSubset {
+        id: 1,
+        u: SubsetVariants::B { x: 2, y: 3 },
+    });
+    assert_serialization_matches(&MultiUnit::A);
+    assert_serialization_matches(&MultiUnit::B);
 }
 
 #[test]
@@ -883,5 +926,3 @@ fn component_references_resolve() {
 // - Flattening an untagged enum whose newtype variant wraps a struct that itself flattens a map
 //   composes through that struct's `$ref`, so the map's `additionalProperties` still constrains
 //   the parent's fields.
-// - Untagged enums use `oneOf`, so a value matching several branches fails validation (`u32|f64`
-//   with `1`); #180 changes untagged enums to `anyOf`.
