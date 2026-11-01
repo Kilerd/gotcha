@@ -39,6 +39,7 @@
 //! - Scheduled notifications
 //!
 
+use std::fmt;
 use std::future::Future;
 use std::panic::AssertUnwindSafe;
 use std::pin::Pin;
@@ -51,10 +52,48 @@ use futures_util::FutureExt;
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 
-use crate::GotchaContext;
+use crate::{GotchaContext, GotchaError, GotchaResult};
 
 pub(crate) type ScheduledTask = Pin<Box<dyn Future<Output = ()> + Send>>;
 pub(crate) const DEFAULT_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// One registration that cannot be scheduled. The message names only the task (and expression);
+/// the cron parse error, when there is one, becomes the error source of [`RegistrationErrors`].
+#[derive(Debug)]
+struct RegistrationFailure {
+    message: String,
+    source: Option<cron::error::Error>,
+}
+
+impl fmt::Display for RegistrationFailure {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+
+/// All rejected registrations, reported as one startup error.
+#[derive(Debug)]
+struct RegistrationErrors(Vec<RegistrationFailure>);
+
+impl fmt::Display for RegistrationErrors {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("task registration failed: ")?;
+        for (index, failure) in self.0.iter().enumerate() {
+            if index > 0 {
+                formatter.write_str("; ")?;
+            }
+            formatter.write_str(&failure.message)?;
+        }
+        Ok(())
+    }
+}
+
+impl std::error::Error for RegistrationErrors {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        // The cron parser produces the only source in this chain; zero intervals have none.
+        self.0.iter().find_map(|failure| failure.source.as_ref()).map(|source| source as _)
+    }
+}
 
 /// Registers tasks without starting them. Applications start all registrations together after
 /// successful initialization. Standalone callers must retain the owner returned by [`Self::start`].
@@ -62,6 +101,7 @@ pub struct TaskScheduler<T1: Clone + Send + Sync + 'static, T2: Clone + Send + S
     context: GotchaContext<T1, T2>,
     shutdown: CancellationToken,
     tasks: Vec<ScheduledTask>,
+    registration_errors: Vec<RegistrationFailure>,
 }
 
 impl<T1, T2> TaskScheduler<T1, T2>
@@ -90,13 +130,15 @@ where
             context,
             shutdown,
             tasks: Vec::new(),
+            registration_errors: Vec::new(),
         }
     }
 
-    /// Register a cron task. Invalid expressions are logged and not registered. Each trigger is
-    /// computed from the current time and the last trigger that fired, so an execution that
-    /// overruns a trigger skips it instead of running again immediately, and a wall-clock step
-    /// back cannot fire the same trigger twice.
+    /// Register a cron task. An invalid expression is recorded as a registration error, which
+    /// fails application startup instead of starting a partial schedule. Standalone schedulers
+    /// log the error and skip the task. Each trigger is computed from the current time and the
+    /// last trigger that fired, so an execution that overruns a trigger skips it instead of
+    /// running again immediately, and a wall-clock step back cannot fire the same trigger twice.
     pub fn cron<F, FF>(&mut self, name: impl AsRef<str>, expression: String, task: F)
     where
         F: Fn(GotchaContext<T1, T2>) -> FF + Send + 'static,
@@ -105,8 +147,11 @@ where
         let name = name.as_ref().to_string();
         let schedule = match Schedule::from_str(&expression) {
             Ok(schedule) => schedule,
-            Err(e) => {
-                tracing::error!("cron task {name:?} has an invalid schedule {expression:?}: {e}; task not registered");
+            Err(source) => {
+                self.registration_errors.push(RegistrationFailure {
+                    message: format!("cron task {name:?} has an invalid schedule {expression:?}"),
+                    source: Some(source),
+                });
                 return;
             }
         };
@@ -115,9 +160,11 @@ where
     }
 
     /// Register a task with an immediate first execution, then repeat at the given interval.
-    /// A zero interval is logged and not registered. Executions of the same task never overlap.
-    /// A slow execution runs the already-due tick once when it finishes and then resumes at the
-    /// next period boundary; the ticks it missed are not replayed.
+    /// A zero interval is recorded as a registration error, which fails application startup
+    /// instead of starting a partial schedule. Standalone schedulers log the error and skip the
+    /// task. Executions of the same task never overlap. A slow execution runs the already-due
+    /// tick once when it finishes and then resumes at the next period boundary; the ticks it
+    /// missed are not replayed.
     pub fn interval<F, FF>(&mut self, name: impl AsRef<str>, interval: Duration, task: F)
     where
         F: Fn(GotchaContext<T1, T2>) -> FF + Send + 'static,
@@ -125,7 +172,10 @@ where
     {
         let name = name.as_ref().to_string();
         if interval.is_zero() {
-            tracing::error!("interval task {name:?} has a zero interval; task not registered");
+            self.registration_errors.push(RegistrationFailure {
+                message: format!("interval task {name:?} has a zero interval"),
+                source: None,
+            });
             return;
         }
         self.tasks
@@ -133,6 +183,9 @@ where
     }
 
     /// Start the registered tasks on Tokio. Dropping the returned owner aborts them.
+    ///
+    /// Invalid registrations are logged and skipped here; application startup reports them as
+    /// errors instead of starting a partial schedule.
     ///
     /// ```no_run
     /// use gotcha::{ConfigWrapper, GotchaContext, TaskScheduler};
@@ -147,11 +200,18 @@ where
     ///
     /// Use [`RunningTasks::shutdown`] to stop scheduling and wait for in-flight executions.
     pub fn start(self) -> RunningTasks {
+        for error in &self.registration_errors {
+            tracing::error!("{error}; task not registered");
+        }
         RunningTasks::start(self.tasks, self.shutdown)
     }
 
-    pub(crate) fn into_tasks(self) -> Vec<ScheduledTask> {
-        self.tasks
+    /// The pending tasks, or the registration errors that must fail startup.
+    pub(crate) fn into_tasks(self) -> GotchaResult<Vec<ScheduledTask>> {
+        if self.registration_errors.is_empty() {
+            return Ok(self.tasks);
+        }
+        Err(GotchaError::Other(Box::new(RegistrationErrors(self.registration_errors))))
     }
 }
 
