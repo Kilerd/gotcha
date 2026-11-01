@@ -1,4 +1,4 @@
-use gotcha::{ConfigWrapper, GotchaApp, GotchaContext, GotchaRouter, Responder, State};
+use gotcha::{ConfigWrapper, Gotcha, Responder, State};
 use serde::{Deserialize, Serialize};
 
 pub async fn hello_world(_state: State<ConfigWrapper<Config>>) -> impl Responder {
@@ -10,24 +10,8 @@ pub struct Config {
     pub name: String,
 }
 
-pub struct App {}
-
-impl GotchaApp for App {
-    type State = ();
-
-    type Config = Config;
-
-    fn routes(&self, router: GotchaRouter<GotchaContext<Self::State, Self::Config>>) -> GotchaRouter<GotchaContext<Self::State, Self::Config>> {
-        router.get("/", hello_world)
-    }
-
-    async fn state(&self, _config: &ConfigWrapper<Self::Config>) -> Result<Self::State, gotcha::GotchaError> {
-        Ok(())
-    }
-}
-
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    (App {}).run().await?;
+    Gotcha::with_config::<Config>().with_default_logger().get("/", hello_world).run().await?;
     Ok(())
 }

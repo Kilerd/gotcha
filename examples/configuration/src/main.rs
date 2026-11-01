@@ -12,6 +12,7 @@
 //! ```
 
 use gotcha::prelude::*;
+use std::sync::Arc;
 
 /// The application's own configuration — the top level of the file.
 #[config]
@@ -30,27 +31,19 @@ async fn where_am_i(State(server): State<ServerConfig>) -> impl Responder {
     format!("listening on {}:{}", server.host, server.port)
 }
 
-struct App;
-
-impl GotchaApp for App {
-    type State = ();
-    type Config = Config;
-
-    fn routes(&self, router: GotchaRouter<GotchaContext<Self::State, Self::Config>>) -> GotchaRouter<GotchaContext<Self::State, Self::Config>> {
-        router.get("/", greet).get("/server", where_am_i)
-    }
-
-    async fn state(&self, config: &ConfigWrapper<Self::Config>) -> GotchaResult<Self::State> {
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // `run()` reads `configurations/application.toml` and binds the address from `[server]`.
+    Gotcha::from_state_fn(|config: Arc<ConfigWrapper<Config>>| async move {
         // `ConfigWrapper` derefs to the application config, so `config.welcome` reads the
         // application's own field without going through a wrapper level.
         gotcha::tracing::info!("loaded welcome message: {}", config.welcome);
         Ok(())
-    }
-}
-
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // `run()` reads `configurations/application.toml` and binds the address from `[server]`.
-    App.run().await?;
+    })
+    .with_default_logger()
+    .get("/", greet)
+    .get("/server", where_am_i)
+    .run()
+    .await?;
     Ok(())
 }
