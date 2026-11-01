@@ -10,6 +10,10 @@
 //! prefix, `userID` is re-split into words) rather than as serde applies it, and the
 //! `Option::is_none` check compares the predicate as written. The model records what those
 //! need, so moving them to serde's reading is a change in this module.
+//!
+//! serde's parser stops reading a `#[serde(..)]` list at a key it does not know, where the
+//! previous readers skipped it, so a key newer than this parser would hide the items after it in
+//! the same list. `serde_derive_internals` 0.29.1 knows the same keys as `serde_derive` 1.0.229.
 
 use serde_derive_internals::attr::{self, RenameRule, TagType};
 use serde_derive_internals::Ctxt;
@@ -122,16 +126,19 @@ pub(crate) struct SerdeVariant {
 impl SerdeVariant {
     pub(crate) fn from_attrs(attrs: &[syn::Attribute]) -> Self {
         with_context(|cx| {
-            let stand_in = syn::Variant {
-                attrs: attrs.to_vec(),
-                ident: stand_in_ident(),
-                fields: syn::Fields::Unit,
-                discriminant: None,
+            let parse = |name: &str| {
+                let stand_in = syn::Variant {
+                    attrs: attrs.to_vec(),
+                    ident: stand_in_ident(name),
+                    fields: syn::Fields::Unit,
+                    discriminant: None,
+                };
+                attr::Variant::from_ast(cx, &stand_in)
             };
-            let parsed = attr::Variant::from_ast(cx, &stand_in);
+            let [parsed, other] = STAND_INS.map(parse);
             let spelling = Spelling::of(attrs);
             SerdeVariant {
-                rename: explicit(parsed.name().serialize_name()),
+                rename: explicit([parsed.name().serialize_name(), other.name().serialize_name()]),
                 rename_single: spelling.rename,
                 rename_all: CaseRules::new(parsed.rename_all_rules(), spelling.rename_all),
             }
@@ -170,19 +177,22 @@ impl SerdeField {
             // The unit type keeps serde from implying a `borrow` deserializer for `Cow` fields,
             // and a container default stops it from implying a field default for
             // `skip_deserializing`: only what the field states is recorded.
-            let stand_in = syn::Field {
-                attrs: attrs.to_vec(),
-                vis: syn::Visibility::Inherited,
-                mutability: syn::FieldMutability::None,
-                ident: Some(stand_in_ident()),
-                colon_token: None,
-                ty: syn::parse_quote!(()),
+            let parse = |name: &str| {
+                let stand_in = syn::Field {
+                    attrs: attrs.to_vec(),
+                    vis: syn::Visibility::Inherited,
+                    mutability: syn::FieldMutability::None,
+                    ident: Some(stand_in_ident(name)),
+                    colon_token: None,
+                    ty: syn::parse_quote!(()),
+                };
+                attr::Field::from_ast(cx, 0, &stand_in, None, &attr::Default::Default)
             };
-            let parsed = attr::Field::from_ast(cx, 0, &stand_in, None, &attr::Default::Default);
+            let [parsed, other] = STAND_INS.map(parse);
             let spelling = Spelling::of(attrs);
             SerdeField {
-                rename_serialize: explicit(parsed.name().serialize_name()),
-                rename_deserialize: explicit(parsed.name().deserialize_name()),
+                rename_serialize: explicit([parsed.name().serialize_name(), other.name().serialize_name()]),
+                rename_deserialize: explicit([parsed.name().deserialize_name(), other.name().deserialize_name()]),
                 rename_single: spelling.rename,
                 skip_serializing: parsed.skip_serializing(),
                 skip_deserializing: parsed.skip_deserializing(),
@@ -280,16 +290,20 @@ fn with_context<T>(parse: impl FnOnce(&Ctxt) -> T) -> T {
     parsed
 }
 
-/// The name a field or variant stand-in is given. serde reports the Rust name when nothing
-/// renames it, so a name other than this one is an explicit `rename`.
-const STAND_IN: &str = "__gotcha_stand_in";
+/// The names a field or variant stand-in is parsed under. serde reports a stand-in's own name
+/// when nothing renames it, and an explicit `rename` gives both stand-ins the same name, so a
+/// rename to one of these names is still told apart from no rename.
+// TODO(#124): the stand-ins go away once names come from `ast::Container::from_ast` and
+// `rename_by_rules` instead of the hand-written case conventions.
+const STAND_INS: [&str; 2] = ["__gotcha_stand_in", "__gotcha_other_stand_in"];
 
-fn stand_in_ident() -> syn::Ident {
-    syn::Ident::new(STAND_IN, proc_macro2::Span::call_site())
+fn stand_in_ident(name: &str) -> syn::Ident {
+    syn::Ident::new(name, proc_macro2::Span::call_site())
 }
 
-fn explicit(name: &str) -> Option<String> {
-    (name != STAND_IN).then(|| name.to_owned())
+/// The explicit rename, given the name each of [`STAND_INS`] was reported under.
+fn explicit(names: [&str; 2]) -> Option<String> {
+    (names != STAND_INS).then(|| names[0].to_owned())
 }
 
 /// How the `#[serde(..)]` attributes are written, where the schema depends on more than their
@@ -298,6 +312,8 @@ fn explicit(name: &str) -> Option<String> {
 /// serde reads `rename = "x"` and `rename(serialize = "x", deserialize = "x")` alike, but the
 /// schema side honours only the single-value form `key = ".."`. The `Option::is_none` check
 /// compares the predicate as written rather than serde's parsed path.
+// TODO(#124): these flags go away once schema names come from serde's own names
+// (`ast::Container::from_ast`, `rename_by_rules`) and the check compares serde's parsed path.
 #[derive(Default)]
 struct Spelling {
     rename: bool,
@@ -367,6 +383,21 @@ mod tests {
         assert_eq!(fields[2].wire_name("serialize_only", Some(RenameAll::CamelCase)), "serializeOnly");
         // Renaming a field to its own name still opts it out of the case convention.
         assert_eq!(fields[3].wire_name("renamed_to_itself", Some(RenameAll::UpperCase)), "renamed_to_itself");
+    }
+
+    #[test]
+    fn a_rename_to_a_stand_in_name_is_a_rename() {
+        for name in STAND_INS {
+            let attrs: Vec<syn::Attribute> = vec![syn::parse_quote!(#[serde(rename = #name)])];
+            let field = SerdeField::from_attrs(&attrs);
+            assert_eq!(field.schema_name("a_stand_in", Some(RenameAll::CamelCase)), name);
+            assert_eq!(field.wire_name("a_stand_in", Some(RenameAll::CamelCase)), name);
+            let variant = SerdeVariant::from_attrs(&attrs);
+            assert_eq!(variant.schema_name("AStandIn", Some(RenameAll::SnakeCase)), name);
+        }
+        // Without a rename the case convention still applies.
+        let field = SerdeField::from_attrs(&[]);
+        assert_eq!(field.wire_name("a_stand_in", Some(RenameAll::CamelCase)), "aStandIn");
     }
 
     #[test]

@@ -618,7 +618,7 @@ impl ParameterEnumVariantOpt {
         Ok(self)
     }
 
-    /// The name serde writes for this variant.
+    /// The name the schema documents for this variant.
     pub(crate) fn serde_name(&self, naming: VariantNaming) -> String {
         self.serde.schema_name(&self.ident.to_string(), naming.variants)
     }
