@@ -1039,6 +1039,9 @@ where
     /// [`Self::into_router`] returns it. Use it for services whose construction can fail, such as
     /// a proxy that parses its upstream address from the configuration.
     ///
+    /// The hook is synchronous. A step that must `await` goes in [`Gotcha::from_state_fn`], which
+    /// runs before the context and its shutdown token exist; see [`Self::into_router`].
+    ///
     /// ```rust,no_run
     /// use gotcha::{Gotcha, GotchaError};
     ///
@@ -1382,6 +1385,13 @@ where
     /// cleanup hooks are unused. Handlers see the context's shutdown token, which the framework
     /// never cancels. Errors come from invalid documentation or metrics endpoint settings and from
     /// [`try_finish_router`](Self::try_finish_router) hooks.
+    ///
+    /// Assembly is synchronous, and so are the finish hooks; a `build_router` override could
+    /// `await`. A step that must `await` goes in [`from_state_fn`](Gotcha::from_state_fn) on the
+    /// `run`/`bind` path, or before this call when you build the context yourself. The state
+    /// initializer runs before the context exists, so it has no shutdown token. A startup step
+    /// that awaits, can fail, and needs [`GotchaContext::shutdown`] is the one thing a
+    /// `build_router` override can do that the builder has no place for on the `run`/`bind` path.
     ///
     /// ```
     /// use gotcha::axum::{body::Body, http::Request};
