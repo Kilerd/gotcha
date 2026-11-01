@@ -126,7 +126,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 ### Error Handling
 ```rust
 .get("/error", || async {
-    Err::<String, _>("Something went wrong!")
+    Err::<String, _>((StatusCode::INTERNAL_SERVER_ERROR, "Something went wrong!"))
 })
 ```
 
