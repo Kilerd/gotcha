@@ -27,7 +27,7 @@ pub(crate) fn handler(
                 properties_required_fields.push(#tag_name_str.to_string());
             };
 
-            match variant.fields.style {
+            match variant.style() {
                 darling::ast::Style::Struct => {
                     let object = crate::schematic::named_variant_object(core, Some((tag_name_str, &varient_string)), variant.fields.fields);
                     quote! {

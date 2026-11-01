@@ -448,10 +448,13 @@ impl ParameterStructFieldOpt {
 /// per field with the count pinned by `minItems`/`maxItems`.
 ///
 /// External, adjacent and untagged tuple variants all serialize as an array of their fields;
-/// one emitter keeps the three shapes documented identically.
+/// one emitter keeps the three shapes documented identically. A `#[serde(skip)]` field is neither
+/// written nor read, so it takes no position. A field skipped in one direction keeps its position:
+/// serde writes and reads different arrays then, and the one schema cannot describe both.
 pub(crate) fn tuple_variant_schema(core: &TokenStream2, fields: &[ParameterStructFieldOpt]) -> TokenStream2 {
     let field_schemas: Vec<TokenStream2> = fields
         .iter()
+        .filter(|field| !field.serde.skipped_both_ways())
         .map(|field| {
             let field_ty = field.schema_type().clone();
             let (description, customizations) = field.value_schema_customizations(core);
@@ -623,6 +626,16 @@ impl ParameterEnumVariantOpt {
     /// The name the schema documents for this variant.
     pub(crate) fn serde_name(&self) -> String {
         self.serde.schema_name().to_owned()
+    }
+
+    /// The shape serde writes and reads this variant in: a newtype variant whose only field is
+    /// `#[serde(skip)]` is a unit variant. Skipped in one direction, it is a unit variant in that
+    /// direction only, so it keeps its documented field.
+    pub(crate) fn style(&self) -> darling::ast::Style {
+        match (self.fields.style, self.fields.fields.as_slice()) {
+            (darling::ast::Style::Tuple, [field]) if field.serde.skipped_both_ways() => darling::ast::Style::Unit,
+            (style, _) => style,
+        }
     }
 
     /// Statements that add the variant's `#[schematic(..)]` documentation to `variant_object`.

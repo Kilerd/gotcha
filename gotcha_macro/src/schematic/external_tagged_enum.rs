@@ -9,7 +9,7 @@ pub(crate) fn handler(core: &TokenStream2, ident_string: String, doc: TokenStrea
         .map(|variant| {
             let varient_string = variant.serde_name();
             let variant_annotations = variant.variant_customizations(core);
-            let style = variant.fields.style;
+            let style = variant.style();
 
             // A unit variant serializes as the bare string `"V"`, not as `{"V": {}}`.
             if matches!(style, darling::ast::Style::Unit) {

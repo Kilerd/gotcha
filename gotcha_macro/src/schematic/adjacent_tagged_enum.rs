@@ -23,7 +23,7 @@ pub(crate) fn handler(
                 tag_enum.insert("enum".to_string(), #core::serde_json::to_value(vec![#variant_string]).unwrap());
             };
 
-            match variant.fields.style {
+            match variant.style() {
                 darling::ast::Style::Struct => {
                     let content = crate::schematic::named_variant_object(core, None, variant.fields.fields);
                     quote! {

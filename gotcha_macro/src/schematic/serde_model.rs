@@ -7,9 +7,8 @@
 //! Names follow serde's rules: the identifier without its raw prefix, under serde's own
 //! `rename_all` conventions. The generated schemas do not follow serde everywhere yet. The schema
 //! side honours only the single-value `rename = ".."` / `rename_all = ".."` /
-//! `rename_all_fields = ".."` forms, and the `Option::is_none` check compares the predicate as
-//! written. The model records what those need, so moving them to serde's reading is a change in
-//! this module.
+//! `rename_all_fields = ".."` forms. The model records what that needs, so moving it to serde's
+//! reading is a change in this module.
 //!
 //! serde's parser stops reading a `#[serde(..)]` list at a key it does not know, where the
 //! previous readers skipped it, so a key newer than this parser would hide the items after it in
@@ -165,7 +164,7 @@ impl SerdeField {
                 default: !parsed.default().is_none(),
                 deserialize_with: parsed.deserialize_with().is_some(),
                 skip_serializing_if: parsed.skip_serializing_if().is_some(),
-                skips_none: parsed.skip_serializing_if().is_some() && spelling.skip_serializing_if.as_deref().is_some_and(is_option_is_none),
+                skips_none: parsed.skip_serializing_if().is_some_and(is_option_is_none),
             }
         })
     }
@@ -174,6 +173,11 @@ impl SerdeField {
     /// `skip_deserializing`).
     pub(crate) fn skipped(&self) -> bool {
         self.skip_serializing || self.skip_deserializing
+    }
+
+    /// Whether serde neither writes nor reads the field (`skip`, or both one-way skips).
+    pub(crate) fn skipped_both_ways(&self) -> bool {
+        self.skip_serializing && self.skip_deserializing
     }
 
     /// The name the schema documents for the field.
@@ -235,14 +239,21 @@ pub(crate) struct SerdeFieldPresence {
     pub(crate) required: Option<bool>,
 }
 
-/// Whether a `skip_serializing_if` predicate, as written, is recognisably `Option::is_none`.
+/// Whether a `skip_serializing_if` predicate, as serde parsed it, is recognisably `Option::is_none`.
 ///
 /// Deliberately conservative: only the unqualified and the `std`/`core` paths, with optional
-/// leading `::`, are recognized. An alias or a local wrapper predicate keeps the null branch.
-fn is_option_is_none(predicate: &str) -> bool {
-    let predicate = predicate.trim();
-    let predicate = predicate.strip_prefix("::").unwrap_or(predicate);
-    matches!(predicate, "Option::is_none" | "std::option::Option::is_none" | "core::option::Option::is_none")
+/// leading `::` and without generic arguments, are recognized. An alias or a local wrapper
+/// predicate keeps the null branch.
+fn is_option_is_none(predicate: &syn::ExprPath) -> bool {
+    if predicate.qself.is_some() || predicate.path.segments.iter().any(|segment| !segment.arguments.is_none()) {
+        return false;
+    }
+    let segments: Vec<String> = predicate.path.segments.iter().map(|segment| segment.ident.to_string()).collect();
+    let segments: Vec<&str> = segments.iter().map(String::as_str).collect();
+    matches!(
+        segments.as_slice(),
+        ["Option", "is_none"] | ["std", "option", "Option", "is_none"] | ["core", "option", "Option", "is_none"]
+    )
 }
 
 /// Run `parse` with a serde error context. The errors are dropped: serde reports them from its
@@ -259,16 +270,13 @@ fn with_context<T>(parse: impl FnOnce(&Ctxt) -> T) -> T {
 /// meaning.
 ///
 /// serde reads `rename = "x"` and `rename(serialize = "x", deserialize = "x")` alike, but the
-/// schema side honours only the single-value form `key = ".."`. The `Option::is_none` check
-/// compares the predicate as written rather than serde's parsed path.
-// TODO(#124): these flags go away once schema names are serde's serialize names and the check
-// compares serde's parsed path.
+/// schema side honours only the single-value form `key = ".."`.
+// TODO(#124): these flags go away once schema names are serde's serialize names.
 #[derive(Default)]
 struct Spelling {
     rename: bool,
     rename_all: bool,
     rename_all_fields: bool,
-    skip_serializing_if: Option<String>,
 }
 
 impl Spelling {
@@ -282,17 +290,15 @@ impl Spelling {
                 let syn::Meta::NameValue(item) = item else {
                     continue;
                 };
-                let Some(value) = lit_str(&item.value) else {
+                if lit_str(&item.value).is_none() {
                     continue;
-                };
+                }
                 if item.path.is_ident("rename") {
                     spelling.rename = true;
                 } else if item.path.is_ident("rename_all") {
                     spelling.rename_all = true;
                 } else if item.path.is_ident("rename_all_fields") {
                     spelling.rename_all_fields = true;
-                } else if item.path.is_ident("skip_serializing_if") {
-                    spelling.skip_serializing_if.get_or_insert(value);
                 }
             }
         }
@@ -500,17 +506,21 @@ mod tests {
     }
 
     #[test]
-    fn option_is_none_predicates_are_recognized_as_written() {
+    fn option_is_none_predicates_are_read_from_the_parsed_path() {
         for (predicate, recognized) in [
             ("Option::is_none", true),
             (" ::std::option::Option::is_none ", true),
             ("core::option::Option::is_none", true),
+            ("Option ::is_none", true),
+            ("Option :: is_none", true),
+            ("std :: option :: Option :: is_none", true),
             ("Option::is_some", false),
             ("my::Option::is_none", false),
             ("Option::<u8>::is_none", false),
-            ("Option ::is_none", false),
+            ("is_none", false),
         ] {
-            assert_eq!(is_option_is_none(predicate), recognized, "{predicate}");
+            let attrs: Vec<syn::Attribute> = vec![syn::parse_quote!(#[serde(skip_serializing_if = #predicate)])];
+            assert_eq!(SerdeField::parse(None, &attrs, NO_RULES).skips_none, recognized, "{predicate}");
         }
     }
 

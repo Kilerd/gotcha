@@ -6,12 +6,14 @@
 //! properties are rejected through `unevaluatedProperties: false`, which the generated documents
 //! do not set themselves.
 //!
-//! Add a case by defining a type and calling [`assert_serialization_matches`]. Known mismatches
-//! are deliberately not asserted here; they are listed at the bottom of this file.
+//! Add a case by defining a type and calling [`assert_serialization_matches`]. For the input
+//! direction, [`assert_requests_are_read`] has serde read requests built from the schema alone.
+//! Known mismatches are deliberately not asserted here; they are listed at the bottom of this file.
 
 use std::collections::{BTreeMap, HashMap};
 
 use gotcha::Schematic;
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
@@ -31,6 +33,15 @@ fn schema_document<T: Schematic>() -> Value {
         .expect("a type's schema serializes to an object")
         .insert("components".into(), json!({ "schemas": schemas }));
     schema
+}
+
+/// `T`'s own schema, looked up in the components when the document's root is a reference to it.
+fn own_schema<T: Schematic>() -> Value {
+    let document = schema_document::<T>();
+    let Some(name) = document["$ref"].as_str().and_then(|reference| reference.strip_prefix("#/components/schemas/")) else {
+        return document;
+    };
+    document["components"]["schemas"][name].clone()
 }
 
 /// Return `document` with unknown properties rejected for validation.
@@ -115,6 +126,115 @@ where
     if let Err(error) = validator.validate(&instance) {
         panic!("serde output does not match the generated schema: {error}\nsample: {instance}\nschema: {document}");
     }
+}
+
+/// Whether `instance` validates against `T`'s generated schema as it is, without [`strict`].
+fn schema_accepts<T: Schematic>(instance: &Value) -> bool {
+    let document = schema_document::<T>();
+    jsonschema::validator_for(&document)
+        .expect("generated schema is a valid JSON Schema")
+        .validate(instance)
+        .is_ok()
+}
+
+/// The requests a client could build from `T`'s schema alone: one per branch of a union, with just
+/// the required properties and with every declared property.
+fn requests_from_schema<T: Schematic>() -> Vec<Value> {
+    let document = schema_document::<T>();
+    let mut requests = build_requests(&document, &document, false);
+    requests.extend(build_requests(&document, &document, true));
+    requests
+}
+
+fn build_requests(schema: &Value, document: &Value, every_property: bool) -> Vec<Value> {
+    if let Some(reference) = schema["$ref"].as_str() {
+        let name = reference.strip_prefix("#/components/schemas/").expect("a finalized reference");
+        return build_requests(&document["components"]["schemas"][name], document, every_property);
+    }
+    for union in ["oneOf", "anyOf"] {
+        if let Some(branches) = schema[union].as_array() {
+            return branches.iter().flat_map(|branch| build_requests(branch, document, every_property)).collect();
+        }
+    }
+    if let Some(branches) = schema["allOf"].as_array() {
+        let mut requests = vec![json!({})];
+        for branch in branches {
+            let options = build_requests(branch, document, every_property);
+            requests = requests
+                .iter()
+                .flat_map(|request| {
+                    options.iter().map(move |option| {
+                        let mut merged = request.clone();
+                        if let (Some(merged), Some(option)) = (merged.as_object_mut(), option.as_object()) {
+                            merged.extend(option.clone());
+                        }
+                        merged
+                    })
+                })
+                .collect();
+        }
+        return requests;
+    }
+    if let Some(value) = schema["enum"].get(0) {
+        return vec![value.clone()];
+    }
+    let first = |schema: &Value| build_requests(schema, document, every_property).remove(0);
+    let value = match schema["type"].as_str() {
+        Some("object") => {
+            let required = schema["required"].as_array().cloned().unwrap_or_default();
+            let properties = schema["properties"].as_object().cloned().unwrap_or_default();
+            let chosen = properties
+                .iter()
+                .filter(|(name, _)| every_property || required.iter().any(|entry| entry == *name));
+            Value::Object(chosen.map(|(name, property)| (name.clone(), first(property))).collect())
+        }
+        Some("array") => match schema["prefixItems"].as_array() {
+            Some(items) => Value::Array(items.iter().map(first).collect()),
+            None => json!([first(&schema["items"])]),
+        },
+        Some("string") => json!("text"),
+        Some("integer") => json!(1),
+        Some("number") => json!(1.5),
+        Some("boolean") => json!(true),
+        _ => Value::Null,
+    };
+    vec![value]
+}
+
+/// Assert serde reads every request built from `T`'s schema: the schema also documents the input.
+/// Requests are read from text, as a server reads them.
+#[track_caller]
+fn assert_requests_are_read<T>()
+where
+    T: Schematic + DeserializeOwned,
+{
+    let requests = requests_from_schema::<T>();
+    assert!(!requests.is_empty());
+    for request in requests {
+        if let Err(error) = serde_json::from_str::<T>(&request.to_string()) {
+            panic!(
+                "serde rejects a request built from the schema: {error}\nrequest: {request}\nschema: {}",
+                schema_document::<T>()
+            );
+        }
+    }
+}
+
+/// Assert serde and `T`'s schema both accept `instance`, which is how the input looks when one
+/// direction of a type is not what the schema documents.
+#[track_caller]
+fn assert_request_accepted<T>(instance: Value)
+where
+    T: Schematic + DeserializeOwned,
+{
+    if let Err(error) = serde_json::from_str::<T>(&instance.to_string()) {
+        panic!("serde rejects {instance}: {error}");
+    }
+    assert!(
+        schema_accepts::<T>(&instance),
+        "the generated schema rejects {instance}: {}",
+        schema_document::<T>()
+    );
 }
 
 /// `rename`, `rename_all`, `default`, `skip_serializing_if` and `flatten` on a struct.
@@ -1192,14 +1312,214 @@ fn struct_variant_fields_follow_the_same_rules() {
     assert_serialization_matches(&VariantFieldNames::Named { user_name: 1, r#type: 2 });
 }
 
+/// The same predicate written oddly: serde parses it to the same path, so the schema is the same.
+#[derive(Schematic, Serialize, Deserialize)]
+struct CanonicalSkipCondition {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    value: Option<u8>,
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+struct SpacedSkipCondition {
+    #[serde(skip_serializing_if = "Option ::is_none")]
+    value: Option<u8>,
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+struct SpacedStdSkipCondition {
+    #[serde(skip_serializing_if = " std :: option :: Option :: is_none ")]
+    value: Option<u8>,
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+enum SpacedVariantSkipCondition {
+    Named {
+        #[serde(skip_serializing_if = "Option ::is_none")]
+        value: Option<u8>,
+    },
+}
+
+/// A `#[serde(skip)]` tuple-variant field takes no position in the array serde writes and reads.
+#[derive(Schematic, Serialize, Deserialize)]
+enum TupleSkipExternal {
+    Skip(u8, #[serde(skip)] String),
+    BothOneWaySkips(u8, #[serde(skip_serializing, skip_deserializing)] String),
+    AllSkipped(#[serde(skip)] u8, #[serde(skip)] u8),
+}
+
+/// Skipped in one direction, a field keeps its position: the schema documents the other one.
+#[allow(dead_code)]
+#[derive(Schematic, Serialize, Deserialize)]
+enum OneWayTupleSkip {
+    ReadOnly(u8, #[serde(skip_serializing)] String),
+    WrittenOnly(u8, #[serde(skip_deserializing)] String),
+    NewtypeReadOnly(#[serde(skip_serializing)] u8),
+    NewtypeWrittenOnly(#[serde(skip_deserializing)] u8),
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "data")]
+enum TupleSkipAdjacent {
+    Skip(u8, #[serde(skip)] String),
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(untagged)]
+enum TupleSkipUntagged {
+    Skip(u8, #[serde(skip)] String),
+}
+
+/// A newtype variant whose only field is skipped is written as a unit variant.
+#[derive(Schematic, Serialize, Deserialize)]
+enum NewtypeSkipExternal {
+    Skip(#[serde(skip)] String),
+    Other(u8),
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(tag = "kind")]
+enum NewtypeSkipInternal {
+    Skip(#[serde(skip)] Paging),
+    Other { value: u8 },
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "data")]
+enum NewtypeSkipAdjacent {
+    Skip(#[serde(skip)] String),
+    Other(u8),
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(untagged)]
+enum NewtypeSkipUntagged {
+    Skip(#[serde(skip)] String),
+    Other(u8),
+}
+
+impl Default for Paging {
+    fn default() -> Self {
+        Paging { page: 1, per_page: 20 }
+    }
+}
+
+#[test]
+fn a_spaced_skip_condition_is_the_same_predicate() {
+    let canonical = own_schema::<CanonicalSkipCondition>();
+    assert_eq!(canonical["properties"]["value"], json!({"type": "integer"}));
+    assert_eq!(own_schema::<SpacedSkipCondition>()["properties"], canonical["properties"]);
+}
+
+#[test]
+fn a_spaced_qualified_skip_condition_is_the_same_predicate() {
+    let canonical = own_schema::<CanonicalSkipCondition>();
+    assert_eq!(canonical["properties"]["value"], json!({"type": "integer"}));
+    assert_eq!(own_schema::<SpacedStdSkipCondition>()["properties"], canonical["properties"]);
+}
+
+#[test]
+fn a_spaced_skip_condition_on_a_variant_field_is_the_same_predicate() {
+    let canonical = own_schema::<CanonicalSkipCondition>();
+    assert_eq!(canonical["properties"]["value"], json!({"type": "integer"}));
+    let schema = own_schema::<SpacedVariantSkipCondition>();
+    assert_eq!(schema["oneOf"][0]["properties"]["Named"]["properties"], canonical["properties"]);
+}
+
+#[test]
+fn a_skipped_tuple_field_takes_no_position() {
+    assert_serialization_matches(&TupleSkipExternal::Skip(1, "x".into()));
+}
+
+#[test]
+fn both_one_way_skips_on_a_tuple_field_take_no_position() {
+    assert_serialization_matches(&TupleSkipExternal::BothOneWaySkips(1, "x".into()));
+}
+
+#[test]
+fn the_input_of_a_skipped_tuple_field_is_what_serde_reads() {
+    assert_requests_are_read::<TupleSkipExternal>();
+    assert_requests_are_read::<TupleSkipAdjacent>();
+    assert_requests_are_read::<TupleSkipUntagged>();
+    assert_requests_are_read::<NewtypeSkipExternal>();
+    assert_requests_are_read::<NewtypeSkipInternal>();
+    assert_requests_are_read::<NewtypeSkipUntagged>();
+}
+
+#[test]
+fn a_skip_serializing_tuple_field_keeps_the_position_serde_reads() {
+    assert_request_accepted::<OneWayTupleSkip>(json!({"ReadOnly": [1, "x"]}));
+}
+
+#[test]
+fn a_skip_serializing_newtype_field_keeps_the_value_serde_reads() {
+    assert_request_accepted::<OneWayTupleSkip>(json!({"NewtypeReadOnly": 1}));
+}
+
+#[test]
+fn a_skip_deserializing_newtype_field_keeps_the_value_serde_writes() {
+    assert_serialization_matches(&OneWayTupleSkip::NewtypeWrittenOnly(1));
+}
+
+#[test]
+fn a_tuple_variant_with_every_field_skipped_is_an_empty_array() {
+    assert_serialization_matches(&TupleSkipExternal::AllSkipped(1, 2));
+}
+
+#[test]
+fn a_skipped_adjacent_tuple_field_takes_no_position() {
+    assert_serialization_matches(&TupleSkipAdjacent::Skip(1, "x".into()));
+}
+
+#[test]
+fn a_skipped_untagged_tuple_field_takes_no_position() {
+    assert_serialization_matches(&TupleSkipUntagged::Skip(1, "x".into()));
+}
+
+#[test]
+fn a_skip_deserializing_tuple_field_keeps_the_position_serde_writes() {
+    assert_serialization_matches(&OneWayTupleSkip::WrittenOnly(1, "x".into()));
+}
+
+#[test]
+fn the_input_of_a_spaced_skip_condition_is_what_serde_reads() {
+    assert_requests_are_read::<SpacedSkipCondition>();
+    assert_requests_are_read::<SpacedVariantSkipCondition>();
+}
+
+#[test]
+fn a_skipped_external_newtype_field_is_a_unit_variant() {
+    assert_serialization_matches(&NewtypeSkipExternal::Skip("x".into()));
+}
+
+#[test]
+fn a_skipped_internal_newtype_field_is_a_unit_variant() {
+    assert_serialization_matches(&NewtypeSkipInternal::Skip(Paging::default()));
+}
+
+#[test]
+fn a_skipped_adjacent_newtype_field_is_a_unit_variant() {
+    assert_serialization_matches(&NewtypeSkipAdjacent::Skip("x".into()));
+}
+
+#[test]
+fn a_skipped_untagged_newtype_field_is_a_unit_variant() {
+    assert_serialization_matches(&NewtypeSkipUntagged::Skip("x".into()));
+}
+
 // Known mismatches, deliberately not asserted (follow-up work; arch review A4/A14):
 //
+// - One-way skips on a tuple-variant field need per-direction schemas. serde writes
+//   `P(u8, #[serde(skip_serializing)] String)` as `{"P":[1]}` and reads `{"P":[1,"x"]}`;
+//   `skip_deserializing` is the reverse, and a newtype variant is written or read as a unit variant
+//   in the skipped direction. The schema documents the direction the field is in.
+// - An adjacently tagged newtype variant whose only field is `#[serde(skip)]`: serde writes
+//   `{"kind":"V"}` and reads `{"kind":"V","data":null}`. The schema documents what it writes.
+// - `P(u8, #[serde(skip_serializing_if = "Option::is_none")] Option<String>)`: serde writes
+//   `{"P":[1]}` for `None`, while the schema requires one item per field.
 // - A flattened externally tagged enum's unit variant: serde writes `{"A": null}` next to the
 //   parent's fields, while the flattened schema documents `"A"`.
 // - An externally tagged enum whose variants are all zero-field struct variants (`A {}`): it is
 //   still routed to the string-enum shape (the dispatch checks emptiness, not `Style::Unit`).
-// - `#[serde(skip)]` on a tuple-variant field: serde writes the remaining elements, while the
-//   schema still requires one item per declared field.
 // - Flattening an internally tagged enum whose newtype variant wraps a map omits the map's
 //   `additionalProperties` from the composed schema: keeping it would constrain the parent's own
 //   declared fields (the variant branch is composed through `allOf`), so strict validation

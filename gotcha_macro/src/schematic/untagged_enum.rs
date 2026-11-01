@@ -10,7 +10,7 @@ pub(crate) fn handler(core: &TokenStream2, ident_string: String, doc: TokenStrea
             let variant_string = variant.serde_name();
             let variant_annotations = variant.variant_customizations(core);
 
-            match variant.fields.style {
+            match variant.style() {
                 darling::ast::Style::Struct => {
                     let object = crate::schematic::named_variant_object(core, None, variant.fields.fields);
                     quote! {
