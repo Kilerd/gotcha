@@ -20,7 +20,11 @@ use crate::Schematic;
 /// [`ParameterProvider::extractor_kinds`] reports which of these an argument uses, so document
 /// assembly can add the rejection responses the application is configured to send. Axum's own
 /// extractors report none: their rejections keep Axum's plain-text response.
+///
+/// This enum is `#[non_exhaustive]`: a later release may add a provider, so a `match` outside this
+/// crate needs a wildcard arm.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[non_exhaustive]
 pub enum ExtractorKind {
     /// The JSON body provider. Rejections are configured with `JsonConfig`.
     Json,
@@ -246,7 +250,14 @@ impl<T: Schematic> ParameterProvider for Form<T> {
 
 impl<T: Schematic> ParameterProvider for Query<T> {
     fn generate(_url: String) -> Either<Vec<Parameter>, RequestBody> {
-        let fields = T::fields();
+        // A non-required `Query<T>` (for example `Query<Option<S>>`) has no parameters when the
+        // value is absent, so every field it documents is optional.
+        let mut fields = T::fields();
+        if !T::required() {
+            for (_, schema) in &mut fields {
+                schema.required = false;
+            }
+        }
         if fields.is_empty() {
             let mut ret = vec![];
 

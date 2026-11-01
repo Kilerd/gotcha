@@ -70,61 +70,70 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         users: Arc::new(RwLock::new(initial_users)),
     };
 
-    // ✨ The NEW clean API - No more Gotcha::<(), ()>::with_types!
-    let app = Gotcha::with_types::<AppState, AppConfig>()
-        .state(state)
-        .with_env_config("APP")
-        // Home route with request counter
-        .get("/", |ctx: State<GotchaContext<AppState, AppConfig>>| async move {
-            let count = ctx.state.request_counter.fetch_add(1, Ordering::SeqCst);
-            format!("Welcome to Gotcha! This is request #{}", count + 1)
-        })
-        // Get all users
-        .get("/users", |ctx: State<GotchaContext<AppState, AppConfig>>| async move {
-            let users = ctx.state.users.read().await;
-            let users_vec: Vec<User> = users.values().cloned().collect();
-            Json(users_vec)
-        })
-        // Get user by ID
-        .get(
-            "/users/{id}",
-            |Path(id): Path<u64>, ctx: State<GotchaContext<AppState, AppConfig>>| async move {
-                let users = ctx.state.users.read().await;
-                match users.get(&id) {
-                    Some(user) => Ok(Json(user.clone())),
-                    None => Err((StatusCode::NOT_FOUND, "User not found")),
-                }
+    // State and configuration are already initialized, so neither has to implement `Default`.
+    // Applications that want to load `configurations/application.toml` (and
+    // `GOTCHA_ACTIVE_PROFILE`) can use `Gotcha::with_types::<AppState, AppConfig>()` instead.
+    let app = Gotcha::from_context(GotchaContext::new(
+        state,
+        ConfigWrapper {
+            app: AppConfig {
+                api_key: "demo-key".into(),
+                max_users: 100,
             },
-        )
-        // Create new user
-        .post("/users", || async {
-            Json(serde_json::json!({
-                "message": "User creation endpoint (simplified for demo)"
-            }))
-        })
-        // Show configuration
-        .get("/config", |ctx: State<GotchaContext<AppState, AppConfig>>| async move {
-            Json(serde_json::json!({
-                "api_key": if ctx.config.app.api_key.is_empty() {
-                    "not-configured"
-                } else {
-                    "***hidden***"
-                },
-                "max_users": ctx.config.app.max_users
-            }))
-        })
-        // Health check
-        .get("/health", || async {
-            Json(serde_json::json!({
-                "status": "healthy",
-                "service": "gotcha-example"
-            }))
-        });
+            server: ServerConfig::default(),
+        },
+    ))
+    // Home route with request counter
+    .get("/", |ctx: State<GotchaContext<AppState, AppConfig>>| async move {
+        let count = ctx.state.request_counter.fetch_add(1, Ordering::SeqCst);
+        format!("Welcome to Gotcha! This is request #{}", count + 1)
+    })
+    // Get all users
+    .get("/users", |ctx: State<GotchaContext<AppState, AppConfig>>| async move {
+        let users = ctx.state.users.read().await;
+        let users_vec: Vec<User> = users.values().cloned().collect();
+        Json(users_vec)
+    })
+    // Get user by ID
+    .get(
+        "/users/{id}",
+        |Path(id): Path<u64>, ctx: State<GotchaContext<AppState, AppConfig>>| async move {
+            let users = ctx.state.users.read().await;
+            match users.get(&id) {
+                Some(user) => Ok(Json(user.clone())),
+                None => Err((StatusCode::NOT_FOUND, "User not found")),
+            }
+        },
+    )
+    // Create new user
+    .post("/users", || async {
+        Json(serde_json::json!({
+            "message": "User creation endpoint (simplified for demo)"
+        }))
+    })
+    // Show configuration
+    .get("/config", |ctx: State<GotchaContext<AppState, AppConfig>>| async move {
+        Json(serde_json::json!({
+            "api_key": if ctx.config.app.api_key.is_empty() {
+                "not-configured"
+            } else {
+                "***hidden***"
+            },
+            "max_users": ctx.config.app.max_users
+        }))
+    })
+    // Health check
+    .get("/health", || async {
+        Json(serde_json::json!({
+            "status": "healthy",
+            "service": "gotcha-example"
+        }))
+    });
 
     println!("✅ API endpoints:");
     println!("  GET  /        - Home with request counter");
     println!("  GET  /users   - List all users");
-    println!("  GET  /users/:id - Get user by ID");
+    println!("  GET  /users/{{id}} - Get user by ID");
     println!("  POST /users   - Create new user");
     println!("  GET  /config  - Show configuration");
     println!("  GET  /health  - Health check");

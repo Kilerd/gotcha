@@ -298,7 +298,9 @@ impl Gotcha {
         S: Clone + Send + Sync + 'static,
         C: Clone + Send + Sync + 'static,
     {
-        Gotcha::from_sources(StateSource::Provided(context.state), Configuration::Provided(context.config))
+        // The context is consumed: reuse its configuration when nothing else shares it.
+        let config = std::sync::Arc::try_unwrap(context.config).unwrap_or_else(|config| (*config).clone());
+        Gotcha::from_sources(StateSource::Provided(context.state), Configuration::Provided(config))
     }
 }
 
@@ -1249,30 +1251,6 @@ where
             register(scheduler);
         }
         Ok(())
-    }
-}
-
-// Convenience methods for empty state and config
-impl Gotcha<EmptyState, EmptyConfig> {
-    /// Quick start method for simple applications
-    ///
-    /// # Example
-    /// ```no_run
-    /// use gotcha::prelude::*;
-    ///
-    /// #[tokio::main]
-    /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    ///     Gotcha::quick_start()
-    ///         .await?
-    ///         .get("/", || async { "Hello World" })
-    ///         .run()
-    ///         .await?;
-    ///     Ok(())
-    /// }
-    /// ```
-    pub async fn quick_start() -> GotchaResult<Self> {
-        tracing_subscriber::fmt::init();
-        Ok(Self::new())
     }
 }
 

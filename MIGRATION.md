@@ -1,6 +1,10 @@
 # Migration Guide
 
 - [Unreleased: invalid task registrations fail startup](#unreleased-invalid-task-registrations-fail-startup)
+- [Unreleased: non-exhaustive extractor enums](#unreleased-non-exhaustive-extractor-enums)
+- [Unreleased: shared configuration](#unreleased-shared-configuration)
+- [Unreleased: removed unused public items](#unreleased-removed-unused-public-items)
+- [Unreleased: duplicate operation ids are suffixed](#unreleased-duplicate-operation-ids-are-suffixed)
 - [Unreleased: validation `length` keywords follow the schema type](#unreleased-validation-length-keywords-follow-the-schema-type)
 - [Unreleased: extractor rejection responses in OpenAPI](#unreleased-extractor-rejection-responses-in-openapi)
 - [Unreleased: neutral OpenAPI info defaults](#unreleased-neutral-openapi-info-defaults)
@@ -44,6 +48,102 @@ released and no pending task starts.
 Standalone `TaskScheduler::start()` callers keep the previous behaviour: recorded registrations are
 logged and skipped, and the valid tasks still start. Fix the expression or interval before
 upgrading.
+
+---
+
+# Unreleased: non-exhaustive extractor enums
+
+**`gotcha::ExtractorKind` (with the `openapi` feature), `gotcha_core::ExtractorKind` (with
+`axum`), `gotcha::validation::ValidRejection`, and `gotcha::ParamRejection` are now
+`#[non_exhaustive]`,** so a later release can add an extractor provider, a validation-failure
+variant, or a header/cookie rejection variant without a breaking change.
+
+- A `match` on any of these types outside the crate that defines it needs a wildcard arm
+  (`_ => ..`); a `matches!(..)` with a single variant keeps compiling.
+- Constructing the existing variants is unchanged: `ExtractorKind::Json`, the `ValidRejection`
+  variants, and `ParamRejection::Missing`/`Invalid`/`NotText` remain usable.
+
+---
+
+# Unreleased: shared configuration
+
+`GotchaContext::config` is now an `Arc<ConfigWrapper<C>>` rather than a `ConfigWrapper<C>`. axum
+clones the state passed through `with_state` for every request, so the previous representation
+deep-cloned the whole application configuration on each request; a request now clones the `Arc`
+instead. How much this saves grows with the configuration: string fields dominate.
+
+- `GotchaContext::new(state, config)` keeps its signature and wraps the configuration in an `Arc`.
+- Reading is unchanged: `context.config.server.port` and `context.config.field` still work through
+  `Arc`'s `Deref`, `&*context.config` yields `&ConfigWrapper<C>`, and extractors such as
+  `State<ConfigWrapper<C>>`, `State<ServerConfig>`, and the `#[config]` types are unaffected. Deref
+  coercion also keeps `let config: &ConfigWrapper<C> = &context.config;` compiling.
+- Writing through the field no longer compiles (`context.config.app.field = ..` is E0594: the
+  `Arc` only hands out shared access). Use `Arc::make_mut(&mut context.config).app.field = ..`
+  while the configuration implements `Clone`, or `Arc::get_mut(&mut context.config)` while the
+  `Arc` is unique (no `Clone` needed). For a shared, non-`Clone` configuration, rebuild a
+  `ConfigWrapper` from its parts and assign `context.config = Arc::new(config)`.
+- Serializing the field needs a dereference: `serde_json::to_string(&context.config)` and
+  `Json(context.config.clone())` stop compiling because serde's `rc` feature is off by default. Use
+  `serde_json::to_string(&*context.config)` and `Json((*context.config).clone())`.
+- Cloning a context no longer requires `Config: Clone`: the shared configuration is only refcounted.
+- `GotchaContext` is `Send`/`Sync` only when the stored `ConfigWrapper<C>` is `Send + Sync`, because
+  `Arc<T>` requires both; a hand-built context whose configuration was only `Send` is no longer
+  `Send`. Application configurations are normally `Send + Sync`.
+- `Gotcha::from_context` reuses the supplied configuration without cloning when nothing else
+  shares it.
+
+```rust,ignore
+// Before
+fn app_config(context: &GotchaContext<AppState, AppConfig>) -> ConfigWrapper<AppConfig> {
+    context.config.clone()
+}
+
+// After
+fn app_config(context: &GotchaContext<AppState, AppConfig>) -> ConfigWrapper<AppConfig> {
+    (*context.config).clone()
+}
+```
+# Unreleased: removed unused public items
+
+Several public items that nothing in the framework, examples, or documentation used are gone.
+Each had a direct replacement:
+
+| Removed | Replacement |
+| --- | --- |
+| `Gotcha::quick_start()` | `Gotcha::new()`, plus logging setup if you need it |
+| `quick_server!` | `Gotcha::new()` followed by the same route method calls |
+| `handler!` | write the closure directly, for example an `async move` block |
+| `gotcha::Lazy` | `once_cell::sync::Lazy` (or `std::sync::LazyLock`) with a direct dependency |
+| `GotchaConfig` | name the bounds directly: `Clone + Send + Sync + 'static + Serialize + for<'de> Deserialize<'de> + Default` |
+| `gotcha::prelude::Result` | write `Result<T, Box<dyn std::error::Error + Send + Sync>>`; standard `Result` is no longer shadowed |
+| `gotcha::openapi::replace_path_variable` | nothing: axum 0.8 routes already use OpenAPI's `{name}` syntax |
+| `gotcha::openapi::path_variable_names` | `axum::extract::MatchedPath`, or iterate the `{name}` segments yourself |
+
+`Gotcha::quick_start` panicked when called twice because it installed the tracing subscriber
+globally; logging is left to the application. `quick_server!` was documented as starting a server
+but only returned a builder. `prelude::Result` shadowed the standard library's `Result` on glob
+import, so `Result<T>` in a module using the prelude failed to mean `std::result::Result`.
+
+gotcha's direct `regex` dependency is gone with `path_variable_names` (`gotcha_core` still uses
+its own `regex` dependency). `EmptyState` stays: it appears in the builder's default type
+parameters and public signatures, and replacing it with `()` would churn call sites without
+removing a concept.
+
+---
+
+# Unreleased: duplicate operation ids are suffixed
+
+**Two operations can no longer emit the same `operationId`.** The id defaults to the handler's
+function name, so `users::list` and `books::list`, or one handler mounted at two paths, used to
+collide. The first operation now keeps the id and each later duplicate gets `_2`, `_3`, … in the
+order operations appear in the document: by path, and by method as `PathItem` writes it (GET,
+PUT, POST, DELETE, OPTIONS, HEAD, PATCH, TRACE). Explicit `#[api(id = "…")]` ids follow the same
+rule, and an existing id is never renamed by a generated suffix.
+
+Because a suffix depends on the order of the operations, adding a route can rename an existing
+operation in the generated document (and therefore in clients generated from it). Give operations
+an explicit `#[api(id = "…")]` when their ids must stay stable. Documents whose ids were already
+unique are unchanged.
 
 ---
 
@@ -570,8 +670,8 @@ Return `router.layer(auth_layer)` from it to cover the complete application. Thi
 documentation is mounted, without requiring an override of `build_router`. An existing custom
 `build_router` still owns its whole assembly and must invoke any desired finalization itself.
 The builder's `.finish_router(|router, context| ..)` is the equivalent hook; it receives a clone
-of the application context (configuration duplicated, state shared behind an `Arc` still the same
-value), and `app_layer` middleware remains outermost around whatever the hook mounts.
+of the application context (configuration shared behind an `Arc`, state shared behind an `Arc`
+still the same value), and `app_layer` middleware remains outermost around whatever the hook mounts.
 Routes added through these native Axum hooks do not contribute OpenAPI metadata.
 
 ## Export without HTTP
@@ -658,8 +758,8 @@ responses: <String as Responsible>::response,
 
 Capturing closures cannot be stored in the new function-pointer fields. Apply configuration-dependent
 changes through the existing `.openapi(move |spec| ...)` transform instead. User transforms still
-support captured state. `ParameterProvider::generate`, `ParamType`, and the public `gotcha::Lazy`
-and `gotcha::Either` re-exports retain their existing interfaces.
+support captured state. `ParameterProvider::generate`, `ParamType`, and the public `gotcha::Either`
+re-export retain their existing interfaces.
 
 Static constructor storage does not cache generated parameters, responses, schemas, or complete
 OpenAPI documents. Constructors still run inside each document's schema collection scope, preserving
@@ -837,9 +937,6 @@ require `Self::Config: DeserializeOwned`, because their contract includes config
 This method bound applies even when `config()` is overridden; use an explicit context if the
 configuration cannot be deserialized. Generic callers of these methods must now state that bound
 explicitly. `Serialize` and `Default` are no longer required by trait-based loading.
-
-The existing `GotchaConfig` marker retains its original bounds for compatibility with user generic
-code. Runtime containers and the extraction macros no longer require it.
 
 Explicit configuration still wins over registered sources. See [shared startup](#unreleased-shared-startup)
 for the unified strict loading policy, explicit fallback, and listener address precedence.

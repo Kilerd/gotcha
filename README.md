@@ -9,7 +9,7 @@ An enhanced web framework built on top of Axum, providing additional features an
 ## ✨ Features
 
 - 🚀 **Built on Axum** - High performance and reliability
-- 📚 **Automatic OpenAPI** - Generate documentation from your code
+- 📚 **OpenAPI 3.2** - Document `#[api]` handlers and their schemas
 - 📊 **Prometheus Metrics** - Built-in metrics collection
 - 🌐 **CORS Support** - Cross-origin resource sharing
 - 🔌 **WebSocket & SSE** - Real-time endpoints, re-exported and ready
@@ -351,7 +351,7 @@ let app = Gotcha::from_state(())
 The builder's `finish_router` mirrors the trait's
 `GotchaApp::finish_router(&self, router, context)` hook. Hooks run once at startup after business
 routes, fallback, and documentation are mounted, and receive a clone of the application's
-`GotchaContext` — configuration is duplicated, while state shared behind `Arc` is the same value
+`GotchaContext` — the configuration is shared behind an `Arc`, so hooks observe the same values
 the routes see. `app_layer` middleware is installed after these hooks, so it covers whatever they
 mount. `finish_router` is not called during document export.
 
@@ -1091,14 +1091,19 @@ Gotcha is organized as a Rust workspace with the following structure:
 ```text
 gotcha/
 ├── gotcha/           # Main framework crate
+├── gotcha_core/      # Schematic, parameter providers, and response descriptors
 ├── gotcha_macro/     # Procedural macros
 └── examples/         # Example applications
-    ├── basic/        # Basic usage example
-    ├── openapi/      # OpenAPI documentation example
-    ├── configuration/# Configuration management example
-    ├── task/         # Background tasks example
-    ├── message/      # Message system example
-    └── simple/       # Builder API example
+    ├── basic/        # Trait-based application with custom configuration
+    ├── configuration/# File, environment, and profile configuration
+    ├── custom_types/ # Constructors for custom state and configuration types
+    ├── custom_types_real/ # Initialized state and configuration in a runnable API
+    ├── extension/    # Extension middleware with documented handlers
+    ├── message/      # Typed messages with application state
+    ├── openapi/      # OpenAPI 3.2 document generation
+    ├── simple/       # Builder API example
+    ├── task/         # Cron and interval background tasks
+    └── testing-guide/# Integration tests with axum-test
 ```
 
 ### Core Concepts
