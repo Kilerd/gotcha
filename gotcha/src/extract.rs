@@ -10,7 +10,7 @@
 //! Multipart}` and `gotcha::axum_extra::TypedHeader`.
 //!
 //! An extractor defined outside Gotcha can use the same configuration through a
-//! [`RejectionProvider`], [`TakenConfigs`] or [`reject`], and, with `openapi`, `kind`; see
+//! [`RejectionProvider`], [`RequestConfigs`] or [`reject`], and, with `openapi`, `kind`; see
 //! [Writing an extractor provider](crate#writing-an-extractor-provider).
 //!
 //! ```no_run

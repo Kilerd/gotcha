@@ -903,12 +903,13 @@ rejection responses as `Json` or `Query`:
      `gotcha::extract::reject::<P>(extensions, rejection)` on its error path only, so a successful
      extraction does no lookup.
    - A body extractor that hands the request to Axum's own extractors calls
-     `TakenConfigs::take(req.extensions_mut())` before consuming it and later returns
+     `RequestConfigs::take(req.extensions_mut())` before consuming it and later returns
      `configs.reject::<P>(rejection)`. Taking costs one extension removal per extraction.
    - A wrapper that hands the request to another Gotcha extractor, or to any extractor that
      rejects through these configurations, must not take them: the inner extractor would no longer
-     find them and would send its defaults. Keep a handle with `TakenConfigs::share(req.extensions())`
-     instead (one lookup and one reference-count increment per extraction).
+     find them and would send its defaults. Keep a handle with
+     `RequestConfigs::share(req.extensions())` instead (one lookup and one reference-count increment
+     per extraction).
 3. With `openapi`, report `gotcha::extract::kind::<P>()` from `ParameterProvider::extractor_kinds`.
    Operations then document `P`'s statuses with `ErrorBody`, or the statuses and body the
    application configured.
@@ -916,7 +917,7 @@ rejection responses as `Json` or `Query`:
 ```rust
 use gotcha::axum::extract::{FromRequest, Request};
 use gotcha::axum::http::{header, StatusCode};
-use gotcha::extract::{RejectionConfig, RejectionProvider, TakenConfigs};
+use gotcha::extract::{RejectionConfig, RejectionProvider, RequestConfigs};
 use gotcha::{ErrorBody, Rejected};
 
 #[derive(Debug)]
@@ -953,7 +954,7 @@ impl<S: Send + Sync> FromRequest<S> for Csv {
 
     async fn from_request(mut req: Request, state: &S) -> Result<Self, Self::Rejection> {
         // Axum's `String` extractor consumes the request and never reads the configurations.
-        let configs = TakenConfigs::take(req.extensions_mut());
+        let configs = RequestConfigs::take(req.extensions_mut());
         if req.headers().get(header::CONTENT_TYPE).map(|value| value.as_bytes()) != Some(&b"text/csv"[..]) {
             return Err(configs.reject::<CsvProvider>(CsvRejection::ContentType));
         }
@@ -1000,7 +1001,7 @@ configurations instead of taking them:
 use gotcha::axum::extract::{FromRequest, Request};
 use gotcha::axum::http::StatusCode;
 use gotcha::axum::response::{IntoResponse, Response};
-use gotcha::extract::{RejectionProvider, TakenConfigs};
+use gotcha::extract::{RejectionProvider, RequestConfigs};
 use gotcha::{ErrorBody, Json};
 
 pub struct EmptyList;
@@ -1024,7 +1025,7 @@ impl<T: serde::de::DeserializeOwned, S: Send + Sync> FromRequest<S> for NonEmpty
 
     async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
         // Gotcha's `Json` renders its own rejections through `JsonConfig`, so leave them in place.
-        let configs = TakenConfigs::share(req.extensions());
+        let configs = RequestConfigs::share(req.extensions());
         let Json(items) = Json::<Vec<T>>::from_request(req, state).await.map_err(IntoResponse::into_response)?;
         if items.is_empty() {
             return Err(configs.reject::<NonEmptyProvider>(EmptyList).into_response());

@@ -17,7 +17,7 @@ mod msgpack {
     use gotcha::axum::extract::{FromRequest, Request};
     use gotcha::axum::http::{header, StatusCode};
     use gotcha::axum::response::{IntoResponse, Response};
-    use gotcha::extract::{RejectionConfig, RejectionProvider, TakenConfigs};
+    use gotcha::extract::{RejectionConfig, RejectionProvider, RequestConfigs};
     use gotcha::{ErrorBody, Json, Rejected};
     use serde::de::DeserializeOwned;
 
@@ -78,7 +78,7 @@ mod msgpack {
         type Rejection = Rejected<MsgPackRejection>;
 
         async fn from_request(mut req: Request, state: &S) -> Result<Self, Self::Rejection> {
-            let configs = TakenConfigs::take(req.extensions_mut());
+            let configs = RequestConfigs::take(req.extensions_mut());
             if req.headers().get(header::CONTENT_TYPE).map(|value| value.as_bytes()) != Some(&b"application/msgpack"[..]) {
                 return Err(configs.reject::<MsgPackProvider>(MsgPackRejection::ContentType));
             }
@@ -139,7 +139,7 @@ mod msgpack {
         async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
             // `Json` renders its own rejections through `JsonConfig`: share the configurations
             // rather than taking them, or it would send its defaults.
-            let configs = TakenConfigs::share(req.extensions());
+            let configs = RequestConfigs::share(req.extensions());
             let Json(items) = Json::<Vec<T>>::from_request(req, state).await.map_err(IntoResponse::into_response)?;
             if items.is_empty() {
                 return Err(configs.reject::<NonEmptyProvider>(EmptyList).into_response());
