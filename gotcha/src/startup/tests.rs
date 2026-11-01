@@ -167,7 +167,6 @@ async fn both_apis_serve_the_loaded_config_and_actual_bound_address() {
 }
 
 /// The builder counterpart of [`TraitApp`]: every stage is a builder hook recording into `events`.
-/// `finish_router` cannot fail, so only the other stages honour `fail_at`.
 fn staged_builder(path: &Path, events: &Events, bound: &Arc<Mutex<Option<SocketAddr>>>, fail_at: Option<&'static str>) -> Gotcha<(), Settings> {
     let stage = {
         let events = events.clone();
@@ -197,9 +196,9 @@ fn staged_builder(path: &Path, events: &Events, bound: &Arc<Mutex<Option<SocketA
         Ok(source.build()?)
     })
     .get("/config", read)
-    .finish_router(move |router, _| {
-        router_stage("router").unwrap();
-        router
+    .try_finish_router(move |router, _| {
+        router_stage("router")?;
+        Ok(router)
     });
     builder.try_tasks(move |_| Box::pin(async move { stage("tasks") }))
 }
@@ -221,7 +220,7 @@ async fn builder_initialization_errors_stop_startup_and_release_the_listener() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("config.toml");
     std::fs::write(&path, "label = 'ready'\n[server]\nhost = '127.0.0.1'\nport = 0").unwrap();
-    for stage in ["logger", "state", "tasks"] {
+    for stage in ["logger", "state", "router", "tasks"] {
         let (events, bound) = (Events::default(), Arc::<Mutex<Option<SocketAddr>>>::default());
         // A config fallback must not swallow errors from other stages.
         let mut builder = staged_builder(&path, &events, &bound, Some(stage)).config_error_policy(ConfigErrorPolicy::Fallback(fallback_settings));

@@ -505,7 +505,7 @@ pub trait GotchaApp: Sized + Send + Sync {
                 self.openapi_endpoints(),
                 #[cfg(feature = "prometheus")]
                 self.metrics_endpoint(),
-                |router, context| self.finish_router(router, context),
+                |router, context| Ok(self.finish_router(router, context)),
             )
         }
     }
