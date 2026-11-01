@@ -269,7 +269,6 @@ impl ExtractorConfigs {
     /// A provider is resolved by its type: the application's override when it set one, else the
     /// provider's default statuses with an [`ErrorBody`].
     #[cfg(feature = "openapi")]
-    #[allow(deprecated)] // Resolves the deprecated unit variants.
     pub(crate) fn rejection_specs(&self, kind: &crate::ExtractorKind, specs: &mut Vec<RejectionSpec>) {
         use crate::ExtractorKind;
 

@@ -293,9 +293,6 @@ fn cookie_value<'a>(header: &'a str, name: &str) -> Option<&'a str> {
 }
 
 #[cfg(feature = "openapi")]
-// The built-in extractors report the deprecated unit `ExtractorKind` variants until the next
-// major release, so `extractor_kinds()` returns what it always has.
-#[allow(deprecated)]
 mod openapi {
     use gotcha_core::oas::{Parameter, ParameterIn, RequestBody};
     use gotcha_core::Schematic;

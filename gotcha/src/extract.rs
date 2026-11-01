@@ -468,9 +468,6 @@ where
 }
 
 #[cfg(feature = "openapi")]
-// The built-in extractors report the deprecated unit `ExtractorKind` variants until the next
-// major release, so `extractor_kinds()` returns what it always has.
-#[allow(deprecated)]
 mod openapi {
     use super::{Form, Json, Multipart, Path, Query, TypedHeader};
     use crate::{Either, ExtractorKind, ParameterProvider, Responsible, Schematic};

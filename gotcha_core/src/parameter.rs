@@ -24,9 +24,11 @@ use crate::Schematic;
 /// extractors report none: their rejections keep Axum's plain-text response.
 ///
 /// A provider is named by [`Provider`](Self::Provider), built with `gotcha::extract::kind::<P>()`
-/// for any `gotcha::extract::RejectionProvider`. The deprecated unit variants name Gotcha's
-/// built-in providers, which still report them, and document exactly like their `kind::<P>()`; a
-/// unit variant and the matching `Provider` key are still different values.
+/// for any `gotcha::extract::RejectionProvider`; new providers use it. The unit variants name
+/// Gotcha's built-in providers and stay supported: they resolve to the same configuration as
+/// their `kind::<P>()` and document the same responses. The two are not equal as values
+/// (`ExtractorKind::Json != kind::<JsonProvider>()`), and the built-in extractors report the unit
+/// variants until a later major release switches them to keys.
 ///
 /// This enum is `#[non_exhaustive]`: a later release may add a provider, so a `match` outside this
 /// crate needs a wildcard arm.
@@ -34,49 +36,22 @@ use crate::Schematic;
 #[non_exhaustive]
 pub enum ExtractorKind {
     /// The JSON body provider. Rejections are configured with `JsonConfig`.
-    #[deprecated(
-        note = "name the provider with `gotcha::extract::kind::<gotcha::extract::JsonProvider>()`; Gotcha's own extractors report this variant until the next major release"
-    )]
     Json,
     /// The URL-encoded form body provider. Rejections are configured with `FormConfig`.
-    #[deprecated(
-        note = "name the provider with `gotcha::extract::kind::<gotcha::extract::FormProvider>()`; Gotcha's own extractors report this variant until the next major release"
-    )]
     Form,
     /// The query-string provider. Rejections are configured with `QueryConfig`.
-    #[deprecated(
-        note = "name the provider with `gotcha::extract::kind::<gotcha::extract::QueryProvider>()`; Gotcha's own extractors report this variant until the next major release"
-    )]
     Query,
     /// The path-parameter provider. Rejections are configured with `PathConfig`.
-    #[deprecated(
-        note = "name the provider with `gotcha::extract::kind::<gotcha::extract::PathProvider>()`; Gotcha's own extractors report this variant until the next major release"
-    )]
     Path,
     /// The multipart form provider. Rejections are configured with `MultipartConfig`.
-    #[deprecated(
-        note = "name the provider with `gotcha::extract::kind::<gotcha::extract::MultipartProvider>()`; Gotcha's own extractors report this variant until the next major release"
-    )]
     Multipart,
     /// The typed-header provider. Rejections are configured with `TypedHeaderConfig`.
-    #[deprecated(
-        note = "name the provider with `gotcha::extract::kind::<gotcha::extract::TypedHeaderProvider>()`; Gotcha's own extractors report this variant until the next major release"
-    )]
     TypedHeader,
     /// Gotcha's typed header parameter. Rejections are configured with `HeaderConfig`.
-    #[deprecated(
-        note = "name the provider with `gotcha::extract::kind::<gotcha::extract::HeaderProvider>()`; Gotcha's own extractors report this variant until the next major release"
-    )]
     Header,
     /// Gotcha's typed cookie parameter. Rejections are configured with `CookieConfig`.
-    #[deprecated(
-        note = "name the provider with `gotcha::extract::kind::<gotcha::extract::CookieProvider>()`; Gotcha's own extractors report this variant until the next major release"
-    )]
     Cookie,
     /// The `Valid` wrapper's validation failure. Configured with `ValidConfig`.
-    #[deprecated(
-        note = "name the provider with `gotcha::extract::kind::<gotcha::extract::ValidProvider>()`; Gotcha's own extractors report this variant until the next major release"
-    )]
     Valid,
     /// A rejection provider identified by its type. Built by `gotcha::extract::kind::<P>()`.
     Provider(ProviderKey),
