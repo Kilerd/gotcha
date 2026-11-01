@@ -209,6 +209,36 @@ struct FlattensExternallyTagged {
     kind: ExternallyTagged,
 }
 
+#[derive(Schematic, Serialize, Deserialize)]
+struct Paging {
+    page: u32,
+    per_page: u32,
+}
+
+/// A whole flattened struct may be absent; serde then writes none of its fields.
+#[derive(Schematic, Serialize, Deserialize)]
+struct OptionalPaging {
+    query: String,
+    #[serde(flatten)]
+    paging: Option<Paging>,
+}
+
+/// The same for a flattened tagged enum: absence means no tag and no variant fields.
+#[derive(Schematic, Serialize, Deserialize)]
+struct OptionalKind {
+    query: String,
+    #[serde(flatten)]
+    kind: Option<InternallyTagged>,
+}
+
+/// Unlike `flatten`, a newtype variant still requires the fields of the struct it wraps, even
+/// when that struct is inside an `Option`.
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(tag = "t")]
+enum OptionalNewtypeVariant {
+    A(Option<Paging>),
+}
+
 /// An all-unit enum: the wire form is a plain string.
 #[derive(Schematic, Serialize, Deserialize)]
 enum SimpleEnum {
@@ -370,6 +400,50 @@ fn flattened_tagged_enums_match_serde() {
 }
 
 #[test]
+fn optional_flattened_values_match_serde_with_and_without_the_value() {
+    // Present: the flattened struct's fields are written next to the parent's.
+    assert_serialization_matches(&OptionalPaging {
+        query: "x".into(),
+        paging: Some(Paging { page: 1, per_page: 20 }),
+    });
+    // Absent: serde writes only the parent's field, and the schema must accept that.
+    assert_serialization_matches(&OptionalPaging {
+        query: "x".into(),
+        paging: None,
+    });
+
+    // Present: the flattened enum's tag and variant fields are written.
+    assert_serialization_matches(&OptionalKind {
+        query: "x".into(),
+        kind: Some(InternallyTagged::A { x: 1 }),
+    });
+    // Absent: no tag and no variant fields.
+    assert_serialization_matches(&OptionalKind { query: "x".into(), kind: None });
+}
+
+#[test]
+fn a_newtype_variant_still_requires_the_option_fields_serde_requires() {
+    // `Option` in a newtype variant is not a flatten field: serde deserializes the variant body
+    // into `Option<Paging>` and fails when `page` is missing.
+    let absent = json!({"t": "A"});
+    assert!(serde_json::from_value::<OptionalNewtypeVariant>(absent.clone()).is_err());
+
+    let document = strict(schema_document::<OptionalNewtypeVariant>());
+    let validator = jsonschema::validator_for(&document).expect("generated schema is a valid JSON Schema");
+    assert!(
+        validator.validate(&absent).is_err(),
+        "the schema must require the fields serde requires: {document}"
+    );
+
+    // The value serde itself accepts carries the fields, and the schema must accept it too.
+    // (serde cannot serialize an internally tagged newtype variant containing `Option`, so the
+    // check is on the deserialized form.)
+    let present = json!({"t": "A", "page": 1, "per_page": 20});
+    assert!(serde_json::from_value::<OptionalNewtypeVariant>(present.clone()).is_ok());
+    assert!(validator.validate(&present).is_ok(), "the schema must accept a value serde accepts: {document}");
+}
+
+#[test]
 fn component_references_resolve() {
     let wrapper = Wrapper {
         profile: Profile {
@@ -410,8 +484,6 @@ fn component_references_resolve() {
 // - Untagged enums use `oneOf`, so a value matching several branches fails validation (`u32|f64`
 //   with `1`). Struct variants whose fields are subsets only pass because strict validation
 //   rejects the superset branch's extra fields; the schema itself still overlaps.
-// - `#[serde(flatten)]` on an `Option<Struct>` drops the flattened fields from the schema, so
-//   serialized values carry undeclared properties (arch review A4). Strict validation catches it.
 // - A `#[serde(flatten)]` field whose type is a map (for example `HashMap<String, String>`) is
 //   dropped from the schema; serde merges its entries into the containing object.
 // - An internally tagged enum with a newtype variant wrapping a map documents only the tag; serde
