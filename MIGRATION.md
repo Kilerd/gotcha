@@ -1,5 +1,6 @@
 # Migration Guide
 
+- [Unreleased: removed unused public items](#unreleased-removed-unused-public-items)
 - [Unreleased: duplicate operation ids are suffixed](#unreleased-duplicate-operation-ids-are-suffixed)
 - [Unreleased: validation `length` keywords follow the schema type](#unreleased-validation-length-keywords-follow-the-schema-type)
 - [Unreleased: extractor rejection responses in OpenAPI](#unreleased-extractor-rejection-responses-in-openapi)
@@ -29,6 +30,34 @@
 - [Unreleased: default configuration sources](#unreleased-default-configuration-sources)
 - [0.3 → 0.4](#03--04) — **every application must edit its route paths and configuration file**
 - [0.2 → 0.3: API simplification](#02--03-api-simplification)
+
+---
+
+# Unreleased: removed unused public items
+
+Several public items that nothing in the framework, examples, or documentation used are gone.
+Each had a direct replacement:
+
+| Removed | Replacement |
+| --- | --- |
+| `Gotcha::quick_start()` | `Gotcha::new()`, plus logging setup if you need it |
+| `quick_server!` | `Gotcha::new()` followed by the same route method calls |
+| `handler!` | write the closure directly, for example an `async move` block |
+| `gotcha::Lazy` | `once_cell::sync::Lazy` (or `std::sync::LazyLock`) with a direct dependency |
+| `GotchaConfig` | name the bounds directly: `Clone + Send + Sync + 'static + Serialize + for<'de> Deserialize<'de> + Default` |
+| `gotcha::prelude::Result` | write `Result<T, Box<dyn std::error::Error + Send + Sync>>`; standard `Result` is no longer shadowed |
+| `gotcha::openapi::replace_path_variable` | nothing: axum 0.8 routes already use OpenAPI's `{name}` syntax |
+| `gotcha::openapi::path_variable_names` | `axum::extract::MatchedPath`, or iterate the `{name}` segments yourself |
+
+`Gotcha::quick_start` panicked when called twice because it installed the tracing subscriber
+globally; logging is left to the application. `quick_server!` was documented as starting a server
+but only returned a builder. `prelude::Result` shadowed the standard library's `Result` on glob
+import, so `Result<T>` in a module using the prelude failed to mean `std::result::Result`.
+
+gotcha's direct `regex` dependency is gone with `path_variable_names` (`gotcha_core` still uses
+its own `regex` dependency). `EmptyState` stays: it appears in the builder's default type
+parameters and public signatures, and replacing it with `()` would churn call sites without
+removing a concept.
 
 ---
 
@@ -659,8 +688,8 @@ responses: <String as Responsible>::response,
 
 Capturing closures cannot be stored in the new function-pointer fields. Apply configuration-dependent
 changes through the existing `.openapi(move |spec| ...)` transform instead. User transforms still
-support captured state. `ParameterProvider::generate`, `ParamType`, and the public `gotcha::Lazy`
-and `gotcha::Either` re-exports retain their existing interfaces.
+support captured state. `ParameterProvider::generate`, `ParamType`, and the public `gotcha::Either`
+re-export retain their existing interfaces.
 
 Static constructor storage does not cache generated parameters, responses, schemas, or complete
 OpenAPI documents. Constructors still run inside each document's schema collection scope, preserving
@@ -837,9 +866,6 @@ require `Self::Config: DeserializeOwned`, because their contract includes config
 This method bound applies even when `config()` is overridden; use an explicit context if the
 configuration cannot be deserialized. Generic callers of these methods must now state that bound
 explicitly. `Serialize` and `Default` are no longer required by trait-based loading.
-
-The existing `GotchaConfig` marker retains its original bounds for compatibility with user generic
-code. Runtime containers and the extraction macros no longer require it.
 
 Explicit configuration still wins over registered sources. See [shared startup](#unreleased-shared-startup)
 for the unified strict loading policy, explicit fallback, and listener address precedence.

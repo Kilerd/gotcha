@@ -31,9 +31,8 @@ pub use config::{ConfigErrorPolicy, ConfigWrapper, ServerConfig};
 pub use either::Either;
 pub use routing::{delete, get, head, on, options, patch, post, put, trace, MethodRouter};
 
-pub use once_cell::sync::Lazy;
 pub use router::GotchaRouter;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use tracing::level_filters::LevelFilter;
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::{fmt, EnvFilter};
@@ -223,14 +222,6 @@ impl<State, Config> FromRef<GotchaContext<State, Config>> for crate::config::Ser
         context.config.server.clone()
     }
 }
-
-/// Compatibility bundle of the original configuration bounds.
-///
-/// Existing generic code can keep using this trait. Runtime containers, extractors, messages,
-/// and tasks do not require it; loading, serialization, and default construction impose their
-/// individual bounds only where needed.
-pub trait GotchaConfig: Clone + Send + Sync + 'static + Serialize + for<'de> Deserialize<'de> + Default {}
-impl<T> GotchaConfig for T where T: Clone + Send + Sync + 'static + Serialize + for<'de> Deserialize<'de> + Default {}
 
 /// The trait API: implement it to describe an application, then call `run()`.
 ///

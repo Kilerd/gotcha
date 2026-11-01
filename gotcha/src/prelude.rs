@@ -29,7 +29,7 @@ pub use crate::config::{ConfigErrorPolicy, ConfigWrapper, GotchaConfigLoader, Se
 pub use crate::error::{ErrorBody, GotchaError, GotchaResult, HttpError};
 pub use crate::response::WithStatus;
 pub use crate::router::Responder;
-pub use crate::{config, state, GotchaApp, GotchaConfig, GotchaContext, GotchaRouter};
+pub use crate::{config, state, GotchaApp, GotchaContext, GotchaRouter};
 
 // Method routing with OpenAPI metadata
 pub use crate::routing::{delete, get, head, on, options, patch, post, put, trace, MethodRouter};
@@ -52,10 +52,6 @@ pub use serde_json::{json, Value as JsonValue};
 // Async traits
 pub use crate::async_trait;
 
-// Common result type
-/// A `Result` whose error defaults to a boxed `std::error::Error`, for `main` and quick handlers.
-pub type Result<T, E = Box<dyn std::error::Error + Send + Sync>> = std::result::Result<T, E>;
-
 // The schema trait and derive macro exist in every build; `Valid` needs them for wire names.
 pub use crate::Schematic;
 
@@ -74,20 +70,6 @@ pub use crate::{RunningTasks, TaskScheduler};
 
 // Utility macros for common patterns
 #[macro_export]
-/// Defines an async handler function with less ceremony.
-macro_rules! handler {
-    // Simple async closure handler
-    ($body:expr) => {
-        || async move { $body }
-    };
-
-    // Handler with single parameter
-    ($param:ident: $param_type:ty => $body:expr) => {
-        |$param: $param_type| async move { $body }
-    };
-}
-
-#[macro_export]
 /// Builds a `Json` response from a `serde_json::json!` literal.
 ///
 /// ```
@@ -105,22 +87,5 @@ macro_rules! json_response {
     };
 }
 
-#[macro_export]
-/// Starts a server on the given address with the given routes, for examples and prototypes.
-macro_rules! quick_server {
-    (
-        $(($method:ident, $path:literal, $handler:expr)),* $(,)?
-    ) => {
-        {
-            use $crate::prelude::*;
-            let mut app = Gotcha::new();
-            $(
-                app = app.$method($path, $handler);
-            )*
-            app
-        }
-    };
-}
-
 // Re-export macros
-pub use crate::{handler, json_response, quick_server};
+pub use crate::json_response;
