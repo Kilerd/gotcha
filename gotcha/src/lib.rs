@@ -528,8 +528,8 @@ pub trait GotchaApp: Sized + Send + Sync {
     ///
     /// Binding failure happens before state initialization or task registration and runs no
     /// cleanup hooks. Dropping the result without serving releases the port without running
-    /// cleanup. Requires `Self: 'static` because the signal and cleanup driver is moved into its
-    /// own task; use [`Self::run`] for applications that borrow external data.
+    /// cleanup. Requires `Self: 'static` because the bound server erases the application into
+    /// its signal and cleanup driver; use [`Self::run`] for applications that borrow external data.
     fn bind(self) -> impl std::future::Future<Output = GotchaResult<BoundServer>> + Send
     where
         Self: 'static,
