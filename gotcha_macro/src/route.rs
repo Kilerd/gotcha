@@ -1,4 +1,7 @@
+use std::str::FromStr;
+
 use proc_macro::TokenStream;
+use proc_macro2::{Group, Span, TokenStream as TokenStream2, TokenTree};
 use quote::quote;
 use syn::spanned::Spanned;
 use syn::{parse_macro_input, AttributeArgs, FnArg, ItemFn, ReturnType};
@@ -7,6 +10,32 @@ use darling::util::Flag;
 
 use crate::utils::{gotcha_crate_path, AttributesExt};
 use crate::FromMeta;
+
+/// Parse a Rust type from a string literal.
+///
+/// Every token is re-spanned to `lit.span().resolved_at(Span::call_site())`: diagnostics still
+/// point at the string, while the generated tokens resolve at the macro call site, so user-crate
+/// lints (for example `unused_qualifications`) do not fire on macro output.
+fn parse_type(lit: &syn::LitStr) -> darling::Result<syn::Type> {
+    let span = lit.span().resolved_at(Span::call_site());
+    let tokens = TokenStream2::from_str(&lit.value()).map_err(|error| darling::Error::from(syn::Error::new(span, error)))?;
+    syn::parse2::<syn::Type>(respan(tokens, span)).map_err(|error| darling::Error::from(syn::Error::new(span, error)))
+}
+
+/// Replace the span of every token in `stream`, including nested groups, with `span`.
+fn respan(stream: TokenStream2, span: Span) -> TokenStream2 {
+    stream
+        .into_iter()
+        .map(|mut token| {
+            if let TokenTree::Group(group) = &mut token {
+                let inner = respan(group.stream(), span);
+                *group = Group::new(group.delimiter(), inner);
+            }
+            token.set_span(span);
+            token
+        })
+        .collect()
+}
 
 #[derive(Debug, FromMeta)]
 pub struct RouteMeta {
@@ -93,7 +122,8 @@ fn validate_request_bodies(declarations: &[RequestBodyMeta]) -> darling::Result<
 struct RequestBodyMeta {
     /// Span of the whole entry, used for errors that depend on the other entries.
     span: proc_macro2::Span,
-    body: String,
+    /// Kept as the literal so a malformed type is reported at the string, not the attribute.
+    body: syn::LitStr,
     /// Defaults to `application/json`, matching a body declaration in `response(...)`.
     content_type: String,
     description: Option<String>,
@@ -103,7 +133,7 @@ struct RequestBodyMeta {
 
 #[derive(Debug, FromMeta)]
 struct RequestBodyFields {
-    body: String,
+    body: syn::LitStr,
     content_type: Option<String>,
     description: Option<String>,
     required: Option<bool>,
@@ -115,7 +145,7 @@ impl FromMeta for RequestBodyMeta {
             return Err(darling::Error::custom("expected request_body(body = \"Type\")").with_span(item));
         };
         let fields = RequestBodyFields::from_list(&meta.nested.iter().cloned().collect::<Vec<_>>()).map_err(|error| error.with_span(meta))?;
-        syn::parse_str::<syn::Type>(&fields.body).map_err(|error| darling::Error::custom(error).with_span(meta))?;
+        parse_type(&fields.body)?;
         Ok(Self {
             span: meta.span(),
             body: fields.body,
@@ -128,7 +158,7 @@ impl FromMeta for RequestBodyMeta {
 
 impl RequestBodyMeta {
     fn tokens(&self, gotcha: &proc_macro2::TokenStream) -> proc_macro2::TokenStream {
-        let body: syn::Type = syn::parse_str(&self.body).expect("validated body type");
+        let body: syn::Type = parse_type(&self.body).expect("validated body type");
         let content_type = &self.content_type;
         let required = self.required;
         let description = match &self.description {
@@ -174,9 +204,10 @@ impl FromMeta for ErrorDeclarations {
 #[derive(Debug, FromMeta)]
 struct ResponseMeta {
     status: u16,
-    body: Option<String>,
+    /// Kept as the literal so a malformed type is reported at the string, not the attribute.
+    body: Option<syn::LitStr>,
     /// OpenAPI 3.2 `itemSchema` for sequential media types such as `text/event-stream`.
-    item: Option<String>,
+    item: Option<syn::LitStr>,
     content_type: Option<String>,
     description: Option<String>,
 }
@@ -200,10 +231,10 @@ impl FromMeta for ResponseDeclarations {
                 return Err(darling::Error::custom("duplicate response status").with_span(meta));
             }
             if let Some(body) = &response.body {
-                syn::parse_str::<syn::Type>(body).map_err(|e| darling::Error::custom(e).with_span(meta))?;
+                parse_type(body)?;
             }
             if let Some(item_type) = &response.item {
-                syn::parse_str::<syn::Type>(item_type).map_err(|e| darling::Error::custom(e).with_span(meta))?;
+                parse_type(item_type)?;
                 if response.content_type.is_none() {
                     return Err(darling::Error::custom("item requires an explicit content_type").with_span(meta));
                 }
@@ -227,18 +258,18 @@ impl ResponseMeta {
         let description = self.description.clone().unwrap_or_else(|| format!("HTTP {status}"));
         match (&self.body, &self.item) {
             (Some(body), Some(item)) => {
-                let body: syn::Type = syn::parse_str(body).expect("validated body type");
-                let item: syn::Type = syn::parse_str(item).expect("validated item type");
+                let body: syn::Type = parse_type(body).expect("validated body type");
+                let item: syn::Type = parse_type(item).expect("validated item type");
                 let media_type = self.content_type.as_deref().expect("item validation requires content_type");
                 quote!(#gotcha::response::response_with_item::<#body, #item>(#status, #media_type, #description))
             }
             (Some(body), None) => {
-                let body: syn::Type = syn::parse_str(body).expect("validated body type");
+                let body: syn::Type = parse_type(body).expect("validated body type");
                 let media_type = self.content_type.as_deref().unwrap_or("application/json");
                 quote!(#gotcha::response::response::<#body>(#status, #media_type, #description))
             }
             (None, Some(item)) => {
-                let item: syn::Type = syn::parse_str(item).expect("validated item type");
+                let item: syn::Type = parse_type(item).expect("validated item type");
                 let media_type = self.content_type.as_deref().expect("item validation requires content_type");
                 quote!(#gotcha::response::item_response::<#item>(#status, #media_type, #description))
             }
@@ -583,7 +614,7 @@ mod tests {
             item = "Event"
         )))))
         .unwrap();
-        assert_eq!(meta.responses.unwrap().0[0].item.as_deref(), Some("Event"));
+        assert_eq!(meta.responses.unwrap().0[0].item.as_ref().map(syn::LitStr::value).as_deref(), Some("Event"));
 
         for invalid in [
             syn::parse_quote!(api(responses(response(status = 200, item = "Event")))),

@@ -1,0 +1,7 @@
+error: unexpected end of input, expected one of: `for`, parentheses, `fn`, `unsafe`, `extern`, identifier, `::`, `<`, square brackets, `*`, `&`, `!`, `impl`, `_`, lifetime
+ --> tests/fail/error_responses/invalid_response_body_type.rs:3:47
+  |
+3 | #[api(responses(response(status = 200, body = "Vec<")))]
+  |                                               ^^^^^^
+  |
+  = note: this error originates in the attribute macro `api` (in Nightly builds, run with -Z macro-backtrace for more info)
