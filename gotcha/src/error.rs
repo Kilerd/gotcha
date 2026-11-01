@@ -213,6 +213,10 @@ impl crate::Schematic for HttpError {
     fn flatten_schema() -> Option<serde_json::Value> {
         <ErrorBody as crate::Schematic>::flatten_schema()
     }
+
+    fn wire_fields() -> &'static [crate::WireField] {
+        <ErrorBody as crate::Schematic>::wire_fields()
+    }
 }
 
 /// `HttpError` carries a runtime status, so it documents as an OpenAPI `default` response.

@@ -1254,30 +1254,6 @@ where
     }
 }
 
-// Convenience methods for empty state and config
-impl Gotcha<EmptyState, EmptyConfig> {
-    /// Quick start method for simple applications
-    ///
-    /// # Example
-    /// ```no_run
-    /// use gotcha::prelude::*;
-    ///
-    /// #[tokio::main]
-    /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    ///     Gotcha::quick_start()
-    ///         .await?
-    ///         .get("/", || async { "Hello World" })
-    ///         .run()
-    ///         .await?;
-    ///     Ok(())
-    /// }
-    /// ```
-    pub async fn quick_start() -> GotchaResult<Self> {
-        tracing_subscriber::fmt::init();
-        Ok(Self::new())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

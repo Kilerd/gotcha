@@ -43,9 +43,16 @@ pub(crate) fn handler(
         let field_ty = field.schema_type().clone();
 
         if has_serde_flatten(&field.attrs) {
-            // Flatten field: merge fields from the inner type at runtime
+            // Flatten field: merge fields from the inner type at runtime. A flattened type that
+            // is not required (an `Option<T>`, or a wrapper around one) may be absent, which
+            // makes every field it contributes optional; otherwise their own requiredness holds.
             flatten_fields_stream.push(quote! {
-                result.extend(<#field_ty as #core::Schematic>::fields());
+                result.extend(<#field_ty as #core::Schematic>::fields().into_iter().map(|(name, mut schema)| {
+                    if !<#field_ty as #core::Schematic>::required() {
+                        schema.required = false;
+                    }
+                    (name, schema)
+                }));
             });
             // Also collect flatten schemas for allOf generation
             flatten_schema_stream.push(quote! {

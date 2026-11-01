@@ -1,7 +1,8 @@
 //! Integration tests for serde(flatten) support in Schematic
 #![cfg(feature = "openapi")]
 
-use gotcha::Schematic;
+use either::Either;
+use gotcha::{ParameterProvider, Query, Schematic};
 use serde::{Deserialize, Serialize};
 
 /// Pagination parameters
@@ -81,6 +82,22 @@ pub struct OptionalFields {
     #[serde(flatten)]
     pagination: Pagination,
     extra: Option<String>,
+}
+
+/// Request whose whole flattened struct may be absent.
+#[derive(Debug, Clone, Serialize, Deserialize, Schematic)]
+pub struct OptionalPaginationRequest {
+    query: String,
+    #[serde(flatten)]
+    pagination: Option<Pagination>,
+}
+
+/// The same optional flatten used as a query extractor.
+#[derive(Debug, Clone, Serialize, Deserialize, Schematic)]
+pub struct OptionalPaginationQuery {
+    query: String,
+    #[serde(flatten)]
+    pagination: Option<Pagination>,
 }
 
 #[test]
@@ -178,4 +195,30 @@ fn test_documentation_preserved() {
         page_field.1.schema.description.as_ref().map(|s| s.contains("Page number")).unwrap_or(false),
         "page field should preserve documentation"
     );
+}
+
+#[test]
+fn optional_flatten_component_documents_its_fields_as_optional() {
+    let (_, components) = gotcha_core::registry::collect(OptionalPaginationRequest::generate_schema);
+    let schema = components["OptionalPaginationRequest"].to_value();
+    let properties = schema["properties"].as_object().unwrap();
+    assert!(properties.contains_key("page"), "flattened page must be documented: {schema}");
+    assert!(properties.contains_key("per_page"), "flattened per_page must be documented: {schema}");
+
+    let required: Vec<&str> = schema["required"].as_array().unwrap().iter().filter_map(|value| value.as_str()).collect();
+    assert!(required.contains(&"query"));
+    assert!(!required.contains(&"page"), "an absent Option<Pagination> leaves page optional");
+    assert!(!required.contains(&"per_page"), "an absent Option<Pagination> leaves per_page optional");
+}
+
+#[test]
+fn optional_flatten_query_documents_optional_parameters() {
+    let Either::Left(parameters) = <Query<OptionalPaginationQuery> as ParameterProvider>::generate(String::new()) else {
+        panic!("query parameters expected");
+    };
+    let names: Vec<&str> = parameters.iter().map(|parameter| parameter.name.as_str()).collect();
+    assert_eq!(names, ["query", "page", "per_page"]);
+
+    let requiredness: Vec<(&str, Option<bool>)> = parameters.iter().map(|parameter| (parameter.name.as_str(), parameter.required)).collect();
+    assert_eq!(requiredness, [("query", Some(true)), ("page", Some(false)), ("per_page", Some(false))]);
 }
