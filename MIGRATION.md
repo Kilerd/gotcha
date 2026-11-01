@@ -455,8 +455,11 @@ If you also use support APIs such as the registry, they are available through
 `gotcha::gotcha_core`. The derive prefers a direct core dependency when present, otherwise
 gotcha's re-export, and recognizes Cargo dependency renames for both. A custom facade can set
 `#[schematic(crate = "path::to::gotcha_core")]` explicitly. This does not change schema names
-or generated document content. Renaming support here applies to the Schematic derive; other
-Gotcha macros retain their existing path behavior.
+or generated document content. Cargo dependency renames are recognized by the derive and by the
+`#[api]`, `#[state]` and `#[config]` attribute macros, so a dependency renamed to `web` can use
+`#[derive(web::Schematic)]`, `#[web::api]`, `#[web::state]` and `#[web::config]`. When the
+calling manifest cannot be inspected (a build system without a `Cargo.toml`, or a package that
+re-exports gotcha under the `gotcha` name), the attribute macros fall back to `::gotcha`.
 
 **Validation can use gotcha's validator version directly.** To avoid a separate `validator`
 dependency, select the re-export using the upstream derive's existing crate override:

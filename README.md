@@ -361,8 +361,10 @@ mount. `finish_router` is not called during document export.
 the web framework. Applications can use `#[derive(gotcha::Schematic)]` with just the `gotcha`
 dependency; the trait and derive are available in every build, not only with `openapi`, because
 `Valid` uses their field mapping to name validation errors. A separate `gotcha_core` dependency
-and trait import are unnecessary. The derive recognizes Cargo dependency renames. A custom facade
-can supply `#[schematic(crate = "path::to::gotcha_core")]` to select its core re-export.
+and trait import are unnecessary. The derive and the attribute macros recognize Cargo dependency
+renames; when the calling manifest cannot be inspected, the attribute macros fall back to
+`::gotcha`. A custom facade can supply `#[schematic(crate = "path::to::gotcha_core")]` to select
+its core re-export.
 
 A field whose Rust type has no `Schematic` implementation can borrow another type's schema with
 `#[schematic(as = "Type")]`. `Type` also supplies requiredness, nullability, and nested
