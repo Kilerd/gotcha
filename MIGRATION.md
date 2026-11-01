@@ -33,14 +33,15 @@
 
 # Unreleased: non-exhaustive extractor enums
 
-**`gotcha::openapi::ExtractorKind` and `gotcha::validation::ValidRejection` are now
-`#[non_exhaustive]`,** so a later release can add an extractor provider or a validation-failure
-variant without a breaking change.
+**`gotcha::ExtractorKind` (with the `openapi` feature), `gotcha_core::ExtractorKind` (with
+`axum`), `gotcha::validation::ValidRejection`, and `gotcha::ParamRejection` are now
+`#[non_exhaustive]`,** so a later release can add an extractor provider, a validation-failure
+variant, or a header/cookie rejection variant without a breaking change.
 
-- A `match` on either type outside this workspace needs a wildcard arm (`_ => ..`). Inside this
-  workspace nothing changes, and a `matches!(..)` with a single variant keeps compiling.
-- Constructing the existing variants is unchanged: `ExtractorKind::Json` and the
-  `ValidRejection` variants remain usable.
+- A `match` on any of these types outside the crate that defines it needs a wildcard arm
+  (`_ => ..`); a `matches!(..)` with a single variant keeps compiling.
+- Constructing the existing variants is unchanged: `ExtractorKind::Json`, the `ValidRejection`
+  variants, and `ParamRejection::Missing`/`Invalid`/`NotText` remain usable.
 
 ---
 
