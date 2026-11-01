@@ -12,7 +12,9 @@ pub mod simple_enum;
 pub mod tagged_enum;
 pub mod untagged_enum;
 
-use crate::utils::{has_serde_default, parse_serde_rename_all, parse_serde_rename_all_deserialize, AttributesExt, RenameAll};
+use crate::utils::{
+    has_serde_default, has_serde_skip, has_serde_transparent, parse_serde_rename_all, parse_serde_rename_all_deserialize, AttributesExt, RenameAll,
+};
 
 #[derive(Debug, PartialEq, Eq)]
 enum SerdeTagKind {
@@ -32,6 +34,8 @@ struct ParameterExtraField {
     rename_all_deserialize: Option<RenameAll>,
     /// `#[serde(default)]` on a struct container makes every field optional.
     container_default: bool,
+    /// `#[serde(transparent)]` serializes the single inner field directly.
+    transparent: bool,
 }
 
 impl ParameterExtraField {
@@ -85,6 +89,7 @@ impl ParameterExtraField {
             rename_all,
             rename_all_deserialize,
             container_default: has_serde_default(attrs),
+            transparent: has_serde_transparent(attrs),
         }
     }
 }
@@ -513,9 +518,27 @@ pub(crate) fn handler(input: TokenStream2) -> Result<TokenStream2, (Span, &'stat
         Data::Struct(fields) => {
             let is_tuple = matches!(fields.style, darling::ast::Style::Tuple);
             let field_count = fields.fields.len();
+            // `#[serde(transparent)]` serializes its single non-skipped field; extra
+            // `#[serde(skip)]` fields (the typed-ID `PhantomData` pattern) are allowed.
+            let transparent_index = if extra_field.transparent && !is_tuple {
+                let mut selected = None;
+                let mut count = 0;
+                for (index, field) in fields.fields.iter().enumerate() {
+                    if !has_serde_skip(&field.attrs) {
+                        count += 1;
+                        selected = Some(index);
+                    }
+                }
+                (count == 1).then_some(selected.expect("one non-skipped field"))
+            } else {
+                None
+            };
             if is_tuple && field_count == 1 {
                 // Newtype struct (e.g. `struct UserId(Uuid);`) — transparent to the inner type.
                 newtype_struct::handler(&core, fields.fields, param_opts.name.as_deref())
+            } else if let Some(index) = transparent_index {
+                let field = fields.fields.into_iter().nth(index).expect("transparent field index");
+                newtype_struct::handler(&core, vec![field], param_opts.name.as_deref())
             } else if is_tuple {
                 return Err((
                     ident.span(),

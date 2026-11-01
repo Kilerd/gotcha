@@ -268,6 +268,11 @@ pub fn has_serde_deserialize_with(attrs: &[Attribute]) -> bool {
     })
 }
 
+/// Whether the container is `#[serde(transparent)]`: it serializes as its single inner field.
+pub fn has_serde_transparent(attrs: &[Attribute]) -> bool {
+    serde_nested_any(attrs, |meta| matches!(meta, syn::Meta::Path(path) if path.is_ident("transparent")))
+}
+
 /// Whether rendering may omit the field (`#[serde(skip_serializing_if = "...")]`).
 pub fn has_serde_skip_serializing_if(attrs: &[Attribute]) -> bool {
     serde_nested_any(
