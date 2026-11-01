@@ -62,7 +62,23 @@ impl OpenApiEndpoints {
     }
 
     pub(crate) fn mount(self, mut router: Router, spec: OpenAPIV3) -> Router {
-        router = router.route(&self.json_path, get(move || async move { axum::Json(spec.clone()) }));
+        // Serialize once at assembly; each request clones the shared `Bytes`. This used to clone
+        // the whole document and re-serialize it on every request. The bytes match what
+        // `axum::Json` produced: `serde_json::to_vec` and its internal `to_writer` agree, and the
+        // content type is the same `application/json`.
+        let document = Bytes::from(serde_json::to_vec(&spec).expect("the OpenAPI document is serializable"));
+        router = router.route(
+            &self.json_path,
+            get(move || {
+                let document = document.clone();
+                async move {
+                    (
+                        [(axum::http::header::CONTENT_TYPE, axum::http::HeaderValue::from_static("application/json"))],
+                        document,
+                    )
+                }
+            }),
+        );
         for (path, template) in [
             (self.redoc_path, include_str!("../../statics/redoc.html")),
             (self.scalar_path, include_str!("../../statics/scalar.html")),
@@ -90,6 +106,41 @@ fn render_ui(template: &str, json_path: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn the_document_is_served_as_its_serialized_bytes() {
+        use axum::body::{to_bytes, Body};
+        use axum::http::{header, Request, StatusCode};
+        use tower::ServiceExt;
+
+        let spec = OpenAPIV3 {
+            info: crate::openapi::default_info(),
+            paths: Default::default(),
+            servers: None,
+            components: None,
+            security: None,
+            tags: None,
+            openapi: "3.2.0".to_string(),
+            external_docs: None,
+            extras: None,
+        };
+        let expected = serde_json::to_vec(&spec).unwrap();
+        let router = OpenApiEndpoints {
+            redoc_path: None,
+            scalar_path: None,
+            ..Default::default()
+        }
+        .mount(Router::new(), spec);
+
+        let response = router
+            .oneshot(Request::builder().uri("/openapi.json").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()[header::CONTENT_TYPE], "application/json");
+        let body = to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
+        assert_eq!(body.as_ref(), expected.as_slice(), "the served body is the document's serialization");
+    }
 
     #[test]
     fn endpoint_paths_are_literal_absolute_and_distinct() {
