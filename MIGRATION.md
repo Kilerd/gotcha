@@ -69,27 +69,50 @@ What changes:
 
 - **An application calling only these methods reads more.** It starts reading
   `configurations/application.toml`, the profile file, and `APP_*` variables. Values there can
-  change its settings, including the bound address, and an invalid file now fails startup. Check
-  for `APP_*` variables set for another purpose: `APP_SERVER__PORT` now applies, and a variable
-  whose value does not parse as the type of the setting it overrides fails loading.
-  `with_default_files()` alone now also reads `APP_*`, and `with_default_env()` alone also reads
-  the files.
+  change its settings, including the bound address. Check for `APP_*` variables set for another
+  purpose: `APP_SERVER__PORT` now applies, and a variable whose value does not parse as the type of
+  the setting it overrides fails loading. `with_default_files()` alone now also reads `APP_*`, and
+  `with_default_env()` alone also reads the files.
+- **Those sources can make loading fail.** An invalid `application.toml` or profile file is a
+  loading error, and so is a key holding different types in two layers: `[db]` in `application.toml`
+  with `db = "..."` in `local.toml` fails with `merge fail, path=$.db`, though both files are valid.
+  The strict policy stops startup on these errors.
+- **A fallback policy can now drop added files.** `ConfigErrorPolicy` still replaces the whole
+  configuration after any loading error, and these errors now count. With an invalid
+  `application.toml`, `.with_optional_config("local.toml")` under `fallback_to_default()` used to
+  load `local.toml`; it now falls back to full defaults (port 3000, empty application settings),
+  with only a warning in the log.
+- **A non-UTF-8 environment variable now panics in more chains.** Every environment source calls
+  `std::env::vars()`, which panics on any variable that is not valid Unicode, whatever its name,
+  and a panic bypasses `ConfigErrorPolicy`. Automatic loading already did this. A chain with no
+  environment source, such as `with_file_config` alone, used to start and now panics while loading.
 - **A file added after an environment source now loses to it.** In
   `.with_env_config("MYAPP").with_file_config("local.toml")`, `local.toml` used to win; `MYAPP_*`
   now does, whichever is called first. Files still override each other in call order, and so do
   prefixes.
+- **The default helpers no longer reorder anything.** In
+  `.with_optional_config("first.toml").with_default_files()`, the profile file used to win;
+  `first.toml` now does. In `.with_env_config("MYAPP").with_default_env()`, `APP_*` used to win;
+  `MYAPP_*` now does.
 - **A repeated path or prefix keeps its place.** It used to be read again and win over what was
   added in between. Naming a standard source does the same: `.with_env_config("APP")` stays below
   other added prefixes, and `.with_file_config("configurations/application.toml")` stays below the
-  profile file, though the file becomes required.
+  profile file, though the file becomes required. Paths are compared without touching the file
+  system: `config.toml`, `./config.toml`, and its absolute path are one file, while paths that
+  differ by `..` or a symlink count as separate files.
 - **`Config::load_default()` now honours `GOTCHA_ACTIVE_PROFILE`.** It ignored the profile before.
   `GotchaConfigLoader::load(profile)` is unchanged: its caller names the profile.
 - **`GOTCHA_ACTIVE_PROFILE` is read when configuration loads**, not when `with_default_files()` is
-  called.
-- **`ConfigSource` gained an `ActiveProfile` variant.** Add an arm to exhaustive matches.
+  called. Setting the variable after that call used to have no effect and now selects the profile.
+- **`ConfigSource` gained an `ActiveProfile` variant and is now `#[non_exhaustive]`.** A `match`
+  outside this crate needs a wildcard arm. Constructing variants and calling
+  `ConfigBuilder::from_state` still compile.
+- **`with_default_config`, `with_default_files`, `with_default_env`, and
+  `enable_variable_substitution` are deprecated.** They do nothing. Delete the call, or use the
+  recipes below to load only those sources.
 
-`.config(value)` still wins over all sources, and `ConfigErrorPolicy` behaves as before. A required
-`with_file_config` file that is missing still fails startup under the strict policy.
+`.config(value)` still wins over all sources. A required `with_file_config` file that is missing
+still fails startup under the strict policy.
 
 To get the old result, list the exact sources with `Gotcha::build_config`. Its closure still starts
 from the framework's server defaults alone and applies sources in the order it registers them.
@@ -99,12 +122,36 @@ without going through `ConfigErrorPolicy`, and enables substitution only on requ
 ```rust,ignore
 // Before: Gotcha::new().with_env_config("MYAPP").with_file_config("local.toml")
 let app = Gotcha::new().build_config(|builder| builder.env("MYAPP").file("local.toml").enable_vars())?;
+
+// Before: Gotcha::new().with_default_files()
+let app = Gotcha::new().build_config(|builder| {
+    builder
+        .file_optional("configurations/application.toml")
+        .active_profile_file()
+        .enable_vars()
+})?;
+
+// Before: Gotcha::new().with_default_env()
+let app = Gotcha::new().build_config(|builder| builder.env("APP").enable_vars())?;
+
+// Before: Gotcha::new().enable_variable_substitution()
+let app = Gotcha::new().build_config(|builder| builder.enable_vars())?;
 ```
+
+`with_default_config()` alone already loaded the standard sources, so deleting it changes nothing.
+The old `Config::load_default()` is `GotchaConfigLoader::load(None)`.
+
+An old `with_*` chain under a fallback policy has no direct recipe, because `build_config` bypasses
+the policy. The closest is to load the same sources with `ConfigBuilder`, choose the fallback at the
+call site, and pass the result to `.config(value)`.
 
 In a `build_config` closure, or a custom `GotchaApp::config()`, `standard_sources()` adds the
 standard sources to a builder and `ConfigBuilder::standard()` starts from them. A `build_config`
 closure that only called `.defaults(..)` was ignoring every file and environment variable; add
-`.standard_sources()` to read them.
+`.standard_sources()` to read them. **A `ConfigBuilder` applies sources in the order they are
+added**, unlike the `with_*` methods: `ConfigBuilder::standard().file_optional("first.toml")` lets
+`first.toml` override the `APP` environment, while `with_optional_config("first.toml")` keeps it
+below. Likewise `.env("APP").standard_sources()` leaves the conventional files above `APP`.
 
 ---
 

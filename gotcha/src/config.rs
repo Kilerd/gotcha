@@ -123,8 +123,23 @@ fn profile_file(profile: &str) -> PathBuf {
     PathBuf::from(format!("configurations/application_{profile}.toml"))
 }
 
+/// Whether two paths name the same file, as far as that can be told without touching the file
+/// system. Making them absolute settles `.` components and repeated separators; `..` components
+/// and symlinks stay unresolved, so paths that differ by those count as different files.
+fn same_file(left: &Path, right: &Path) -> bool {
+    match (std::path::absolute(left), std::path::absolute(right)) {
+        (Ok(left), Ok(right)) => left == right,
+        // An empty path, or a working directory that cannot be read.
+        _ => left == right,
+    }
+}
+
 /// One configuration source, read when [`ConfigBuilder::build`] is called.
+///
+/// This enum is `#[non_exhaustive]`: a later release may add a variant, so a `match` outside this
+/// crate needs a wildcard arm.
 #[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
 pub enum ConfigSource {
     /// A TOML configuration file.
     File {
@@ -236,6 +251,14 @@ impl ConfigBuilder {
         self
     }
 
+    /// Add the optional file of the profile named by `GOTCHA_ACTIVE_PROFILE`, overriding matching
+    /// values from earlier sources. The variable is read by [`Self::build`]; when it is unset or
+    /// the file is missing, this source contributes nothing.
+    pub fn active_profile_file(mut self) -> Self {
+        self.state.sources.push(ConfigSource::ActiveProfile);
+        self
+    }
+
     /// Enable variable substitution
     pub fn enable_vars(mut self) -> Self {
         self.state.enable_vars = true;
@@ -298,6 +321,11 @@ impl ConfigBuilder {
     /// `${VAR}` and path substitution is enabled. As with every source, nothing is read until
     /// [`Self::build`], including the profile variable.
     ///
+    /// **A source added to the result applies in insertion order, above all of these.**
+    /// `ConfigBuilder::standard().file_optional("first.toml")` lets `first.toml` override the `APP`
+    /// environment, while [`Gotcha::with_optional_config`](crate::Gotcha::with_optional_config)
+    /// keeps the same file below it.
+    ///
     /// ```rust,no_run
     /// use gotcha::config::{ConfigBuilder, ConfigWrapper};
     ///
@@ -313,7 +341,11 @@ impl ConfigBuilder {
     /// variable substitution. This is how a
     /// [`Gotcha::build_config`](crate::Gotcha::build_config) closure opts into them.
     ///
-    /// The framework defaults go beneath everything else; the others are appended in order.
+    /// The framework defaults go beneath everything else; the others are appended in order. A
+    /// source already listed keeps its place, whether or not a file was registered as required, so
+    /// `.env("APP").standard_sources()` leaves `configurations/application.toml` and the profile
+    /// file **above** `APP`. Call this first to get the standard order.
+    ///
     /// Because a builder applies sources in insertion order, a file added **after** this call
     /// overrides the `APP` environment, unlike with
     /// [`Gotcha::with_file_config`](crate::Gotcha::with_file_config).
@@ -343,11 +375,10 @@ impl ConfigBuilder {
         if !self.state.sources.contains(&framework) {
             self.state.sources.insert(0, framework);
         }
+        if self.listed_file(Path::new(APPLICATION_FILE)).is_none() {
+            self = self.file_optional(APPLICATION_FILE);
+        }
         for source in [
-            ConfigSource::File {
-                path: APPLICATION_FILE.into(),
-                required: false,
-            },
             ConfigSource::ActiveProfile,
             ConfigSource::Env {
                 prefix: APPLICATION_ENV_PREFIX.into(),
@@ -360,19 +391,23 @@ impl ConfigBuilder {
         self.enable_vars()
     }
 
+    /// The `required` flag of the file source for `path`, if one is listed. See [`same_file`].
+    fn listed_file(&mut self, path: &Path) -> Option<&mut bool> {
+        self.state.sources.iter_mut().find_map(|source| match source {
+            ConfigSource::File { path: listed, required } if same_file(listed, path) => Some(required),
+            _ => None,
+        })
+    }
+
     /// Add a file the way the builder's `with_*` methods do.
     ///
     /// This and [`Self::add_env`] are where their precedence lives. mofa merges sources in list
     /// order with later values winning, so the list is kept as defaults, then files, then
     /// environment, each in call order: a new file goes above every other file and below every
-    /// environment source, whenever it is added. A path already listed keeps its place, so it is
-    /// not read twice, and stays required once any registration requires it.
+    /// environment source, whenever it is added. A file already listed (see [`same_file`]) keeps
+    /// its place, so it is not read twice, and stays required once any registration requires it.
     pub(crate) fn add_file(mut self, path: &Path, required: bool) -> Self {
-        let listed = self.state.sources.iter_mut().find_map(|source| match source {
-            ConfigSource::File { path: listed, required } if listed == path => Some(required),
-            _ => None,
-        });
-        if let Some(listed_required) = listed {
+        if let Some(listed_required) = self.listed_file(path) {
             *listed_required |= required;
             return self;
         }
@@ -570,10 +605,11 @@ pub(crate) mod tests {
             .envs(variables.iter().copied())
             .output()
             .unwrap();
+        // An unknown name exits successfully with no test run, which would silently disable it.
+        let stdout = String::from_utf8_lossy(&output.stdout);
         assert!(
-            output.status.success(),
-            "child failed:\n{}\n{}",
-            String::from_utf8_lossy(&output.stdout),
+            output.status.success() && stdout.contains("test result: ok. 1 passed"),
+            "child failed or did not run {name}:\n{stdout}\n{}",
             String::from_utf8_lossy(&output.stderr)
         );
         false
@@ -795,16 +831,46 @@ pub(crate) mod tests {
 
         assert_eq!(ConfigBuilder::standard().standard_sources().state().sources, standard.sources);
         assert_eq!(ConfigBuilder::framework_defaults().standard_sources().state().sources, standard.sources);
+
+        let framework = standard.sources[0].clone();
+        let file = |path: &str, required| ConfigSource::File { path: path.into(), required };
+        let profile = ConfigSource::ActiveProfile;
+        let app_env = ConfigSource::Env { prefix: "APP".into() };
+
+        // Whatever is listed keeps its place, and what is missing goes after it.
+        assert_eq!(
+            ConfigBuilder::new().env("APP").standard_sources().state().sources,
+            [
+                framework.clone(),
+                app_env.clone(),
+                file("configurations/application.toml", false),
+                profile.clone(),
+            ]
+        );
+
+        // A listed file counts whether or not it is required, however its path is written.
         assert_eq!(
             ConfigBuilder::new()
-                .env("APP")
+                .file("configurations/application.toml")
+                .file("local.toml")
                 .standard_sources()
                 .state()
-                .sources
-                .iter()
-                .filter(|source| matches!(source, ConfigSource::Env { .. }))
-                .count(),
-            1
+                .sources,
+            [
+                framework.clone(),
+                file("configurations/application.toml", true),
+                file("local.toml", true),
+                profile.clone(),
+                app_env.clone(),
+            ]
+        );
+        assert_eq!(
+            ConfigBuilder::new()
+                .file_optional("./configurations/application.toml")
+                .standard_sources()
+                .state()
+                .sources,
+            [framework, file("./configurations/application.toml", false), profile, app_env]
         );
 
         // Application defaults stay above the framework's, wherever those get inserted.

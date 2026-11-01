@@ -151,6 +151,31 @@ pub struct EmptyConfig {}
 pub struct EmptyState {}
 
 /// Builder for creating Gotcha applications with a fluent API
+///
+/// # Configuration sources
+///
+/// At startup an application loads the [standard sources](ConfigBuilder::standard), unless
+/// [`Self::config`], [`Self::build_config`], or [`Gotcha::from_context`] already supplied its
+/// configuration. [`Self::with_file_config`], [`Self::with_optional_config`], and
+/// [`Self::with_env_config`] add to them. Whatever order they are called in, the precedence from
+/// lowest to highest is:
+///
+/// 1. the framework's typed server defaults,
+/// 2. `configurations/application.toml`, if it exists,
+/// 3. the file of the profile named by `GOTCHA_ACTIVE_PROFILE`, if set and the file exists,
+/// 4. files added with [`Self::with_file_config`] and [`Self::with_optional_config`], in call order,
+/// 5. the `APP` environment prefix,
+/// 6. prefixes added with [`Self::with_env_config`], in call order.
+///
+/// The environment therefore overrides files even when a file is added after it. A path or prefix
+/// that is already listed keeps its place and is not read twice. Paths are compared without touching
+/// the file system: `config.toml`, `./config.toml`, and its absolute path are one file, while paths
+/// that differ by `..` or a symlink count as separate files.
+///
+/// Values may reference environment variables with `${VAR}` and other configuration paths with
+/// `${app.database.name}`. A variable or path that is not set resolves to an empty string;
+/// substitution does not fail the load. An environment-only `APP_SERVER__PORT` is coerced without a
+/// configuration file. For a different set or order of sources, use [`Self::build_config`].
 pub struct Gotcha<S = EmptyState, C = EmptyConfig>
 where
     S: Clone + Send + Sync + 'static,
@@ -479,32 +504,9 @@ where
         Ok(self)
     }
 
-    /// Keep the automatic configuration sources. They are already there, so this changes nothing;
-    /// it states the intent, and so do [`Self::with_default_files`] and [`Self::with_default_env`].
-    ///
-    /// Every application loads the [standard sources](ConfigBuilder::standard), and the `with_*`
-    /// methods add to them. Whatever order they are called in, the precedence from lowest to
-    /// highest is:
-    ///
-    /// 1. the framework's typed server defaults,
-    /// 2. `configurations/application.toml`,
-    /// 3. the file of the profile named by `GOTCHA_ACTIVE_PROFILE`,
-    /// 4. files added with [`Self::with_file_config`] and [`Self::with_optional_config`], in call order,
-    /// 5. the `APP` environment prefix,
-    /// 6. prefixes added with [`Self::with_env_config`], in call order.
-    ///
-    /// The environment therefore overrides files even when a file is added after it. A path or
-    /// prefix that is already listed keeps its place and is not read twice. `${VAR}` and path
-    /// variables are resolved in all of them, and an environment-only `APP_SERVER__PORT` is coerced
-    /// without a configuration file. For a different set or order, use [`Self::build_config`].
-    ///
-    /// # Example
-    /// ```no_run
-    /// use gotcha::prelude::*;
-    ///
-    /// let app = Gotcha::new()
-    ///     .with_default_config();
-    /// ```
+    /// Does nothing: the standard sources are already loaded. See
+    /// [configuration sources](Gotcha#configuration-sources).
+    #[deprecated(note = "does nothing, because the standard sources are always loaded; delete the call, or use `build_config` for a different set of sources")]
     pub fn with_default_config(self) -> Self {
         self
     }
@@ -512,8 +514,8 @@ where
     /// Add an environment variable prefix above every file and the `APP` prefix
     ///
     /// Multiple calls add multiple prefixes, and later prefixes override earlier ones. See
-    /// [`Self::with_default_config`] for the complete precedence. Loading errors are returned at
-    /// server startup.
+    /// [configuration sources](Gotcha#configuration-sources) for the complete precedence. Loading
+    /// errors are returned at server startup.
     ///
     /// # Example
     /// ```no_run
@@ -531,8 +533,8 @@ where
     /// Add a required configuration file above the conventional files and below the environment
     ///
     /// Multiple calls add multiple files, and later files override earlier ones. See
-    /// [`Self::with_default_config`] for the complete precedence. A missing, unreadable, or
-    /// invalid file fails startup.
+    /// [configuration sources](Gotcha#configuration-sources) for the complete precedence. A missing,
+    /// unreadable, or invalid file fails startup.
     ///
     /// # Example
     /// ```no_run
@@ -565,52 +567,29 @@ where
         self
     }
 
-    /// Keep the conventional configuration files (configurations/application.toml and the profile
-    /// file). They are part of the automatic sources, along with the `APP` environment, so this
-    /// changes nothing. See [`Self::with_default_config`].
-    ///
-    /// # Example
-    /// ```no_run
-    /// use gotcha::prelude::*;
-    ///
-    /// let app = Gotcha::new()
-    ///     .with_default_files();
-    /// ```
+    /// Does nothing: the conventional files are already loaded, along with the `APP` environment.
+    /// See [configuration sources](Gotcha#configuration-sources).
+    #[deprecated(
+        note = "does nothing, and no longer limits loading to the conventional files: the `APP` environment is read too; delete the call, or use `build_config` to load only these files"
+    )]
     pub fn with_default_files(self) -> Self {
         self
     }
 
-    /// Keep the default environment variable prefix ("APP"). It is part of the automatic sources,
-    /// along with the conventional files, so this changes nothing. See
-    /// [`Self::with_default_config`].
-    ///
-    /// # Example
-    /// ```no_run
-    /// use gotcha::prelude::*;
-    ///
-    /// let app = Gotcha::new()
-    ///     .with_default_env();
-    /// ```
+    /// Does nothing: the `APP` environment is already loaded, along with the conventional files.
+    /// See [configuration sources](Gotcha#configuration-sources).
+    #[deprecated(
+        note = "does nothing, and no longer limits loading to the `APP` environment: the conventional files are read too; delete the call, or use `build_config` to load only this prefix"
+    )]
     pub fn with_default_env(self) -> Self {
         self
     }
 
-    /// Keep variable substitution enabled. It is part of the automatic sources, so this changes
-    /// nothing. See [`Self::with_default_config`].
-    ///
-    /// Values may reference environment variables with `${VAR}` and other configuration paths
-    /// with `${app.database.name}`. A variable or path that is not set resolves to an empty
-    /// string; substitution does not fail the load. This affects all configuration sources
-    /// added to the builder.
-    ///
-    /// # Example
-    /// ```no_run
-    /// use gotcha::prelude::*;
-    ///
-    /// let app = Gotcha::new()
-    ///     .with_optional_config("config.toml")
-    ///     .enable_variable_substitution();
-    /// ```
+    /// Does nothing: variable substitution is already enabled, for all of the standard sources.
+    /// See [configuration sources](Gotcha#configuration-sources).
+    #[deprecated(
+        note = "does nothing, because substitution is always enabled and the standard sources are always loaded; delete the call, or use `build_config` to choose the sources"
+    )]
     pub fn enable_variable_substitution(self) -> Self {
         self
     }
@@ -2043,6 +2022,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(deprecated)]
     async fn configuration_sources_preserve_order_and_explicit_error_policy() {
         const CHILD: &str = "GOTCHA_CONFIG_BUILDER_CHILD";
         if std::env::var_os(CHILD).is_none() {
@@ -2110,6 +2090,7 @@ mod tests {
     /// `with_default_config` starts from the framework's typed server defaults, so an
     /// environment-only `APP_SERVER__PORT` coerces even without a configuration file.
     #[tokio::test]
+    #[allow(deprecated)]
     async fn default_sources_install_typed_server_defaults() {
         const CHILD: &str = "GOTCHA_BUILDER_ENV_ONLY_CHILD";
         if std::env::var_os(CHILD).is_none() {
@@ -2166,6 +2147,7 @@ mod tests {
 
     /// Default files resolve environment and path variables through `with_default_config()`.
     #[tokio::test]
+    #[allow(deprecated)]
     async fn default_sources_resolve_variables() {
         const CHILD: &str = "GOTCHA_BUILDER_DEFAULT_VARS_CHILD";
         if std::env::var_os(CHILD).is_none() {
@@ -2216,6 +2198,7 @@ mod tests {
 
     /// `with_default_env` resolves `${VAR}` in environment values.
     #[tokio::test]
+    #[allow(deprecated)]
     async fn default_environment_source_resolves_variables() {
         const CHILD: &str = "GOTCHA_BUILDER_DEFAULT_ENV_CHILD";
         if std::env::var_os(CHILD).is_none() {

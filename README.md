@@ -1226,9 +1226,10 @@ Configuration supports:
   A single underscore stays part of the field name, so snake_case fields are addressable, and
   typed fields (numbers, booleans) parse the value rather than rejecting it.
 
-Every application loads the standard sources, `ConfigBuilder::standard()`, and the builder's
-`with_*` methods add to them. Whatever order those methods are called in, the precedence from
-lowest to highest is:
+An application loads the standard sources, `ConfigBuilder::standard()`, unless `.config(value)`,
+`build_config`, or `Gotcha::from_context` already supplied its configuration. The builder's
+`with_file_config`, `with_optional_config`, and `with_env_config` add to them. Whatever order those
+methods are called in, the precedence from lowest to highest is:
 
 1. the framework's typed `[server]` defaults
 2. `configurations/application.toml`, if it exists
@@ -1247,9 +1248,11 @@ let app = Gotcha::new()
 ```
 
 The environment overrides files even when a file is added after it. A path or prefix that is
-already listed keeps its place and is not read twice. Variable substitution applies to every
-source. `with_default_config()`, `with_default_files()`, `with_default_env()`, and
-`enable_variable_substitution()` change nothing: they state what is already there.
+already listed keeps its place and is not read twice. Paths are compared without touching the file
+system: `config.toml`, `./config.toml`, and its absolute path are one file, while paths that differ
+by `..` or a symlink count as separate files. Variable substitution applies to every source.
+`with_default_config()`, `with_default_files()`, `with_default_env()`, and
+`enable_variable_substitution()` are deprecated and do nothing.
 
 The typed `[server]` defaults mean environment-only configuration works without a configuration
 file:
@@ -1294,9 +1297,12 @@ Without `standard_sources()`, that closure would load only the two sets of defau
 every file and environment variable.
 
 A custom loader passed to `load_config` can use the same builder. Start from
-`ConfigBuilder::standard()` to keep the standard sources. A manual list should start from
-`ConfigBuilder::framework_defaults()` rather than `ConfigBuilder::new()`; without the typed
-`[server]` base, `APP_SERVER__PORT` is not coerced when no file supplies `server.port`:
+`ConfigBuilder::standard()` to keep the standard sources. **A `ConfigBuilder` applies sources in the
+order they are added**, so `ConfigBuilder::standard().file_optional("first.toml")` lets `first.toml`
+override the `APP` environment, while `with_optional_config("first.toml")` keeps it below. A manual
+list should start from `ConfigBuilder::framework_defaults()` rather than `ConfigBuilder::new()`;
+without the typed `[server]` base, `APP_SERVER__PORT` is not coerced when no file supplies
+`server.port`:
 
 ```rust,no_run
 use gotcha::config::{ConfigBuilder, ConfigWrapper};

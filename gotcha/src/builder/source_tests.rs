@@ -103,6 +103,7 @@ impl GotchaApp for DefaultConfigApp {
 }
 
 #[test]
+#[allow(deprecated)]
 fn added_sources_take_their_layer_whatever_the_call_order() {
     if !in_isolated_child("builder::source_tests::added_sources_take_their_layer_whatever_the_call_order", LAYERED_ENV) {
         return;
@@ -232,6 +233,7 @@ async fn a_single_added_source_binds_the_configured_port() {
 }
 
 #[test]
+#[allow(deprecated)]
 fn default_helpers_and_substitution_are_the_standard_sources() {
     if !in_isolated_child("builder::source_tests::default_helpers_and_substitution_are_the_standard_sources", LAYERED_ENV) {
         return;
@@ -299,8 +301,44 @@ fn repeated_sources_are_read_once_and_keep_their_place() {
     );
 }
 
+/// With a profile active, another spelling of the base file must not lift it above the profile.
+#[test]
+fn another_spelling_of_a_listed_path_keeps_its_place() {
+    if !in_isolated_child("builder::source_tests::another_spelling_of_a_listed_path_keeps_its_place", LAYERED_ENV) {
+        return;
+    }
+    write_layered_files();
+
+    let standard = ConfigBuilder::standard().state().sources;
+    let absolute = std::env::current_dir().unwrap().join("configurations/application.toml");
+    for (case, app) in [
+        ("leading ./", app().with_optional_config("./configurations/application.toml")),
+        ("interior ./", app().with_optional_config("configurations/./application.toml")),
+        ("repeated separator", app().with_optional_config("configurations//application.toml")),
+        ("absolute", app().with_optional_config(&absolute)),
+    ] {
+        assert_eq!(sources(&app), standard, "{case}");
+        assert_winners(case, app.config.resolve().unwrap(), STANDARD);
+    }
+
+    // The same goes for added files, and the first spelling stays in the list.
+    let spelled = app().with_file_config("first.toml").with_optional_config("./first.toml");
+    assert_eq!(sources(&spelled), standard_with(vec![file("first.toml", true)], vec![]));
+
+    // `..` is not resolved, because that takes the file system, so it counts as a separate file.
+    let parent = "configurations/../configurations/application.toml";
+    let separate = app().with_optional_config(parent);
+    assert_eq!(sources(&separate), standard_with(vec![file(parent, false)], vec![]));
+    assert_winners(
+        "a path through `..` is an added file",
+        separate.config.resolve().unwrap(),
+        ["application", "application", "application", "application", "app-env", "app-env", "app-env"],
+    );
+}
+
 /// #83: the typed framework defaults let an environment value reach `u16` without any file.
 #[tokio::test]
+#[allow(deprecated)]
 async fn environment_only_server_port_works_on_every_path() {
     if !in_isolated_child(
         "builder::source_tests::environment_only_server_port_works_on_every_path",
@@ -331,6 +369,7 @@ async fn environment_only_server_port_works_on_every_path() {
 }
 
 #[test]
+#[allow(deprecated)]
 fn missing_required_files_still_fail_under_the_strict_policy() {
     if !in_isolated_child("builder::source_tests::missing_required_files_still_fail_under_the_strict_policy", &[]) {
         return;
@@ -364,6 +403,7 @@ fn missing_required_files_still_fail_under_the_strict_policy() {
 }
 
 #[test]
+#[allow(deprecated)]
 fn invalid_conventional_files_fail_every_chain_that_includes_them() {
     if !in_isolated_child(
         "builder::source_tests::invalid_conventional_files_fail_every_chain_that_includes_them",
@@ -384,6 +424,36 @@ fn invalid_conventional_files_fail_every_chain_that_includes_them() {
         }
         std::fs::remove_file(path).unwrap();
     }
+}
+
+/// Two valid files can conflict, and now the automatic sources take part in that.
+#[test]
+fn a_key_with_different_types_in_two_layers_fails_loading() {
+    if !in_isolated_child("builder::source_tests::a_key_with_different_types_in_two_layers_fails_loading", &[]) {
+        return;
+    }
+    std::fs::create_dir("configurations").unwrap();
+    std::fs::write("configurations/application.toml", "[db]\nurl = 'base'\n").unwrap();
+    std::fs::write("local.toml", "db = 'local'\n").unwrap();
+
+    let error = app().with_optional_config("local.toml").config.resolve().err().expect("the layers conflict");
+    assert!(error.to_string().contains("merge fail, path=$.db"), "{error}");
+}
+
+/// A fallback replaces the whole configuration, including the sources that did load.
+#[test]
+fn a_fallback_after_an_automatic_source_fails_drops_added_files() {
+    if !in_isolated_child("builder::source_tests::a_fallback_after_an_automatic_source_fails_drops_added_files", &[]) {
+        return;
+    }
+    std::fs::create_dir("configurations").unwrap();
+    std::fs::write("configurations/application.toml", "value = [").unwrap();
+    std::fs::write("local.toml", "a = 'local'\n[server]\nport = 18080\n").unwrap();
+
+    let app = app().with_optional_config("local.toml");
+    let config = ConfigErrorPolicy::<Layers>::fallback_to_default().apply(app.config.resolve()).unwrap();
+    assert_eq!(config.app, Layers::new());
+    assert_eq!(config.server.port, ServerConfig::default().port);
 }
 
 #[test]
@@ -418,6 +488,23 @@ fn build_config_starts_from_the_framework_defaults_and_keeps_insertion_order() {
         built(|builder| builder.standard_sources().file("first.toml")),
         ["application", "profile", "first", "first", "first", "first", "first"],
     );
+
+    // Sources already listed keep their place, so these files land above `APP`.
+    let files_win = ["application", "profile", "profile", "profile", "profile", "profile", "profile"];
+    assert_winners("env, then standard_sources", built(|builder| builder.env("APP").standard_sources()), files_win);
+
+    // The recipes for the old `with_default_files()` and `with_default_env()`.
+    assert_winners(
+        "conventional files only",
+        built(|builder| builder.file_optional("configurations/application.toml").active_profile_file().enable_vars()),
+        files_win,
+    );
+    let config = built(|builder| builder.env("APP").enable_vars());
+    assert_eq!(
+        config.app,
+        Layers::from_iter(["e", "f", "g"].map(|key| (key.to_string(), "app-env".to_string())))
+    );
+    assert_eq!(config.server.port, ServerConfig::default().port, "no conventional file");
 
     // Application defaults stay beneath the standard sources.
     #[derive(Serialize)]
