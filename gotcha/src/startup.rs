@@ -202,6 +202,9 @@ pub(crate) async fn prepare_with_context<A: Application>(
         port: bound.port(),
     };
     let shutdown = CancellationToken::new();
+    // Anything initialized below can capture the token through the context. If a later step
+    // fails, cancel it so those waiters do not stay pending forever.
+    let cancel_on_failure = shutdown.clone().drop_guard();
     let state = app.state(&config).await?;
     let context = GotchaContext {
         config,
@@ -226,6 +229,8 @@ pub(crate) async fn prepare_with_context<A: Application>(
         task_shutdown_timeout: app.task_shutdown_timeout(),
         http_shutdown_timeout: app.http_shutdown_timeout(),
     };
+    // Preparation succeeded; the server owns the token and cancels it when shutdown starts.
+    cancel_on_failure.disarm();
     Ok((server, context))
 }
 

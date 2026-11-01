@@ -281,3 +281,49 @@ async fn dropping_an_unserved_bound_server_cancels_the_context_token() {
     drop(server);
     assert!(captured.is_cancelled(), "dropping an unserved BoundServer must release token waiters");
 }
+
+#[tokio::test]
+async fn failing_initialization_cancels_the_context_shutdown_token() {
+    struct FailingApp {
+        token: Mutex<Option<CancellationToken>>,
+    }
+    impl GotchaApp for FailingApp {
+        type State = ();
+        type Config = ();
+
+        fn logger(&self) -> GotchaResult<()> {
+            Ok(())
+        }
+
+        async fn config(&self) -> GotchaResult<ConfigWrapper<()>> {
+            Ok(ConfigWrapper {
+                app: (),
+                server: ServerConfig {
+                    host: "127.0.0.1".into(),
+                    port: 0,
+                },
+            })
+        }
+
+        async fn state(&self, _: &ConfigWrapper<()>) -> GotchaResult<()> {
+            Ok(())
+        }
+
+        fn routes(&self, router: GotchaRouter<GotchaContext<(), ()>>) -> GotchaRouter<GotchaContext<(), ()>> {
+            router
+        }
+
+        async fn build_router(&self, context: GotchaContext<(), ()>) -> GotchaResult<Router> {
+            *self.token.lock().unwrap() = Some(context.shutdown());
+            Err(GotchaError::message("router failed"))
+        }
+    }
+
+    let app = FailingApp { token: Mutex::new(None) };
+    let Err(error) = prepare(&mut &app, None).await else {
+        panic!("preparation must fail");
+    };
+    assert!(matches!(error, GotchaError::Message(message) if message == "router failed"));
+    let token = app.token.lock().unwrap().clone().expect("build_router observed the context");
+    assert!(token.is_cancelled(), "a failed preparation must release token waiters");
+}
