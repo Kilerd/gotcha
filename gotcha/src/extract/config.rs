@@ -464,6 +464,12 @@ impl ExtractorConfigs {
             crate::ExtractorKind::Header => self.header.rejection_spec(),
             crate::ExtractorKind::Cookie => self.cookie.rejection_spec(),
             crate::ExtractorKind::Valid => self.valid.rejection_spec(),
+            // `ExtractorKind` is non-exhaustive: a provider added in a later release documents no
+            // rejection until it is wired here. An empty status list adds no response.
+            _ => RejectionSpec {
+                statuses: Vec::new(),
+                body_schema: schema_of::<crate::ErrorBody>(),
+            },
         }
     }
 }

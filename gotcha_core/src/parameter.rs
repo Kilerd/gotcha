@@ -20,7 +20,11 @@ use crate::Schematic;
 /// [`ParameterProvider::extractor_kinds`] reports which of these an argument uses, so document
 /// assembly can add the rejection responses the application is configured to send. Axum's own
 /// extractors report none: their rejections keep Axum's plain-text response.
+///
+/// This enum is `#[non_exhaustive]`: a later release may add a provider, so a `match` outside this
+/// crate needs a wildcard arm.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[non_exhaustive]
 pub enum ExtractorKind {
     /// The JSON body provider. Rejections are configured with `JsonConfig`.
     Json,

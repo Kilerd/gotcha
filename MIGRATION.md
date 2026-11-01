@@ -1,5 +1,6 @@
 # Migration Guide
 
+- [Unreleased: non-exhaustive extractor enums](#unreleased-non-exhaustive-extractor-enums)
 - [Unreleased: extractor rejection responses in OpenAPI](#unreleased-extractor-rejection-responses-in-openapi)
 - [Unreleased: neutral OpenAPI info defaults](#unreleased-neutral-openapi-info-defaults)
 - [Unreleased: serde-driven field presence](#unreleased-serde-driven-field-presence)
@@ -27,6 +28,19 @@
 - [Unreleased: default configuration sources](#unreleased-default-configuration-sources)
 - [0.3 → 0.4](#03--04) — **every application must edit its route paths and configuration file**
 - [0.2 → 0.3: API simplification](#02--03-api-simplification)
+
+---
+
+# Unreleased: non-exhaustive extractor enums
+
+**`gotcha::openapi::ExtractorKind` and `gotcha::validation::ValidRejection` are now
+`#[non_exhaustive]`,** so a later release can add an extractor provider or a validation-failure
+variant without a breaking change.
+
+- A `match` on either type outside this workspace needs a wildcard arm (`_ => ..`). Inside this
+  workspace nothing changes, and a `matches!(..)` with a single variant keeps compiling.
+- Constructing the existing variants is unchanged: `ExtractorKind::Json` and the
+  `ValidRejection` variants remain usable.
 
 ---
 
