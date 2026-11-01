@@ -3015,6 +3015,643 @@ fn other_variants_are_documented_as_serde_writes_them() {
     assert!(own_schema::<OtherAdjacent>().get("discriminator").is_some());
 }
 
+/// Both directions convert through one proxy, so it documents the type.
+#[derive(Schematic, Serialize, Deserialize, Clone)]
+struct ProxyRaw {
+    raw: u8,
+}
+
+#[derive(Schematic, Serialize, Deserialize, Clone)]
+struct ProxyOther {
+    other: u8,
+}
+
+/// Its own documentation stays on its own component.
+#[derive(Schematic, Serialize, Deserialize, Clone)]
+#[serde(from = "ProxyRaw", into = "ProxyRaw")]
+struct SameProxy {
+    own: u8,
+}
+
+impl From<ProxyRaw> for SameProxy {
+    fn from(value: ProxyRaw) -> Self {
+        SameProxy { own: value.raw }
+    }
+}
+
+impl From<SameProxy> for ProxyRaw {
+    fn from(value: SameProxy) -> Self {
+        ProxyRaw { raw: value.own }
+    }
+}
+
+#[derive(Schematic, Serialize, Deserialize, Clone)]
+#[serde(try_from = "ProxyRaw", into = "ProxyRaw")]
+struct TrySameProxy {
+    own: u8,
+}
+
+impl TryFrom<ProxyRaw> for TrySameProxy {
+    type Error = std::convert::Infallible;
+
+    fn try_from(value: ProxyRaw) -> Result<Self, Self::Error> {
+        Ok(TrySameProxy { own: value.raw })
+    }
+}
+
+impl From<TrySameProxy> for ProxyRaw {
+    fn from(value: TrySameProxy) -> Self {
+        ProxyRaw { raw: value.own }
+    }
+}
+
+/// `from` and `into` name different types: one schema cannot say both, so the type's own fields
+/// stay, and neither proxy needs `Schematic`.
+#[derive(Serialize, Deserialize, Clone)]
+struct PlainReadProxy {
+    own: u8,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+struct PlainWrittenProxy {
+    written: u8,
+}
+
+#[derive(Schematic, Serialize, Deserialize, Clone)]
+#[serde(from = "PlainReadProxy", into = "PlainWrittenProxy")]
+struct FromAndIntoProxies {
+    own: u8,
+}
+
+impl From<PlainReadProxy> for FromAndIntoProxies {
+    fn from(value: PlainReadProxy) -> Self {
+        FromAndIntoProxies { own: value.own }
+    }
+}
+
+impl From<FromAndIntoProxies> for PlainWrittenProxy {
+    fn from(value: FromAndIntoProxies) -> Self {
+        PlainWrittenProxy { written: value.own }
+    }
+}
+
+#[derive(Schematic, Serialize, Deserialize, Clone)]
+#[serde(try_from = "PlainReadProxy", into = "PlainWrittenProxy")]
+struct TryFromAndIntoProxies {
+    own: u8,
+}
+
+impl TryFrom<PlainReadProxy> for TryFromAndIntoProxies {
+    type Error = std::convert::Infallible;
+
+    fn try_from(value: PlainReadProxy) -> Result<Self, Self::Error> {
+        Ok(TryFromAndIntoProxies { own: value.own })
+    }
+}
+
+impl From<TryFromAndIntoProxies> for PlainWrittenProxy {
+    fn from(value: TryFromAndIntoProxies) -> Self {
+        PlainWrittenProxy { written: value.own }
+    }
+}
+
+/// Also when both proxies could document it.
+#[derive(Schematic, Serialize, Deserialize, Clone)]
+#[serde(from = "ProxyRaw", into = "ProxyOther")]
+struct FromAndIntoDocumentedProxies {
+    raw: u8,
+}
+
+impl From<ProxyRaw> for FromAndIntoDocumentedProxies {
+    fn from(value: ProxyRaw) -> Self {
+        FromAndIntoDocumentedProxies { raw: value.raw }
+    }
+}
+
+impl From<FromAndIntoDocumentedProxies> for ProxyOther {
+    fn from(value: FromAndIntoDocumentedProxies) -> Self {
+        ProxyOther { other: value.raw }
+    }
+}
+
+#[derive(Schematic, Serialize, Deserialize, Clone)]
+#[serde(into = "String", try_from = "String")]
+struct StringProxy {
+    own: u8,
+}
+
+impl From<StringProxy> for String {
+    fn from(value: StringProxy) -> Self {
+        value.own.to_string()
+    }
+}
+
+impl TryFrom<String> for StringProxy {
+    type Error = std::num::ParseIntError;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        Ok(StringProxy { own: value.parse()? })
+    }
+}
+
+#[allow(dead_code)]
+#[derive(Schematic, Serialize, Deserialize, Clone)]
+#[serde(into = "String", from = "String")]
+enum EnumProxy {
+    Only,
+    Holding(u8),
+}
+
+impl From<EnumProxy> for String {
+    fn from(_: EnumProxy) -> Self {
+        "text".to_owned()
+    }
+}
+
+impl From<String> for EnumProxy {
+    fn from(_: String) -> Self {
+        EnumProxy::Only
+    }
+}
+
+#[derive(Schematic, Serialize, Deserialize, Clone)]
+#[serde(from = "ProxyRaw", into = "ProxyRaw")]
+struct NewtypeProxy(u8);
+
+impl From<ProxyRaw> for NewtypeProxy {
+    fn from(value: ProxyRaw) -> Self {
+        NewtypeProxy(value.raw)
+    }
+}
+
+impl From<NewtypeProxy> for ProxyRaw {
+    fn from(value: NewtypeProxy) -> Self {
+        ProxyRaw { raw: value.0 }
+    }
+}
+
+#[derive(Schematic, Serialize, Deserialize, Clone)]
+#[schematic(name = "NamedProxyComponent")]
+#[serde(from = "ProxyRaw", into = "ProxyRaw")]
+struct NamedProxy {
+    own: u8,
+}
+
+impl From<ProxyRaw> for NamedProxy {
+    fn from(value: ProxyRaw) -> Self {
+        NamedProxy { own: value.raw }
+    }
+}
+
+impl From<NamedProxy> for ProxyRaw {
+    fn from(value: NamedProxy) -> Self {
+        ProxyRaw { raw: value.own }
+    }
+}
+
+#[derive(Schematic, Serialize, Deserialize, Clone)]
+struct HoldsProxies {
+    field: SameProxy,
+    list: Vec<StringProxy>,
+}
+
+#[derive(Schematic, Serialize, Deserialize, Clone)]
+struct FlattensProxy {
+    id: u8,
+    #[serde(flatten)]
+    inner: SameProxy,
+}
+
+/// A proxy that contains the type: documenting it must end in a reference to the type.
+#[derive(Schematic, Serialize, Deserialize, Clone)]
+#[serde(from = "Vec<RecursiveVecProxy>", into = "Vec<RecursiveVecProxy>")]
+struct RecursiveVecProxy {
+    kids: Vec<RecursiveVecProxy>,
+}
+
+impl From<Vec<RecursiveVecProxy>> for RecursiveVecProxy {
+    fn from(kids: Vec<RecursiveVecProxy>) -> Self {
+        RecursiveVecProxy { kids }
+    }
+}
+
+impl From<RecursiveVecProxy> for Vec<RecursiveVecProxy> {
+    fn from(value: RecursiveVecProxy) -> Self {
+        value.kids
+    }
+}
+
+#[derive(Schematic, Serialize, Deserialize, Clone)]
+#[serde(from = "Option<Box<RecursiveOptionProxy>>", into = "Option<Box<RecursiveOptionProxy>>")]
+struct RecursiveOptionProxy {
+    next: Option<Box<RecursiveOptionProxy>>,
+}
+
+impl From<Option<Box<RecursiveOptionProxy>>> for RecursiveOptionProxy {
+    fn from(next: Option<Box<RecursiveOptionProxy>>) -> Self {
+        RecursiveOptionProxy { next }
+    }
+}
+
+impl From<RecursiveOptionProxy> for Option<Box<RecursiveOptionProxy>> {
+    fn from(value: RecursiveOptionProxy) -> Self {
+        value.next
+    }
+}
+
+/// `flatten_schema` and `required` come from the proxy as well.
+#[derive(Schematic, Serialize, Deserialize, Clone)]
+#[serde(from = "ProxiedEnum", into = "ProxiedEnum")]
+struct EnumAsProxy {
+    own: u32,
+}
+
+#[derive(Schematic, Serialize, Deserialize, Clone)]
+#[serde(tag = "kind")]
+enum ProxiedEnum {
+    Holding { x: u32 },
+}
+
+impl From<ProxiedEnum> for EnumAsProxy {
+    fn from(value: ProxiedEnum) -> Self {
+        let ProxiedEnum::Holding { x } = value;
+        EnumAsProxy { own: x }
+    }
+}
+
+impl From<EnumAsProxy> for ProxiedEnum {
+    fn from(value: EnumAsProxy) -> Self {
+        ProxiedEnum::Holding { x: value.own }
+    }
+}
+
+#[derive(Schematic, Serialize, Deserialize, Clone)]
+struct FlattensEnumAsProxy {
+    id: u8,
+    #[serde(flatten)]
+    inner: EnumAsProxy,
+}
+
+#[derive(Schematic, Serialize, Deserialize, Clone)]
+#[serde(from = "Option<u8>", into = "Option<u8>")]
+struct OptionalAsProxy {
+    own: Option<u8>,
+}
+
+impl From<Option<u8>> for OptionalAsProxy {
+    fn from(own: Option<u8>) -> Self {
+        OptionalAsProxy { own }
+    }
+}
+
+impl From<OptionalAsProxy> for Option<u8> {
+    fn from(value: OptionalAsProxy) -> Self {
+        value.own
+    }
+}
+
+#[derive(Schematic, Serialize, Deserialize, Clone)]
+struct HoldsOptionalAsProxy {
+    value: OptionalAsProxy,
+}
+
+/// One-sided conversions keep the type's own fields and need no `Schematic` on the proxy.
+#[derive(Serialize, Deserialize, Clone)]
+struct PlainProxy {
+    raw: u8,
+}
+
+#[derive(Schematic, Serialize, Deserialize, Clone)]
+#[serde(from = "PlainProxy")]
+struct OnlyFrom {
+    own: u8,
+}
+
+impl From<PlainProxy> for OnlyFrom {
+    fn from(value: PlainProxy) -> Self {
+        OnlyFrom { own: value.raw }
+    }
+}
+
+#[derive(Schematic, Serialize, Deserialize, Clone)]
+#[serde(try_from = "PlainProxy")]
+struct OnlyTryFrom {
+    own: u8,
+}
+
+impl TryFrom<PlainProxy> for OnlyTryFrom {
+    type Error = std::convert::Infallible;
+
+    fn try_from(value: PlainProxy) -> Result<Self, Self::Error> {
+        Ok(OnlyTryFrom { own: value.raw })
+    }
+}
+
+#[derive(Schematic, Serialize, Deserialize, Clone)]
+#[serde(into = "PlainProxy")]
+struct OnlyInto {
+    own: u8,
+}
+
+impl From<OnlyInto> for PlainProxy {
+    fn from(value: OnlyInto) -> Self {
+        PlainProxy { raw: value.own }
+    }
+}
+
+#[test]
+fn both_directions_through_one_proxy_document_it() {
+    assert_serialization_matches(&SameProxy { own: 1 });
+    assert_requests_are_read::<SameProxy>();
+}
+
+#[test]
+fn try_from_and_into_document_the_proxy() {
+    assert_serialization_matches(&TrySameProxy { own: 1 });
+    assert_requests_are_read::<TrySameProxy>();
+}
+
+#[test]
+fn different_proxies_keep_the_fields_of_the_type() {
+    assert_requests_are_read::<FromAndIntoProxies>();
+    assert_requests_are_read::<TryFromAndIntoProxies>();
+    assert_requests_are_read::<FromAndIntoDocumentedProxies>();
+    assert_eq!(own_schema::<FromAndIntoProxies>()["required"], json!(["own"]));
+    assert_eq!(own_schema::<TryFromAndIntoProxies>()["required"], json!(["own"]));
+    let schema = own_schema::<FromAndIntoDocumentedProxies>();
+    assert_eq!(schema["required"], json!(["raw"]), "{schema}");
+    let (_, components) = gotcha::gotcha_core::registry::collect(|| FromAndIntoDocumentedProxies::generate_schema());
+    assert_eq!(components.keys().cloned().collect::<Vec<_>>(), ["FromAndIntoDocumentedProxies"]);
+}
+
+#[test]
+fn a_struct_can_be_documented_as_a_primitive_proxy() {
+    assert_serialization_matches(&StringProxy { own: 1 });
+    assert_request_accepted::<StringProxy>(json!("1"));
+}
+
+#[test]
+fn an_enum_can_be_documented_as_a_primitive_proxy() {
+    assert_serialization_matches(&EnumProxy::Holding(1));
+    assert_requests_are_read::<EnumProxy>();
+}
+
+#[test]
+fn a_newtype_struct_documents_its_proxy() {
+    assert_serialization_matches(&NewtypeProxy(1));
+    assert_requests_are_read::<NewtypeProxy>();
+}
+
+#[test]
+fn a_proxied_type_keeps_its_component_name_and_documentation() {
+    let (root, components) = gotcha::gotcha_core::registry::collect(|| TrySameProxy::generate_schema());
+    assert_eq!(root.schema.to_value()["$ref"], json!("#/components/schemas/TrySameProxy"));
+    let names = components.keys().cloned().collect::<Vec<_>>();
+    assert_eq!(names, ["ProxyRaw", "TrySameProxy"]);
+    let own = components["TrySameProxy"].to_value();
+    assert_eq!(own["$ref"], json!("#/components/schemas/ProxyRaw"));
+
+    let documented = own_schema::<SameProxy>();
+    assert_eq!(documented["description"], json!("Its own documentation stays on its own component."));
+}
+
+#[test]
+fn a_named_proxied_type_registers_under_its_name() {
+    assert_serialization_matches(&NamedProxy { own: 1 });
+    let document = schema_document::<NamedProxy>();
+    assert_eq!(
+        document["components"]["schemas"]["NamedProxyComponent"]["$ref"],
+        json!("#/components/schemas/ProxyRaw")
+    );
+}
+
+#[test]
+fn a_field_of_a_proxied_type_documents_the_proxy() {
+    assert_serialization_matches(&HoldsProxies {
+        field: SameProxy { own: 1 },
+        list: vec![StringProxy { own: 2 }],
+    });
+}
+
+#[test]
+fn flattening_a_proxied_type_merges_the_proxy() {
+    assert_serialization_matches(&FlattensProxy {
+        id: 1,
+        inner: SameProxy { own: 2 },
+    });
+    assert_requests_are_read::<FlattensProxy>();
+}
+
+/// A proxy that flattens the type: `{"v":1}` is what serde reads, and `fields()` must end.
+#[derive(Schematic, Deserialize, Clone)]
+#[serde(from = "FlatProxyOfTheType", into = "FlatProxyOfTheType")]
+struct ConvertsThroughFlatProxy {
+    v: u8,
+}
+
+#[derive(Schematic, Deserialize, Clone)]
+struct FlatProxyOfTheType {
+    v: u8,
+    #[serde(flatten)]
+    next: Option<Box<ConvertsThroughFlatProxy>>,
+}
+
+impl From<FlatProxyOfTheType> for ConvertsThroughFlatProxy {
+    fn from(proxy: FlatProxyOfTheType) -> Self {
+        ConvertsThroughFlatProxy { v: proxy.v }
+    }
+}
+
+impl From<ConvertsThroughFlatProxy> for FlatProxyOfTheType {
+    fn from(value: ConvertsThroughFlatProxy) -> Self {
+        FlatProxyOfTheType { v: value.v, next: None }
+    }
+}
+
+#[derive(Schematic, Serialize, Deserialize, Clone)]
+struct FlattensRecursiveOptionProxy {
+    id: u8,
+    #[serde(flatten)]
+    inner: RecursiveOptionProxy,
+}
+
+#[derive(Schematic, Serialize, Deserialize, Clone)]
+#[serde(tag = "kind")]
+enum WrapsRecursiveOptionProxy {
+    Wrapped(RecursiveOptionProxy),
+}
+
+/// A proxy that is only the type, through which every delegated method leads back to itself.
+#[derive(Schematic, Serialize, Deserialize, Clone)]
+#[serde(from = "Box<BoxedProxy>", into = "Box<BoxedProxy>")]
+struct BoxedProxy {
+    v: u8,
+}
+
+impl From<Box<BoxedProxy>> for BoxedProxy {
+    fn from(boxed: Box<BoxedProxy>) -> Self {
+        *boxed
+    }
+}
+
+/// A proxy panicking the first time its fields are asked for, to leave a delegated call by an unwind.
+#[derive(Serialize, Deserialize, Clone)]
+struct PanicsOnceInFields {
+    raw: u8,
+}
+
+thread_local! {
+    static PANICKED_IN_FIELDS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+impl Schematic for PanicsOnceInFields {
+    fn name() -> &'static str {
+        "PanicsOnceInFields"
+    }
+
+    fn required() -> bool {
+        true
+    }
+
+    fn type_() -> &'static str {
+        "object"
+    }
+
+    fn fields() -> Vec<(&'static str, gotcha::EnhancedSchema)> {
+        if !PANICKED_IN_FIELDS.replace(true) {
+            panic!("the first call");
+        }
+        vec![("raw", <u8 as Schematic>::generate_schema())]
+    }
+}
+
+#[derive(Schematic, Serialize, Deserialize, Clone)]
+#[serde(from = "PanicsOnceInFields", into = "PanicsOnceInFields")]
+struct ProxiedByPanickingFields {
+    own: u8,
+}
+
+impl From<PanicsOnceInFields> for ProxiedByPanickingFields {
+    fn from(proxy: PanicsOnceInFields) -> Self {
+        ProxiedByPanickingFields { own: proxy.raw }
+    }
+}
+
+impl From<ProxiedByPanickingFields> for PanicsOnceInFields {
+    fn from(value: ProxiedByPanickingFields) -> Self {
+        PanicsOnceInFields { raw: value.own }
+    }
+}
+
+#[cfg(feature = "openapi")]
+fn generate_parameters<T: Schematic>() {
+    use gotcha::axum::extract::{Path, Query};
+    use gotcha::{Json, ParameterProvider};
+    let _ = gotcha::gotcha_core::registry::collect(|| {
+        let _ = <Json<T> as ParameterProvider>::generate("/".into());
+        let _ = <Query<T> as ParameterProvider>::generate("/".into());
+        let _ = <Path<T> as ParameterProvider>::generate("/{id}".into());
+    });
+}
+
+#[cfg(feature = "openapi")]
+#[test]
+fn a_proxy_flattening_the_type_ends_in_parameters() {
+    generate_parameters::<ConvertsThroughFlatProxy>();
+    generate_parameters::<FlatProxyOfTheType>();
+}
+
+#[test]
+fn a_proxy_flattening_the_type_documents_what_serde_reads() {
+    assert_request_accepted::<ConvertsThroughFlatProxy>(json!({"v": 1}));
+    assert_requests_are_read::<ConvertsThroughFlatProxy>();
+    let names: Vec<&str> = ConvertsThroughFlatProxy::fields().into_iter().map(|(name, _)| name).collect();
+    assert_eq!(names, ["v"]);
+}
+
+#[cfg(feature = "openapi")]
+#[test]
+fn a_proxy_of_option_of_the_type_ends_in_parameters() {
+    generate_parameters::<RecursiveOptionProxy>();
+}
+
+/// Documents only: serde overflows reading such a flattened value on `main` too.
+#[test]
+fn a_proxy_of_option_of_the_type_ends_when_flattened_or_wrapped() {
+    assert!(schema_accepts::<FlattensRecursiveOptionProxy>(&json!({"id": 1})));
+    assert_eq!(own_schema::<FlattensRecursiveOptionProxy>()["required"], json!(["id"]));
+    assert!(schema_accepts::<WrapsRecursiveOptionProxy>(&json!({"kind": "Wrapped"})));
+}
+
+#[test]
+fn a_proxy_that_is_only_the_type_ends() {
+    assert_eq!(BoxedProxy::fields().len(), 0);
+    assert_eq!(BoxedProxy::flatten_schema(), None);
+    assert_eq!(BoxedProxy::additional_properties(), None);
+    assert_eq!(BoxedProxy::nullable(), None);
+    assert_eq!(BoxedProxy::format(), None);
+    assert_eq!(BoxedProxy::type_(), "");
+    assert!(!BoxedProxy::required());
+    assert!(schema_document::<BoxedProxy>()["components"]["schemas"].get("BoxedProxy").is_some());
+}
+
+#[test]
+fn a_delegated_call_ends_with_an_unwind() {
+    assert!(std::panic::catch_unwind(ProxiedByPanickingFields::fields).is_err());
+    // Not taken for a call still running, which would report no fields.
+    let names: Vec<&str> = ProxiedByPanickingFields::fields().into_iter().map(|(name, _)| name).collect();
+    assert_eq!(names, ["raw"]);
+}
+
+#[test]
+fn a_proxy_of_vec_of_the_type_ends_in_a_reference() {
+    assert_serialization_matches(&RecursiveVecProxy {
+        kids: vec![RecursiveVecProxy { kids: vec![] }],
+    });
+}
+
+#[test]
+fn a_proxy_of_option_of_the_type_ends_in_a_reference() {
+    assert_serialization_matches(&RecursiveOptionProxy {
+        next: Some(Box::new(RecursiveOptionProxy { next: None })),
+    });
+}
+
+#[test]
+fn flattening_a_proxied_enum_composes_the_proxy() {
+    assert_serialization_matches(&FlattensEnumAsProxy {
+        id: 1,
+        inner: EnumAsProxy { own: 2 },
+    });
+    assert!(own_schema::<FlattensEnumAsProxy>().get("allOf").is_some());
+}
+
+#[test]
+fn a_proxy_that_may_be_absent_leaves_the_field_optional() {
+    assert_eq!(own_schema::<HoldsOptionalAsProxy>()["required"], json!([]));
+    assert_request_accepted::<HoldsOptionalAsProxy>(json!({}));
+}
+
+#[test]
+fn a_proxy_decides_whether_the_type_is_nullable() {
+    assert_eq!(OptionalAsProxy::nullable(), Some(true));
+    assert_eq!(SameProxy::nullable(), None);
+}
+
+#[test]
+fn a_proxied_struct_keeps_its_own_wire_table() {
+    // `Valid` reports errors on the converted value, so the table names its fields.
+    let names: Vec<&str> = <SameProxy as Schematic>::wire_fields().iter().map(|field| field.rust).collect();
+    assert_eq!(names, ["own"]);
+}
+
+#[test]
+fn a_one_sided_conversion_keeps_the_fields_of_the_other_direction() {
+    assert_serialization_matches(&OnlyFrom { own: 1 });
+    assert_serialization_matches(&OnlyTryFrom { own: 1 });
+    assert_requests_are_read::<OnlyInto>();
+}
+
 /// `#[serde(tag = "..")]` on a struct: serde writes the tag with the struct's serialize name.
 #[derive(Schematic, Serialize, Deserialize)]
 #[serde(tag = "kind")]
@@ -3515,6 +4152,22 @@ fn a_conversion_leaves_the_struct_tag_undocumented() {
 
 // Known mismatches, deliberately not asserted (follow-up work; arch review A4/A14):
 //
+// - One-sided `from`, `try_from` or `into`, and `from` or `try_from` naming another type than `into`,
+//   need per-direction schemas: the schema documents the type's own fields, which at most one
+//   direction uses. Only one proxy for both directions documents the proxy.
+// - A proxy for both directions with a field serde writes and reads under different names
+//   documents one of them, while the type's own field may have matched the other:
+//   `#[serde(from = "R", into = "R")] struct S { out: u8 }` with
+//   `struct R { #[serde(rename(serialize = "out"))] value: u8 }` documents `value` and serde writes
+//   `out`. The derive on `S` cannot see the attributes of `R`. It needs per-direction schemas.
+// - A proxy first reached through `fields()` ends there when it is reached again, so a component
+//   built on the way lacks its fields and the document depends on which path registers it first
+//   (`main` is wrong in both directions). `#[serde(from = "PP", into = "PP")] struct TP { own: u8 }`,
+//   `struct PP { k: u8, x: Option<Box<QQ>> }`, `struct QQ { #[serde(flatten)] t: TP, y: u8 }`: through
+//   a parent flattening `TP`, `QQ` is `{y}`; entered directly, it is `{k,x,y}`.
+// - A proxy's query and path parameters are named from `fields()`, also when its own field reads
+//   another name: `struct R { #[serde(rename(deserialize = "in"))] page: u8 }` documents `page`, and
+//   serde reads `in`. `wire_fields` stay the type's own for `Valid` errors.
 // - Names that need per-direction schemas. `rename(serialize = "out")` and
 //   `rename_all(serialize = "camelCase")` (with no other side, or with a deserialize side that
 //   leaves the identifier alone) document the name serde reads, so the output does not match. Split

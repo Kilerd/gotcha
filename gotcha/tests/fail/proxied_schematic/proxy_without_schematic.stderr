@@ -1,0 +1,21 @@
+error[E0277]: the trait bound `RawColor: Schematic` is not satisfied
+  --> tests/fail/proxied_schematic/proxy_without_schematic.rs:10:35
+   |
+10 | #[serde(from = "RawColor", into = "RawColor")]
+   |                                   ^^^^^^^^^^ unsatisfied trait bound
+   |
+help: the trait `Schematic` is not implemented for `RawColor`
+  --> tests/fail/proxied_schematic/proxy_without_schematic.rs:5:1
+   |
+ 5 | struct RawColor {
+   | ^^^^^^^^^^^^^^^
+   = help: the following other types implement trait `Schematic`:
+             &T
+             &str
+             ()
+             Arc<T>
+             BTreeMap<K, V>
+             BTreeSet<T>
+             Box<T>
+             Color
+           and $N others

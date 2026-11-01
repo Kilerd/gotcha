@@ -82,6 +82,10 @@ pub(crate) struct SerdeContainer {
     pub(crate) converts: bool,
     /// `from` or `try_from`: serde reads another type, so this one's names are not what it reads.
     pub(crate) reads_another_type: bool,
+    /// The type that documents the container, when serde writes and reads it for the container:
+    /// `into` naming the same type as `from` or `try_from`. Any other conversion leaves the
+    /// container's own fields, because they are what a direction uses or one schema cannot say both.
+    pub(crate) proxy: Option<syn::Type>,
     pub(crate) tagging: Tagging,
     /// `#[serde(default)]` or `#[serde(default = "..")]` on a struct.
     pub(crate) default: bool,
@@ -101,6 +105,10 @@ impl SerdeContainer {
                 serialize_name: parsed.name().serialize_name().to_owned(),
                 converts: parsed.type_from().is_some() || parsed.type_try_from().is_some() || parsed.type_into().is_some(),
                 reads_another_type: parsed.type_from().is_some() || parsed.type_try_from().is_some(),
+                proxy: parsed
+                    .type_into()
+                    .filter(|into| parsed.type_from() == Some(*into) || parsed.type_try_from() == Some(*into))
+                    .cloned(),
                 tagging: match parsed.tag() {
                     TagType::External => Tagging::External,
                     TagType::Internal { tag } => Tagging::Internal(tag.clone()),
@@ -664,6 +672,27 @@ mod tests {
             let attrs: Vec<syn::Attribute> = vec![syn::parse_quote!(#[serde(skip_serializing_if = #predicate)])];
             assert_eq!(SerdeField::parse(None, &attrs, CaseRules::new(NO_RULES)).skips_none, recognized, "{predicate}");
         }
+    }
+
+    #[test]
+    fn a_proxy_documents_the_type_only_when_both_directions_convert_through_it() {
+        let proxy = |item: syn::DeriveInput| SerdeContainer::from_input(&item).proxy;
+        let ty = |ty: syn::Type| Some(ty);
+
+        assert_eq!(proxy(syn::parse_quote! { struct S; }), None);
+        assert_eq!(proxy(syn::parse_quote! { #[serde(from = "A")] struct S; }), None);
+        assert_eq!(proxy(syn::parse_quote! { #[serde(try_from = "A")] struct S; }), None);
+        assert_eq!(proxy(syn::parse_quote! { #[serde(into = "B")] struct S; }), None);
+        assert_eq!(proxy(syn::parse_quote! { #[serde(from = "A", into = "B")] struct S; }), None);
+        assert_eq!(proxy(syn::parse_quote! { #[serde(try_from = "A", into = "B")] struct S; }), None);
+        assert_eq!(
+            proxy(syn::parse_quote! { #[serde(from = "A", into = "A")] struct S; }),
+            ty(syn::parse_quote!(A))
+        );
+        assert_eq!(
+            proxy(syn::parse_quote! { #[serde(try_from = "A", into = "A")] struct S; }),
+            ty(syn::parse_quote!(A))
+        );
     }
 
     #[test]
