@@ -49,8 +49,7 @@ gotcha_macro = { version = "0.4.1", path = "../gotcha_macro" }
 # impls are forwarded by this crate's own default features.
 gotcha_core = { version = "0.4.1", path = "../gotcha_core", default-features = false }
 serde = {version = "1", features = ["derive"]}
-# `rt` also supports the always-available message system and owned background tasks; macros, signals
-# and `time` drive server shutdown and interval tasks.
+# `rt` owns background tasks; macros, signals and `time` drive server shutdown and interval tasks.
 tokio = {version = "1", features = ["rt", "macros", "signal", "time"]}
 tokio-util = { version = "0.7", features = ["rt"] }
 # Isolates panics in background tasks. Already in the graph through axum, multer and tungstenite.

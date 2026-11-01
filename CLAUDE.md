@@ -97,7 +97,7 @@ Each example demonstrates specific features:
 - `openapi/` - OpenAPI documentation generation
 - `configuration/` - Environment-based configuration
 - `task/` - Background task scheduling
-- `message/` - Message passing system
+- `message/` - Typed commands in application code, with background work through `scheduler.spawn`
 
 ## Development Guidelines
 

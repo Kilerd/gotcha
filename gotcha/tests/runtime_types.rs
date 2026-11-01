@@ -1,8 +1,9 @@
 use gotcha::axum::{
     body::{to_bytes, Body},
+    extract::FromRef,
     http::Request,
 };
-use gotcha::{ConfigWrapper, Gotcha, GotchaApp, GotchaContext, GotchaResult, GotchaRouter, Message, Messager, ServerConfig, State};
+use gotcha::{ConfigWrapper, Gotcha, GotchaApp, GotchaContext, GotchaResult, GotchaRouter, ServerConfig, State};
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
     Arc,
@@ -61,19 +62,18 @@ fn cloning_a_context_does_not_require_the_configuration_to_be_clone() {
     assert!(Arc::ptr_eq(&context.config, &clone.config));
 }
 
-struct ReadConfig;
-#[gotcha::async_trait]
-impl Message<RuntimeState, RuntimeConfig> for ReadConfig {
-    type Output = String;
-    async fn handle(self, messager: Messager<RuntimeState, RuntimeConfig>) -> String {
-        messager.context().config.label.clone()
+/// An application's own struct over the context, extracted through `FromRef`.
+struct Commands(GotchaContext<RuntimeState, RuntimeConfig>);
+impl FromRef<GotchaContext<RuntimeState, RuntimeConfig>> for Commands {
+    fn from_ref(context: &GotchaContext<RuntimeState, RuntimeConfig>) -> Self {
+        Self(context.clone())
     }
 }
 
 #[cfg_attr(feature = "openapi", gotcha::api)]
 async fn read(
     State(state): State<RuntimeState>, State(config): State<RuntimeConfig>, State(wrapper): State<ConfigWrapper<RuntimeConfig>>,
-    State(server): State<ServerConfig>, State(messager): State<Messager<RuntimeState, RuntimeConfig>>,
+    State(server): State<ServerConfig>, State(commands): State<Commands>,
 ) -> String {
     format!(
         "{}:{}:{}:{}:{}",
@@ -81,7 +81,7 @@ async fn read(
         config.label,
         wrapper.label,
         server.port,
-        messager.send(ReadConfig).await
+        commands.0.config.label
     )
 }
 
@@ -100,7 +100,7 @@ impl GotchaApp for App {
 }
 
 #[tokio::test]
-async fn runtime_context_supports_extractors_messages_and_http_without_loading_bounds() {
+async fn runtime_context_supports_extractors_and_http_without_loading_bounds() {
     let context = context();
     let requests = context.state.requests.clone();
     let router = App.build_router(context).await.unwrap();
