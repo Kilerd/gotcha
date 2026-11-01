@@ -250,24 +250,28 @@ where
     let shutdown = server.shutdown.clone();
     let drop_shutdown = shutdown.clone();
     let (finish, finish_rx) = oneshot::channel();
-    let abort = CancellationToken::new();
-    let lifecycle_abort = abort.clone();
     // The driver owns the application. It resolves the shutdown signal, cancels the shared token,
     // waits until serving has drained, and only then runs application cleanup. The argument
-    // selects whether the application's own signal is polled at all.
+    // selects whether the application's own signal is polled at all. It runs inline in the
+    // serving future, so a panicking signal propagates to the caller instead of ending a
+    // detached task. Serving always cancels the token before it resolves, so a resolved
+    // `finish_rx` also covers shutdowns requested by a handler or task.
     let start: LifecycleStarter = Box::new(move |use_app_signal| {
         Box::pin(async move {
+            let mut finish_rx = finish_rx;
             if use_app_signal {
                 tokio::select! {
                     biased;
-                    _ = lifecycle_abort.cancelled() => {}
-                    _ = app.shutdown_signal() => {}
+                    _ = &mut finish_rx => {}
+                    _ = app.shutdown_signal() => {
+                        shutdown.cancel();
+                        let _ = finish_rx.await;
+                    }
                 }
             } else {
-                lifecycle_abort.cancelled().await;
+                // The replacement signal is polled by the serving future itself.
+                let _ = finish_rx.await;
             }
-            shutdown.cancel();
-            let _ = finish_rx.await;
             app.on_shutdown(&context).await;
         })
     });
@@ -275,11 +279,9 @@ where
         server,
         lifecycle: BoundLifecycle {
             starter: Some(start),
-            handle: None,
             shutdown: drop_shutdown,
         },
         finish: Some(finish),
-        abort,
     })
 }
 
@@ -301,7 +303,6 @@ pub struct BoundServer {
     server: PreparedServer,
     lifecycle: BoundLifecycle,
     finish: Option<oneshot::Sender<()>>,
-    abort: CancellationToken,
 }
 
 impl BoundServer {
@@ -330,41 +331,32 @@ impl BoundServer {
     where
         S: Future<Output = ()> + Send,
     {
-        self.lifecycle.start(use_app_signal);
-        let result = self.server.serve(std::future::pending(), signal).await;
-        self.abort.cancel();
-        if let Some(finish) = self.finish.take() {
-            let _ = finish.send(());
-        }
-        self.lifecycle.wait().await;
+        // Drive the lifecycle inline instead of spawning it: a panicking signal or cleanup hook
+        // then surfaces to the caller, and dropping this future drops the driver with the server.
+        let lifecycle = self.lifecycle.start(use_app_signal);
+        let finish = self.finish.take();
+        let serving = async move {
+            let result = self.server.serve(std::future::pending(), signal).await;
+            if let Some(finish) = finish {
+                let _ = finish.send(());
+            }
+            result
+        };
+        let ((), result) = tokio::join!(lifecycle, serving);
         result
     }
 }
 
-/// Owns the signal/cleanup driver. Created at bind, started only when serving begins.
+/// Owns the signal/cleanup driver. Created at bind and consumed when serving begins.
 struct BoundLifecycle {
     starter: Option<LifecycleStarter>,
-    handle: Option<tokio::task::JoinHandle<()>>,
     shutdown: CancellationToken,
 }
 
 impl BoundLifecycle {
-    fn start(&mut self, use_app_signal: bool) {
+    fn start(&mut self, use_app_signal: bool) -> Pin<Box<dyn Future<Output = ()> + Send>> {
         let starter = self.starter.take().expect("bound server was already served");
-        self.handle = Some(tokio::spawn(starter(use_app_signal)));
-    }
-
-    async fn wait(mut self) {
-        let Some(handle) = self.handle.take() else {
-            return;
-        };
-        match handle.await {
-            Ok(()) => {}
-            Err(error) if error.is_cancelled() => {}
-            // Re-raise a panicking cleanup hook so every API path behaves the same.
-            Err(error) if error.is_panic() => std::panic::resume_unwind(error.into_panic()),
-            Err(error) => tracing::error!("application cleanup task failed: {error}"),
-        }
+        starter(use_app_signal)
     }
 }
 
@@ -373,8 +365,6 @@ impl Drop for BoundLifecycle {
         if self.starter.is_some() {
             // Bound but never served: release anything that captured the context token.
             self.shutdown.cancel();
-        } else if let Some(handle) = self.handle.take() {
-            handle.abort();
         }
     }
 }
