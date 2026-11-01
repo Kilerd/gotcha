@@ -659,8 +659,9 @@ let app = Gotcha::new().extractor_config(
 );
 ```
 
-Axum's own extractors (`gotcha::axum::extract::*`) and custom `ParameterProvider` implementations
-keep their own rejection contract and document nothing automatically. A declared
+Axum's own extractors (`gotcha::axum::extract::*`) keep their own rejection contract and document
+nothing automatically; a custom `ParameterProvider` documents rejections only when it reports a
+provider (see [Writing an extractor provider](#writing-an-extractor-provider)). A declared
 `request_body(...)` replaces only the body schema; the extractor that runs still contributes its
 rejections. Opt the whole application out with `.document_extractor_errors(false)` on the builder,
 `GotchaApp::document_extractor_errors`, or `GotchaRouter::document_extractor_errors`. See
@@ -886,6 +887,102 @@ async fn handler(#[api(skip)] connection: RawConnection) -> String {
 }
 # }
 ```
+
+### Writing an extractor provider
+
+An extractor defined outside Gotcha can have the same per-application error handler and documented
+rejection responses as `Json` or `Query`:
+
+1. Declare a provider: an uninhabited type implementing `gotcha::extract::RejectionProvider`, with
+   the rejection type, the statuses to document (each with the phrase used in its description),
+   and the default response, which is always an `ErrorBody`. Applications configure it with
+   `RejectionConfig<P>`; an alias such as `CsvConfig` reads like the built-in configs.
+2. Reject through it. A body extractor takes the configurations with
+   `TakenConfigs::take(req.extensions_mut())` before it consumes the request and returns
+   `configs.reject::<P>(rejection)`. A parts extractor calls
+   `gotcha::extract::reject::<P>(&parts.extensions, rejection)` on its error path only. Both return
+   a `Rejected<R>` carrying the configured response, and a successful extraction does no lookup.
+3. With `openapi`, report `gotcha::extract::kind::<P>()` from `ParameterProvider::extractor_kinds`.
+   Operations then document `P`'s statuses with `ErrorBody`, or the statuses and body the
+   application configured.
+
+```rust
+use gotcha::axum::extract::{FromRequest, Request};
+use gotcha::axum::http::{header, StatusCode};
+use gotcha::extract::{RejectionConfig, RejectionProvider, TakenConfigs};
+use gotcha::{ErrorBody, Rejected};
+
+#[derive(Debug)]
+pub enum CsvRejection {
+    ContentType,
+    Body(String),
+}
+
+pub enum CsvProvider {}
+
+impl RejectionProvider for CsvProvider {
+    type Rejection = CsvRejection;
+
+    const STATUSES: &'static [(StatusCode, &'static str)] = &[
+        (StatusCode::BAD_REQUEST, "unreadable CSV body"),
+        (StatusCode::UNSUPPORTED_MEDIA_TYPE, "missing CSV content type"),
+    ];
+
+    fn default_error(rejection: &CsvRejection) -> (StatusCode, ErrorBody) {
+        match rejection {
+            CsvRejection::ContentType => (StatusCode::UNSUPPORTED_MEDIA_TYPE, ErrorBody::new("expected `Content-Type: text/csv`")),
+            CsvRejection::Body(error) => (StatusCode::BAD_REQUEST, ErrorBody::new(error.clone())),
+        }
+    }
+}
+
+pub type CsvConfig = RejectionConfig<CsvProvider>;
+
+pub struct Csv(pub Vec<String>);
+
+impl<S: Send + Sync> FromRequest<S> for Csv {
+    type Rejection = Rejected<CsvRejection>;
+
+    async fn from_request(mut req: Request, state: &S) -> Result<Self, Self::Rejection> {
+        // Take the configurations before the request is consumed.
+        let configs = TakenConfigs::take(req.extensions_mut());
+        if req.headers().get(header::CONTENT_TYPE).map(|value| value.as_bytes()) != Some(&b"text/csv"[..]) {
+            return Err(configs.reject::<CsvProvider>(CsvRejection::ContentType));
+        }
+        let text = String::from_request(req, state)
+            .await
+            .map_err(|rejection| configs.reject::<CsvProvider>(CsvRejection::Body(rejection.body_text())))?;
+        Ok(Csv(text.split(',').map(str::to_owned).collect()))
+    }
+}
+
+// In an extension crate, gate this on a feature that enables `gotcha/openapi`.
+#[cfg(feature = "openapi")]
+impl gotcha::ParameterProvider for Csv {
+    fn is_request_body() -> bool {
+        true
+    }
+
+    fn extractor_kinds() -> &'static [gotcha::ExtractorKind] {
+        const { &[gotcha::extract::kind::<CsvProvider>()] }
+    }
+}
+
+let app = gotcha::Gotcha::new()
+    .extractor_config(
+        CsvConfig::default()
+            .error_handler(|rejection| (StatusCode::UNPROCESSABLE_ENTITY, ErrorBody::new(format!("{rejection:?}"))))
+            .statuses([StatusCode::UNPROCESSABLE_ENTITY]),
+    )
+    .post("/import", |Csv(fields): Csv| async move { fields.len().to_string() });
+```
+
+A wrapper around another extractor reports that extractor's kinds with
+`ExtractorKind::all(<E as ParameterProvider>::extractor_kinds)`, next to any provider of its own.
+The built-in providers are `gotcha::extract::{JsonProvider, FormProvider, QueryProvider,
+PathProvider, MultipartProvider, TypedHeaderProvider, HeaderProvider, CookieProvider,
+ValidProvider}`. The unit variants such as `ExtractorKind::Json` are deprecated in favour of
+`kind::<JsonProvider>()` and still document the same responses.
 
 ### Prometheus Metrics
 

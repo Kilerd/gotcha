@@ -438,6 +438,7 @@ async fn keyed_json(_body: KeyedJson) -> String {
 }
 
 /// A hand-written provider naming the built-in provider by its unit variant.
+#[allow(deprecated)]
 fn json_variant() -> &'static [ExtractorKind] {
     &[ExtractorKind::Json]
 }
@@ -448,6 +449,7 @@ fn all_of_json() -> &'static [ExtractorKind] {
 }
 
 #[test]
+#[allow(deprecated)]
 fn built_in_providers_keep_reporting_their_kind_variants() {
     assert_eq!(<Json<Payload> as ParameterProvider>::extractor_kinds(), [ExtractorKind::Json]);
     assert_eq!(<Form<Payload> as ParameterProvider>::extractor_kinds(), [ExtractorKind::Form]);

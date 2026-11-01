@@ -58,6 +58,13 @@ rejection responses, and the values the built-in extractors report do not change
   application's `JsonConfig`, and likewise for the other built-in providers. The two are still
   different values: Gotcha's own extractors keep reporting the unit variants, so code that matches
   on `extractor_kinds()` is unaffected.
+- The unit variants `ExtractorKind::Json`, `Form`, `Query`, `Path`, `Multipart`, `TypedHeader`,
+  `Header`, `Cookie`, and `Valid` are deprecated. A hand-written `extractor_kinds()` should name
+  providers with `gotcha::extract::kind::<JsonProvider>()` and the other markers in
+  `gotcha::extract`; the documents stay the same. Gotcha's own extractors report the unit variants
+  until the next major release, so code that matches on them needs `#[allow(deprecated)]` until
+  then. See [Writing an extractor provider](README.md#writing-an-extractor-provider) for an
+  extractor defined outside Gotcha.
 
 ---
 
