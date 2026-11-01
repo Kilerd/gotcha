@@ -968,6 +968,21 @@ impl<S: Send + Sync> FromRequest<S> for Csv {
 // In an extension crate, gate this on a feature that enables `gotcha/openapi`.
 #[cfg(feature = "openapi")]
 impl gotcha::ParameterProvider for Csv {
+    fn generate(_url: String) -> gotcha::Either<Vec<gotcha::oas::Parameter>, gotcha::oas::RequestBody> {
+        let media = gotcha::oas::MediaType {
+            schema: Some(<String as gotcha::Schematic>::generate_schema().schema.into()),
+            example: None,
+            examples: None,
+            encoding: None,
+            item_schema: None,
+        };
+        gotcha::Either::Right(gotcha::oas::RequestBody {
+            description: Some("Comma-separated fields".to_owned()),
+            required: Some(true),
+            content: [("text/csv".to_owned(), media)].into(),
+        })
+    }
+
     fn is_request_body() -> bool {
         true
     }
@@ -982,20 +997,32 @@ async fn import(Csv(fields): Csv) -> String {
     fields.len().to_string()
 }
 
-// `/import` documents `422 Request rejected: invalid CSV body` with the default `ErrorBody`.
-let app = gotcha::Gotcha::new()
-    .extractor_config(
-        CsvConfig::default()
-            .error_handler(|rejection| (StatusCode::UNPROCESSABLE_ENTITY, ErrorBody::new(format!("{rejection:?}"))))
-            .statuses([StatusCode::UNPROCESSABLE_ENTITY]),
-    )
-    .post("/import", import);
+fn main() {
+    let app = gotcha::Gotcha::new()
+        .extractor_config(
+            CsvConfig::default()
+                .error_handler(|rejection| (StatusCode::UNPROCESSABLE_ENTITY, ErrorBody::new(format!("{rejection:?}"))))
+                .statuses([StatusCode::UNPROCESSABLE_ENTITY]),
+        )
+        .post("/import", import);
+
+    #[cfg(feature = "openapi")]
+    {
+        // `/import` documents its `text/csv` body and the configured `422`, described with
+        // `FALLBACK_PHRASE` because `STATUSES` does not list it.
+        let document = gotcha::serde_json::to_value(app.into_openapi()).unwrap();
+        let operation = &document["paths"]["/import"]["post"];
+        assert!(operation["requestBody"]["content"]["text/csv"]["schema"].is_object());
+        assert_eq!(operation["responses"]["422"]["description"], "Request rejected: invalid CSV body");
+    }
+}
 ```
 
 A wrapper around another extractor reports that extractor's kinds with
 `ExtractorKind::all(<E as ParameterProvider>::extractor_kinds)`, next to any provider of its own.
-When the wrapper can reject after the inner extractor succeeded, as `Valid` does, it shares the
-configurations instead of taking them:
+When the wrapper hands the request to a Gotcha extractor and can still reject after it succeeds,
+it shares the configurations instead of taking them. (Gotcha's own `Valid` takes them, because it
+hands the request to Axum's `Json`, which never reads them.)
 
 ```rust
 use gotcha::axum::extract::{FromRequest, Request};
@@ -1012,6 +1039,7 @@ impl RejectionProvider for NonEmptyProvider {
     type Rejection = EmptyList;
 
     const STATUSES: &'static [(StatusCode, &'static str)] = &[(StatusCode::UNPROCESSABLE_ENTITY, "empty list")];
+    const FALLBACK_PHRASE: &'static str = "empty list";
 
     fn default_error(_: &EmptyList) -> (StatusCode, ErrorBody) {
         (StatusCode::UNPROCESSABLE_ENTITY, ErrorBody::new("the list is empty"))

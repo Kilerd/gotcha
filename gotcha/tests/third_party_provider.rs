@@ -3,12 +3,14 @@
 //! Extractor providers written outside Gotcha. This test crate depends on `gotcha` as an
 //! extension crate would: the `msgpack` module uses only public API.
 
-use gotcha::axum::body::{to_bytes, Body};
-use gotcha::axum::http::{header, Request, StatusCode};
-use gotcha::{ConfigWrapper, EmptyConfig, ExtractorConfigs, GotchaApp, GotchaContext, GotchaResult, GotchaRouter, Json, JsonConfig, Schematic};
+use std::net::SocketAddr;
+
+use gotcha::axum::http::StatusCode;
+use gotcha::{Gotcha, Json, JsonConfig, Schematic};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use tower::ServiceExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::TcpStream;
 
 use msgpack::{Audited, MsgPack, MsgPackConfig, NonEmpty, NonEmptyConfig};
 
@@ -126,7 +128,7 @@ mod msgpack {
 
     pub type NonEmptyConfig = RejectionConfig<NonEmptyProvider>;
 
-    /// A wrapper that delegates to Gotcha's `Json` and rejects after it succeeds, as `Valid` does.
+    /// A wrapper that delegates to Gotcha's `Json` and rejects after it succeeds.
     pub struct NonEmpty<T>(pub Vec<T>);
 
     impl<T, S> FromRequest<S> for NonEmpty<T>
@@ -243,63 +245,62 @@ async fn non_empty(NonEmpty(items): NonEmpty<u32>) -> String {
     items.len().to_string()
 }
 
-struct App {
-    configured: bool,
-}
-
-impl GotchaApp for App {
-    type State = ();
-    type Config = EmptyConfig;
-
-    async fn state(&self, _: &ConfigWrapper<EmptyConfig>) -> GotchaResult<()> {
-        Ok(())
-    }
-
+fn app(configured: bool) -> Gotcha {
+    let app = Gotcha::new()
+        .post("/upload", upload)
+        .post("/audited", audited_upload)
+        .post("/audited-json", audited_json)
+        .post("/non-empty", non_empty);
     #[cfg(feature = "openapi")]
-    fn openapi_endpoints(&self) -> Option<gotcha::OpenApiEndpoints> {
-        Some(gotcha::OpenApiEndpoints::default())
+    let app = app.openapi_endpoints(Some(gotcha::OpenApiEndpoints::default()));
+    if !configured {
+        return app;
     }
-
-    fn routes(&self, router: GotchaRouter<GotchaContext<(), EmptyConfig>>) -> GotchaRouter<GotchaContext<(), EmptyConfig>> {
-        router
-            .post("/upload", upload)
-            .post("/audited", audited_upload)
-            .post("/audited-json", audited_json)
-            .post("/non-empty", non_empty)
-    }
-
-    fn extractor_configs(&self) -> ExtractorConfigs {
-        if !self.configured {
-            return ExtractorConfigs::default();
-        }
-        ExtractorConfigs::default()
-            .set(
-                MsgPackConfig::default()
-                    .error_handler(|rejection| (StatusCode::IM_A_TEAPOT, Teapot { reason: rejection.to_string() }))
-                    .statuses([StatusCode::IM_A_TEAPOT]),
-            )
-            .set(JsonConfig::default().error_handler(|rejection| (rejection.status(), Teapot { reason: rejection.body_text() })))
-            .set(
-                NonEmptyConfig::default()
-                    .error_handler(|_| (StatusCode::CONFLICT, Teapot { reason: "no items".to_owned() }))
-                    .statuses([StatusCode::CONFLICT]),
-            )
-    }
+    app.extractor_config(
+        MsgPackConfig::default()
+            .error_handler(|rejection| (StatusCode::IM_A_TEAPOT, Teapot { reason: rejection.to_string() }))
+            .statuses([StatusCode::IM_A_TEAPOT]),
+    )
+    .extractor_config(JsonConfig::default().error_handler(|rejection| (rejection.status(), Teapot { reason: rejection.body_text() })))
+    .extractor_config(
+        NonEmptyConfig::default()
+            .error_handler(|_| (StatusCode::CONFLICT, Teapot { reason: "no items".to_owned() }))
+            .statuses([StatusCode::CONFLICT]),
+    )
 }
 
-async fn router(configured: bool) -> gotcha::axum::Router {
-    App { configured }.build_router(GotchaContext::new((), ConfigWrapper::default())).await.unwrap()
+/// Serve the application on an ephemeral port, so every response and the served document come
+/// from the same assembly.
+async fn serve(configured: bool) -> SocketAddr {
+    let server = app(configured).bind_on(SocketAddr::from(([127, 0, 0, 1], 0))).await.unwrap();
+    let address = server.local_addr();
+    tokio::spawn(server.serve_with_shutdown(std::future::pending::<()>()));
+    address
 }
 
-async fn send(router: &gotcha::axum::Router, uri: &str, content_type: Option<&str>, body: &'static str) -> (StatusCode, Option<String>, Vec<u8>) {
-    let mut request = Request::post(uri);
+/// Send one HTTP/1.0 request and read the status, content type, and body of the response.
+async fn request(address: SocketAddr, method: &str, path: &str, content_type: Option<&str>, body: &str) -> (StatusCode, Option<String>, Vec<u8>) {
+    let mut stream = TcpStream::connect(address).await.unwrap();
+    let mut head = format!("{method} {path} HTTP/1.0\r\nHost: localhost\r\nContent-Length: {}\r\n", body.len());
     if let Some(content_type) = content_type {
-        request = request.header(header::CONTENT_TYPE, content_type);
+        head.push_str(&format!("Content-Type: {content_type}\r\n"));
     }
-    let response = router.clone().oneshot(request.body(Body::from(body)).unwrap()).await.unwrap();
-    let status = response.status();
-    let content_type = response.headers().get(header::CONTENT_TYPE).map(|value| value.to_str().unwrap().to_owned());
-    (status, content_type, to_bytes(response.into_body(), 1 << 20).await.unwrap().to_vec())
+    stream.write_all(format!("{head}\r\n{body}").as_bytes()).await.unwrap();
+    let mut response = Vec::new();
+    stream.read_to_end(&mut response).await.unwrap();
+
+    let end = response.windows(4).position(|window| window == b"\r\n\r\n").expect("a complete response head");
+    let mut lines = std::str::from_utf8(&response[..end]).unwrap().split("\r\n");
+    let status = lines.next().unwrap().split(' ').nth(1).unwrap().parse().unwrap();
+    let content_type = lines
+        .filter_map(|line| line.split_once(':'))
+        .find(|(name, _)| name.eq_ignore_ascii_case("content-type"))
+        .map(|(_, value)| value.trim().to_owned());
+    (StatusCode::from_u16(status).unwrap(), content_type, response[end + 4..].to_vec())
+}
+
+async fn send(address: &SocketAddr, path: &str, content_type: Option<&str>, body: &str) -> (StatusCode, Option<String>, Vec<u8>) {
+    request(*address, "POST", path, content_type, body).await
 }
 
 fn json_body(bytes: &[u8]) -> Value {
@@ -307,13 +308,10 @@ fn json_body(bytes: &[u8]) -> Value {
 }
 
 #[cfg(feature = "openapi")]
-async fn served_document(router: &gotcha::axum::Router) -> Value {
-    let response = router
-        .clone()
-        .oneshot(Request::get("/openapi.json").body(Body::empty()).unwrap())
-        .await
-        .unwrap();
-    json_body(&to_bytes(response.into_body(), 1 << 20).await.unwrap())
+async fn served_document(address: &SocketAddr) -> Value {
+    let (status, _, body) = request(*address, "GET", "/openapi.json", None, "").await;
+    assert_eq!(status, StatusCode::OK);
+    json_body(&body)
 }
 
 #[cfg(feature = "openapi")]
@@ -328,26 +326,26 @@ fn statuses<'a>(spec: &'a Value, path: &str) -> Vec<&'a str> {
 
 #[tokio::test]
 async fn an_unconfigured_provider_sends_and_documents_its_defaults() {
-    let router = router(false).await;
+    let server = serve(false).await;
 
-    let (status, content_type, body) = send(&router, "/upload", None, "{}").await;
+    let (status, content_type, body) = send(&server, "/upload", None, "{}").await;
     assert_eq!(status, StatusCode::UNSUPPORTED_MEDIA_TYPE);
     assert_eq!(content_type.as_deref(), Some("application/json"));
     assert_eq!(json_body(&body), json!({"error": "expected `Content-Type: application/msgpack`"}));
 
-    let (status, _, body) = send(&router, "/upload", Some("application/msgpack"), "{").await;
+    let (status, _, body) = send(&server, "/upload", Some("application/msgpack"), "{").await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_eq!(
         json_body(&body),
         json!({"error": "invalid MessagePack body: EOF while parsing an object at line 1 column 1"})
     );
 
-    let (status, _, body) = send(&router, "/upload", Some("application/msgpack"), r#"{"id":7}"#).await;
+    let (status, _, body) = send(&server, "/upload", Some("application/msgpack"), r#"{"id":7}"#).await;
     assert_eq!((status, body.as_slice()), (StatusCode::OK, &b"7"[..]));
 
     #[cfg(feature = "openapi")]
     {
-        let spec = served_document(&router).await;
+        let spec = served_document(&server).await;
         assert_eq!(statuses(&spec, "/upload"), ["200", "400", "415"]);
         for (status, description) in [
             ("400", "Request rejected: invalid MessagePack body"),
@@ -365,7 +363,7 @@ async fn an_unconfigured_provider_sends_and_documents_its_defaults() {
 
 #[tokio::test]
 async fn a_configured_provider_sends_and_documents_the_configured_handler() {
-    let router = router(true).await;
+    let server = serve(true).await;
 
     for (content_type, body, reason) in [
         (None, "{}", "expected `Content-Type: application/msgpack`"),
@@ -375,7 +373,7 @@ async fn a_configured_provider_sends_and_documents_the_configured_handler() {
             "invalid MessagePack body: EOF while parsing an object at line 1 column 1",
         ),
     ] {
-        let (status, response_type, response) = send(&router, "/upload", content_type, body).await;
+        let (status, response_type, response) = send(&server, "/upload", content_type, body).await;
         assert_eq!(status, StatusCode::IM_A_TEAPOT);
         assert_eq!(response_type.as_deref(), Some("application/json"));
         assert_eq!(json_body(&response), json!({ "reason": reason }));
@@ -383,7 +381,7 @@ async fn a_configured_provider_sends_and_documents_the_configured_handler() {
 
     #[cfg(feature = "openapi")]
     {
-        let spec = served_document(&router).await;
+        let spec = served_document(&server).await;
         assert_eq!(statuses(&spec, "/upload"), ["200", "418"]);
         let teapot = &responses(&spec, "/upload")["418"];
         assert_eq!(teapot["description"], "Request rejected: MessagePack body rejected");
@@ -394,19 +392,19 @@ async fn a_configured_provider_sends_and_documents_the_configured_handler() {
 
 #[tokio::test]
 async fn a_wrapper_sends_and_documents_the_rejections_of_the_extractor_it_wraps() {
-    let router = router(true).await;
+    let server = serve(true).await;
 
-    let (status, _, body) = send(&router, "/audited", None, "{}").await;
+    let (status, _, body) = send(&server, "/audited", None, "{}").await;
     assert_eq!(status, StatusCode::IM_A_TEAPOT);
     assert_eq!(json_body(&body), json!({"reason": "expected `Content-Type: application/msgpack`"}));
     // The application's `JsonConfig` reaches the wrapped `Json`.
-    let (status, _, body) = send(&router, "/audited-json", None, "{}").await;
+    let (status, _, body) = send(&server, "/audited-json", None, "{}").await;
     assert_eq!(status, StatusCode::UNSUPPORTED_MEDIA_TYPE);
     assert_eq!(json_body(&body), json!({"reason": "Expected request with `Content-Type: application/json`"}));
 
     #[cfg(feature = "openapi")]
     {
-        let spec = served_document(&router).await;
+        let spec = served_document(&server).await;
         assert_eq!(responses(&spec, "/audited"), responses(&spec, "/upload"));
         assert_eq!(statuses(&spec, "/audited-json"), ["200", "400", "413", "415", "422"]);
         let unsupported = &responses(&spec, "/audited-json")["415"];
@@ -417,7 +415,7 @@ async fn a_wrapper_sends_and_documents_the_rejections_of_the_extractor_it_wraps(
 
 #[tokio::test]
 async fn a_wrapper_that_delegates_to_a_gotcha_extractor_keeps_both_configurations() {
-    let configured = router(true).await;
+    let configured = serve(true).await;
 
     // The inner `Json` still finds the configurations the wrapper shared.
     let (status, _, body) = send(&configured, "/non-empty", None, "[1]").await;
@@ -430,7 +428,7 @@ async fn a_wrapper_that_delegates_to_a_gotcha_extractor_keeps_both_configuration
     let (status, _, body) = send(&configured, "/non-empty", Some("application/json"), "[1, 2]").await;
     assert_eq!((status, body.as_slice()), (StatusCode::OK, &b"2"[..]));
 
-    let defaults = router(false).await;
+    let defaults = serve(false).await;
     let (status, _, body) = send(&defaults, "/non-empty", Some("application/json"), "[]").await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
     assert_eq!(json_body(&body), json!({"error": "the list is empty"}));
