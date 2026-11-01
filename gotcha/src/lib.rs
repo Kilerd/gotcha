@@ -485,6 +485,7 @@ pub trait GotchaApp: Sized + Send + Sync {
     /// assembly, including documentation, the metrics endpoint, and final middleware. It must
     /// also apply `self.extractor_configs().layer(router)` after every route and middleware;
     /// without that layer, extractors fall back to the default rejection handlers.
+    /// [`Gotcha::into_router`] is the builder equivalent of the default implementation.
     #[cfg_attr(
         feature = "prometheus",
         doc = "When metrics are enabled, apply [`MetricsEndpoint::layer`](crate::MetricsEndpoint::layer) to the business router before mounting documentation."

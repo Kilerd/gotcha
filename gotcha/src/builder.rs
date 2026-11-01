@@ -24,7 +24,7 @@ use std::net::SocketAddr;
 
 use axum::extract::Request;
 use axum::handler::Handler;
-use axum::routing::MethodRouter as AxumMethodRouter;
+use axum::routing::{MethodFilter, MethodRouter as AxumMethodRouter};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use tower_layer::Layer;
@@ -311,7 +311,8 @@ impl Gotcha {
     /// The state does not need `Default`. The configuration must implement `Deserialize`, as for
     /// [`GotchaApp::run`](crate::GotchaApp::run), even when [`Self::load_config`], [`Self::config`],
     /// or the configuration source methods replace automatic loading later: the builder starts with
-    /// automatic loading.
+    /// automatic loading. [`Self::into_router`] takes an initialized context instead and does not
+    /// run the initializer.
     ///
     /// ```no_run
     /// use gotcha::prelude::*;
@@ -773,6 +774,26 @@ where
         self
     }
 
+    /// Route requests matching `method` to `handler`, keeping its OpenAPI metadata.
+    ///
+    /// The method shortcuts such as [`Self::get`] use this. A [`MethodFilter`] can combine
+    /// methods, for example `MethodFilter::GET.or(MethodFilter::HEAD)`.
+    ///
+    /// ```no_run
+    /// use gotcha::axum::routing::MethodFilter;
+    /// use gotcha::Gotcha;
+    ///
+    /// let app = Gotcha::new().method_route("/items", MethodFilter::PUT, || async { "replaced" });
+    /// ```
+    pub fn method_route<H, T>(mut self, path: &str, method: MethodFilter, handler: H) -> Self
+    where
+        H: Handler<T, GotchaContext<S, C>>,
+        T: 'static,
+    {
+        self.router = self.router.method_route(path, method, handler);
+        self
+    }
+
     /// Add composed methods with their annotated handlers' OpenAPI metadata.
     /// See [`crate::routing`] for constructors such as `get(handler).post(handler)`.
     pub fn route(mut self, path: &str, method_router: MethodRouter<GotchaContext<S, C>>) -> Self {
@@ -996,6 +1017,33 @@ where
         T: 'static,
     {
         self.router = self.router.fallback(handler);
+        self
+    }
+
+    /// Handle requests that match no route with a tower `Service` instead of a handler.
+    ///
+    /// Use it to delegate to something that already is a service, such as `ServeFile` for a
+    /// single-page application's `index.html` or a proxy. The service is opaque to OpenAPI and
+    /// does not receive the application context; mount it from [`Self::finish_router`] when it
+    /// needs application state. See
+    /// [`GotchaRouter::fallback_service`](crate::GotchaRouter::fallback_service).
+    ///
+    /// ```no_run
+    /// use gotcha::axum::{body::Body, extract::Request, response::Response};
+    /// use gotcha::Gotcha;
+    ///
+    /// let app = Gotcha::new().fallback_service(tower::service_fn(|_: Request| async {
+    ///     Ok::<_, std::convert::Infallible>(Response::new(Body::from("index.html")))
+    /// }));
+    /// ```
+    pub fn fallback_service<Svc, ResBody>(mut self, service: Svc) -> Self
+    where
+        Svc: Service<Request, Response = axum::http::Response<ResBody>, Error = std::convert::Infallible> + Clone + Send + Sync + 'static,
+        Svc::Future: Send + 'static,
+        ResBody: axum::body::HttpBody<Data = axum::body::Bytes> + Send + 'static,
+        ResBody::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
+    {
+        self.router = self.router.fallback_service(service);
         self
     }
 
@@ -1272,6 +1320,57 @@ where
         self.router.into_openapi()
     }
 
+    /// Assemble the application's router for an initialized context, without serving it.
+    ///
+    /// This is the builder equivalent of [`GotchaApp::build_router`](crate::GotchaApp::build_router).
+    /// Business routes, the fallback, documentation and metrics endpoints,
+    /// [`finish_router`](Self::finish_router) hooks, [`app_layer`](Self::app_layer) middleware, and
+    /// extractor configurations are assembled as [`run`](Self::run) serves them. Use it to exercise
+    /// the application in memory, for example with `tower::ServiceExt::oneshot`, or to embed it in
+    /// a server you run yourself.
+    ///
+    /// Nothing else runs. The context supplies the state and configuration, so configuration is
+    /// not loaded and a [`from_state_fn`](Gotcha::from_state_fn) initializer is not called. No
+    /// listener is bound, no logger installed, and no tasks registered; the shutdown signal and
+    /// cleanup hooks are unused. Handlers see the context's shutdown token, which the framework
+    /// never cancels. Errors come from invalid documentation or metrics endpoint settings.
+    ///
+    /// ```
+    /// use gotcha::axum::{body::Body, http::Request};
+    /// use gotcha::{ConfigWrapper, EmptyConfig, Gotcha, GotchaContext};
+    /// use tower::ServiceExt;
+    ///
+    /// # #[tokio::main(flavor = "current_thread")]
+    /// # async fn main() -> gotcha::GotchaResult<()> {
+    /// let router = Gotcha::from_state(())
+    ///     .get("/health", || async { "ok" })
+    ///     .into_router(GotchaContext::new((), ConfigWrapper::<EmptyConfig>::default()))?;
+    /// let response = router.oneshot(Request::get("/health").body(Body::empty()).unwrap()).await.unwrap();
+    /// assert_eq!(response.status(), 200);
+    /// # Ok(()) }
+    /// ```
+    pub fn into_router(mut self, context: GotchaContext<S, C>) -> GotchaResult<axum::Router> {
+        self.assemble(context)
+    }
+
+    fn assemble(&mut self, context: GotchaContext<S, C>) -> GotchaResult<axum::Router> {
+        let finish_routers = std::mem::take(&mut self.finish_routers);
+        let app_layers = std::mem::take(&mut self.app_layers);
+        crate::assembly::assemble(
+            std::mem::take(&mut self.router),
+            context,
+            #[cfg(feature = "openapi")]
+            self.openapi_endpoints.take(),
+            #[cfg(feature = "prometheus")]
+            self.metrics_endpoint.take(),
+            |router, context| {
+                let router = finish_routers.into_iter().fold(router, |router, finish| finish(router, context));
+                // Application layers stay outermost so they cover services mounted by the hooks.
+                app_layers.into_iter().fold(router, |router, layer| layer(router))
+            },
+        )
+    }
+
     /// Start the server and listen on the configured address
     ///
     /// # Example
@@ -1409,21 +1508,7 @@ where
     }
 
     async fn router(&mut self, context: GotchaContext<S, C>) -> GotchaResult<axum::Router> {
-        let finish_routers = std::mem::take(&mut self.finish_routers);
-        let app_layers = std::mem::take(&mut self.app_layers);
-        crate::assembly::assemble(
-            std::mem::take(&mut self.router),
-            context,
-            #[cfg(feature = "openapi")]
-            self.openapi_endpoints.take(),
-            #[cfg(feature = "prometheus")]
-            self.metrics_endpoint.take(),
-            |router, context| {
-                let router = finish_routers.into_iter().fold(router, |router, finish| finish(router, context));
-                // Application layers stay outermost so they cover services mounted by the hooks.
-                app_layers.into_iter().fold(router, |router, layer| layer(router))
-            },
-        )
+        self.assemble(context)
     }
 
     async fn tasks(&mut self, scheduler: &mut crate::TaskScheduler<S, C>) -> GotchaResult<()> {
@@ -1598,6 +1683,77 @@ mod tests {
         assert_eq!((status, body.as_slice()), (StatusCode::OK, b"proxied 3".as_slice()));
         assert_eq!(headers.get("x-app-layer").unwrap(), "applied", "app_layer covers finish-hook services");
         assert_eq!(calls.load(Ordering::SeqCst), 4, "the finish hook built the proxy from application state");
+    }
+
+    #[cfg_attr(feature = "openapi", crate::api)]
+    async fn replace() -> String {
+        "replaced".into()
+    }
+
+    #[tokio::test]
+    async fn into_router_assembles_what_run_serves() {
+        use axum::{
+            body::{to_bytes, Body},
+            extract::State,
+            http::{Request as HttpRequest, StatusCode},
+            middleware::{self, Next},
+            response::Response,
+        };
+        use tower::ServiceExt;
+
+        async fn mark_app(request: Request, next: Next) -> Response {
+            let mut response = next.run(request).await;
+            response.headers_mut().insert("x-app-layer", "applied".parse().unwrap());
+            response
+        }
+
+        let app = Gotcha::from_state(7u32)
+            .get("/state", |State(context): State<GotchaContext<u32, EmptyConfig>>| async move {
+                context.state.to_string()
+            })
+            .method_route("/replace", MethodFilter::PUT, replace)
+            .post("/json", |crate::Json(value): crate::Json<u32>| async move { value.to_string() })
+            .extractor_config(crate::JsonConfig::default().error_handler(|_| (StatusCode::IM_A_TEAPOT, crate::ErrorBody::new("custom"))))
+            .fallback_service(tower::service_fn(|_: Request| async {
+                Ok::<_, std::convert::Infallible>(axum::http::Response::new(Body::from("index.html")))
+            }))
+            .finish_router(|router, context| {
+                let state = context.state;
+                router.route("/finished", axum::routing::get(move || async move { format!("finished {state}") }))
+            })
+            .app_layer(middleware::from_fn(mark_app));
+        #[cfg(feature = "openapi")]
+        let app = app.with_openapi();
+        let router = app.into_router(GotchaContext::new(7, ConfigWrapper::default())).unwrap();
+
+        let mut requests = vec![
+            ("GET", "/state", "", StatusCode::OK, "7"),
+            ("PUT", "/replace", "", StatusCode::OK, "replaced"),
+            ("POST", "/json", "not json", StatusCode::IM_A_TEAPOT, "{\"error\":\"custom\"}"),
+            ("GET", "/finished", "", StatusCode::OK, "finished 7"),
+            ("GET", "/missing", "", StatusCode::OK, "index.html"),
+        ];
+        if cfg!(feature = "openapi") {
+            requests.push(("GET", "/openapi.json", "", StatusCode::OK, ""));
+        }
+        for (method, path, body, status, expected) in requests {
+            let request = HttpRequest::builder()
+                .method(method)
+                .uri(path)
+                .header("content-type", "application/json")
+                .body(Body::from(body))
+                .unwrap();
+            let response = router.clone().oneshot(request).await.unwrap();
+            assert_eq!(response.status(), status, "{method} {path}");
+            assert_eq!(response.headers().get("x-app-layer").unwrap(), "applied", "{method} {path}");
+            let bytes = to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
+            if path == "/openapi.json" {
+                let document: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+                assert!(document["paths"]["/replace"]["put"].is_object(), "{document}");
+            } else {
+                assert_eq!(bytes, expected, "{method} {path}");
+            }
+        }
     }
 
     #[cfg(feature = "cors")]
