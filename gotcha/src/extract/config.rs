@@ -470,8 +470,38 @@ impl ExtractorConfigs {
 
 /// The configurations for the current request, or the defaults when the application did not
 /// insert them (a plain Axum router or a direct extractor call).
+///
+/// Parts-based extractors call this only from their error path, so a successful extraction does
+/// not touch the shared [`Arc`]'s refcount.
 pub(crate) fn configs(extensions: &Extensions) -> Arc<ExtractorConfigs> {
+    extensions.get::<Arc<ExtractorConfigs>>().cloned().unwrap_or_else(|| Arc::clone(defaults()))
+}
+
+/// The configurations taken out of a request that is about to be consumed, or the defaults.
+///
+/// A body extractor delegates to Axum's extractor, which consumes the request and its extensions.
+/// Removing the extension first keeps the [`Arc`] alive without a refcount bump on the success
+/// path; only the delegated extractor sees the request, and it is dropped there, so nothing can
+/// observe that the extension is gone. The cost is one extension-map removal per body extraction.
+pub(crate) struct TakenConfigs(Option<Arc<ExtractorConfigs>>);
+
+impl TakenConfigs {
+    pub(crate) fn take(extensions: &mut Extensions) -> Self {
+        Self(extensions.remove::<Arc<ExtractorConfigs>>())
+    }
+}
+
+impl std::ops::Deref for TakenConfigs {
+    type Target = ExtractorConfigs;
+
+    fn deref(&self) -> &ExtractorConfigs {
+        self.0.as_deref().unwrap_or_else(|| &**defaults())
+    }
+}
+
+/// The shared default configuration, used when the application did not insert its own.
+fn defaults() -> &'static Arc<ExtractorConfigs> {
     static DEFAULT: Lazy<Arc<ExtractorConfigs>> = Lazy::new(|| Arc::new(ExtractorConfigs::default()));
 
-    extensions.get::<Arc<ExtractorConfigs>>().cloned().unwrap_or_else(|| DEFAULT.clone())
+    &DEFAULT
 }
