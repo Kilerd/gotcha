@@ -13,7 +13,8 @@ pub mod tagged_enum;
 pub mod untagged_enum;
 
 use crate::utils::{
-    has_serde_default, has_serde_skip, has_serde_transparent, parse_serde_rename_all, parse_serde_rename_all_deserialize, AttributesExt, RenameAll,
+    get_serde_name, has_serde_default, has_serde_flatten, has_serde_skip, has_serde_skip_serializing, has_serde_transparent, parse_serde_rename,
+    parse_serde_rename_all, parse_serde_rename_all_deserialize, parse_serde_rename_all_fields, serde_field_presence, AttributesExt, RenameAll,
 };
 
 #[derive(Debug, PartialEq, Eq)]
@@ -36,6 +37,8 @@ struct ParameterExtraField {
     container_default: bool,
     /// `#[serde(transparent)]` serializes the single inner field directly.
     transparent: bool,
+    /// `#[serde(rename_all_fields = "..")]` on a container renames struct-variant fields.
+    rename_all_fields: Option<RenameAll>,
 }
 
 impl ParameterExtraField {
@@ -90,6 +93,7 @@ impl ParameterExtraField {
             rename_all_deserialize,
             container_default: has_serde_default(attrs),
             transparent: has_serde_transparent(attrs),
+            rename_all_fields: parse_serde_rename_all_fields(attrs),
         }
     }
 }
@@ -335,6 +339,17 @@ impl ParameterStructFieldOpt {
     /// (its `.schema.format` / `.schema.extras`). An explicit `#[schematic(description = "...")]`
     /// overrides the doc comment.
     pub(crate) fn schema_customizations(&self, core: &TokenStream2) -> (TokenStream2, Vec<TokenStream2>) {
+        self.schema_customizations_with(core, true)
+    }
+
+    /// Customizations for a field used as a *value* (a variant field or a newtype's inner
+    /// field). Doc comments do not become descriptions here: they were never part of the
+    /// document for these shapes, so turning them on would change documents that are correct.
+    pub(crate) fn value_schema_customizations(&self, core: &TokenStream2) -> (TokenStream2, Vec<TokenStream2>) {
+        self.schema_customizations_with(core, false)
+    }
+
+    fn schema_customizations_with(&self, core: &TokenStream2, include_doc: bool) -> (TokenStream2, Vec<TokenStream2>) {
         // Builds a statement that inserts a JSON-Schema keyword into `field_schema.schema.extras`.
         fn extra(core: &TokenStream2, key: &str, value: TokenStream2) -> TokenStream2 {
             quote! {
@@ -344,8 +359,12 @@ impl ParameterStructFieldOpt {
 
         let description = if let Some(desc) = &self.description {
             quote! { Some(#desc.to_string()) }
-        } else if let Some(doc) = self.attrs.get_doc() {
-            quote! { Some(#doc.to_string()) }
+        } else if include_doc {
+            if let Some(doc) = self.attrs.get_doc() {
+                quote! { Some(#doc.to_string()) }
+            } else {
+                quote! { None }
+            }
         } else {
             quote! { None }
         };
@@ -413,7 +432,18 @@ pub(crate) fn tuple_variant_schema(core: &TokenStream2, fields: &[ParameterStruc
         .iter()
         .map(|field| {
             let field_ty = field.schema_type().clone();
-            quote! { <#field_ty as #core::Schematic>::generate_schema().schema.to_value() }
+            let (description, customizations) = field.value_schema_customizations(core);
+            quote! {
+                {
+                    let mut field_schema = <#field_ty as #core::Schematic>::generate_schema();
+                    let description: Option<String> = #description;
+                    if let Some(description) = description {
+                        field_schema.schema.description = Some(description);
+                    }
+                    #( #customizations )*
+                    field_schema.schema.to_value()
+                }
+            }
         })
         .collect();
     quote! {
@@ -426,6 +456,118 @@ pub(crate) fn tuple_variant_schema(core: &TokenStream2, fields: &[ParameterStruc
             array_schema.insert("minItems".to_string(), #core::serde_json::to_value(item_count).expect("cannot convert minItems to value"));
             array_schema.insert("maxItems".to_string(), #core::serde_json::to_value(item_count).expect("cannot convert maxItems to value"));
             #core::serde_json::to_value(array_schema).expect("cannot convert array schema to value")
+        }
+    }
+}
+
+/// The case conventions serde applies to an enum's variants and their struct-variant fields.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct VariantNaming {
+    /// `#[serde(rename_all = "..")]`: names variants, not their fields.
+    pub variants: Option<RenameAll>,
+    /// `#[serde(rename_all_fields = "..")]`: names struct-variant fields.
+    pub fields: Option<RenameAll>,
+}
+
+/// Emit an expression of type `HashMap<String, Value>` for one named-field variant object.
+///
+/// Every tag form builds the same object: the tag property (internally tagged only), the named
+/// fields, and — when a field is `#[serde(flatten)]` — the flattened type's fields and composed
+/// schema. One emitter keeps `skip`, `rename_all` / `rename_all_fields`, `flatten` and
+/// `#[schematic(..)]` identical for externally, internally, adjacently and untagged enums
+/// instead of drifting per copy.
+pub(crate) fn named_variant_object(
+    core: &TokenStream2, tag: Option<(&str, &str)>, fields: Vec<ParameterStructFieldOpt>, field_rename_all: Option<RenameAll>,
+) -> TokenStream2 {
+    let tag_code = match tag {
+        Some((tag_name, variant_name)) => quote! {
+            {
+                let mut tag_enum = ::std::collections::HashMap::new();
+                tag_enum.insert("type".to_string(), #core::serde_json::to_value("string").expect("cannot convert type to value"));
+                tag_enum.insert("enum".to_string(), #core::serde_json::to_value(vec![#variant_name.to_string()]).expect("cannot convert values to value"));
+                properties.insert(#tag_name.to_string(), #core::serde_json::to_value(tag_enum).expect("cannot convert tag to value"));
+                properties_required_fields.push(#tag_name.to_string());
+            }
+        },
+        None => quote! {},
+    };
+
+    let field_statements: Vec<TokenStream2> = fields
+        .into_iter()
+        .filter_map(|field| {
+            let ident = field.ident.as_ref()?;
+            // `skip` / `skip_serializing` fields are not written; a field skipped only for
+            // deserialization is still serialized and must stay in the schema.
+            if has_serde_skip_serializing(&field.attrs) {
+                return None;
+            }
+            let field_ty = field.schema_type().clone();
+            if has_serde_flatten(&field.attrs) {
+                // Keep the flattened type's own fields *and* its composed schema: the former for
+                // structs, the latter for enums. A type that is not required (`Option<T>`) may be
+                // absent, which makes the fields it contributes optional.
+                return Some(quote! {
+                    {
+                        if let Some(flatten_val) = <#field_ty as #core::Schematic>::flatten_schema() {
+                            flatten_schemas.push(flatten_val);
+                        }
+                        for (inner_name, mut inner_schema) in <#field_ty as #core::Schematic>::fields() {
+                            if !<#field_ty as #core::Schematic>::required() {
+                                inner_schema.required = false;
+                            }
+                            properties.insert(inner_name.to_string(), inner_schema.schema.to_value());
+                            if inner_schema.required {
+                                properties_required_fields.push(inner_name.to_string());
+                            }
+                        }
+                    }
+                });
+            }
+            let ident_str = ident.to_string();
+            let rename = parse_serde_rename(&field.attrs);
+            let field_name = get_serde_name(&ident_str, rename.as_deref(), field_rename_all);
+            let presence = serde_field_presence(&field_ty, &field.attrs, false);
+            let schema_ty = presence.schema_type;
+            let required_override = match presence.required {
+                Some(required) => quote! { field_schema.required = #required; },
+                None => quote! {},
+            };
+            let (field_description, customizations) = field.schema_customizations(core);
+            Some(quote! {
+                {
+                    let mut field_schema = <#schema_ty as #core::Schematic>::generate_schema();
+                    field_schema.schema.description = #field_description;
+                    #required_override
+                    #( #customizations )*
+                    properties.insert(#field_name.to_string(), field_schema.schema.to_value());
+                    if field_schema.required {
+                        properties_required_fields.push(#field_name.to_string());
+                    }
+                }
+            })
+        })
+        .collect();
+
+    quote! {
+        {
+            let mut properties: ::std::collections::HashMap<String, #core::serde_json::Value> = ::std::collections::HashMap::new();
+            let mut properties_required_fields: Vec<String> = vec![];
+            let mut flatten_schemas: Vec<#core::serde_json::Value> = vec![];
+            #tag_code
+            #( #field_statements )*
+            let mut base_object: ::std::collections::HashMap<String, #core::serde_json::Value> = ::std::collections::HashMap::new();
+            base_object.insert("type".to_string(), #core::serde_json::to_value("object").expect("cannot convert type to value"));
+            base_object.insert("properties".to_string(), #core::serde_json::to_value(properties).expect("cannot convert properties to value"));
+            base_object.insert("required".to_string(), #core::serde_json::to_value(properties_required_fields).expect("cannot convert required fields to value"));
+            if flatten_schemas.is_empty() {
+                base_object
+            } else {
+                let mut all_of: Vec<#core::serde_json::Value> = vec![#core::serde_json::to_value(base_object).expect("cannot convert base object to value")];
+                all_of.extend(flatten_schemas);
+                let mut composed: ::std::collections::HashMap<String, #core::serde_json::Value> = ::std::collections::HashMap::new();
+                composed.insert("allOf".to_string(), #core::serde_json::to_value(all_of).expect("cannot convert allOf to value"));
+                composed
+            }
         }
     }
 }
@@ -494,25 +636,21 @@ pub(crate) fn handler(input: TokenStream2) -> Result<TokenStream2, (Span, &'stat
             // representation. A tag turns it into an object and `untagged` writes null, so the
             // shape must come from the tag handler, not from the variant count.
             let is_simple_enum = enum_variants.iter().all(|variant| variant.fields.is_empty());
+            let naming = VariantNaming {
+                variants: extra_field.rename_all,
+                fields: extra_field.rename_all_fields,
+            };
             match extra_field.tag_kind {
                 None if is_simple_enum => simple_enum::handler(&core, schema_name.clone(), doc, enum_variants, extra_field.rename_all)?,
                 None => {
                     // Default: externally tagged
-                    external_tagged_enum::handler(&core, schema_name.clone(), doc, enum_variants, extra_field.rename_all)?
+                    external_tagged_enum::handler(&core, schema_name.clone(), doc, enum_variants, naming)?
                 }
-                Some(SerdeTagKind::Internal(ref tag_name)) => {
-                    tagged_enum::handler(&core, schema_name.clone(), doc, enum_variants, extra_field.rename_all, tag_name.clone())?
+                Some(SerdeTagKind::Internal(ref tag_name)) => tagged_enum::handler(&core, schema_name.clone(), doc, enum_variants, naming, tag_name.clone())?,
+                Some(SerdeTagKind::Adjacent { ref tag, ref content }) => {
+                    adjacent_tagged_enum::handler(&core, schema_name.clone(), doc, enum_variants, naming, tag.clone(), content.clone())?
                 }
-                Some(SerdeTagKind::Adjacent { ref tag, ref content }) => adjacent_tagged_enum::handler(
-                    &core,
-                    schema_name.clone(),
-                    doc,
-                    enum_variants,
-                    extra_field.rename_all,
-                    tag.clone(),
-                    content.clone(),
-                )?,
-                Some(SerdeTagKind::Untagged) => untagged_enum::handler(&core, schema_name.clone(), doc, enum_variants, extra_field.rename_all)?,
+                Some(SerdeTagKind::Untagged) => untagged_enum::handler(&core, schema_name.clone(), doc, enum_variants, naming)?,
             }
         }
         Data::Struct(fields) => {

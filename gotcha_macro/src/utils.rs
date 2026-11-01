@@ -250,6 +250,21 @@ pub fn has_serde_skip_deserializing(attrs: &[Attribute]) -> bool {
     )
 }
 
+/// Whether serde omits the field on *output* (`skip` or `skip_serializing`). A field skipped
+/// only for deserialization is still serialized and stays in the schema.
+pub fn has_serde_skip_serializing(attrs: &[Attribute]) -> bool {
+    serde_nested_any(
+        attrs,
+        |meta| matches!(meta, syn::Meta::Path(path) if path.is_ident("skip") || path.is_ident("skip_serializing")),
+    )
+}
+
+/// The case convention serde applies to *fields of struct variants*: the container-level
+/// `#[serde(rename_all_fields = "..")]`. A variant's own `rename_all` wins over it.
+pub fn parse_serde_rename_all_fields(attrs: &[Attribute]) -> Option<RenameAll> {
+    serde_name_value(attrs, "rename_all_fields").and_then(|case| RenameAll::from_str(&case))
+}
+
 /// Whether serde supplies a missing value: `#[serde(default)]` or `#[serde(default = "...")]`.
 pub fn has_serde_default(attrs: &[Attribute]) -> bool {
     serde_nested_any(attrs, |meta| match meta {

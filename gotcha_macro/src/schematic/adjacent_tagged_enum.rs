@@ -1,13 +1,13 @@
 use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::quote;
 
-use crate::schematic::ParameterEnumVariantOpt;
-use crate::utils::{get_serde_name, parse_serde_rename, serde_field_presence, RenameAll};
+use crate::schematic::{ParameterEnumVariantOpt, VariantNaming};
+use crate::utils::{get_serde_name, parse_serde_rename, parse_serde_rename_all};
 
 /// Handler for adjacently tagged enums: #[serde(tag = "kind", content = "data")]
 /// JSON format: { "kind": "VariantName", "data": { ...variant fields... } }
 pub(crate) fn handler(
-    core: &TokenStream2, ident_string: String, doc: TokenStream2, variants: Vec<ParameterEnumVariantOpt>, rename_all: Option<RenameAll>, tag_name: String,
+    core: &TokenStream2, ident_string: String, doc: TokenStream2, variants: Vec<ParameterEnumVariantOpt>, naming: VariantNaming, tag_name: String,
     content_name: String,
 ) -> Result<TokenStream2, (Span, &'static str)> {
     let tag_name_str = tag_name.as_str();
@@ -18,144 +18,83 @@ pub(crate) fn handler(
         .map(|variant| {
             let variant_ident_str = variant.ident.to_string();
             let variant_rename = parse_serde_rename(&variant.attrs);
-            let variant_string = get_serde_name(&variant_ident_str, variant_rename.as_deref(), rename_all);
+            let variant_string = get_serde_name(&variant_ident_str, variant_rename.as_deref(), naming.variants);
+            let field_rename_all = parse_serde_rename_all(&variant.attrs).or(naming.fields);
 
-            let fields = variant.fields;
-            let is_newtype = fields.len() == 1 && fields.fields[0].ident.is_none();
-            let is_tuple = matches!(fields.style, darling::ast::Style::Tuple) && !is_newtype;
-            let is_unit = matches!(fields.style, darling::ast::Style::Unit);
+            let tag_enum = quote! {
+                let mut tag_enum: ::std::collections::HashMap<String, #core::serde_json::Value> = ::std::collections::HashMap::new();
+                tag_enum.insert("type".to_string(), #core::serde_json::to_value("string").unwrap());
+                tag_enum.insert("enum".to_string(), #core::serde_json::to_value(vec![#variant_string]).unwrap());
+            };
 
-            if is_newtype {
-                // Newtype variant: Variant(InnerType)
-                // The content is the inner type's schema
-                let inner_ty = fields.fields[0].schema_type();
-                quote! {
-                    {
-                        // Tag enum schema
-                        let mut tag_enum: ::std::collections::HashMap<String, #core::serde_json::Value> = ::std::collections::HashMap::new();
-                        tag_enum.insert("type".to_string(), #core::serde_json::to_value("string").unwrap());
-                        tag_enum.insert("enum".to_string(), #core::serde_json::to_value(vec![#variant_string]).unwrap());
-
-                        // Content is the inner type's schema
-                        let content_schema = <#inner_ty as #core::Schematic>::generate_schema().schema.to_value();
-
-                        // Build variant object
-                        let mut properties: ::std::collections::HashMap<String, #core::serde_json::Value> = ::std::collections::HashMap::new();
-                        properties.insert(#tag_name_str.to_string(), #core::serde_json::to_value(tag_enum).unwrap());
-                        properties.insert(#content_name_str.to_string(), content_schema);
-
-                        let mut variant_object: ::std::collections::HashMap<String, #core::serde_json::Value> = ::std::collections::HashMap::new();
-                        variant_object.insert("title".to_string(), #core::serde_json::to_value(#variant_string).unwrap());
-                        variant_object.insert("type".to_string(), #core::serde_json::to_value("object").unwrap());
-                        variant_object.insert("properties".to_string(), #core::serde_json::to_value(properties).unwrap());
-                        variant_object.insert("required".to_string(), #core::serde_json::to_value(vec![#tag_name_str, #content_name_str]).unwrap());
-                        variant_object
+            match variant.fields.style {
+                darling::ast::Style::Struct => {
+                    let content = crate::schematic::named_variant_object(core, None, variant.fields.fields, field_rename_all);
+                    quote! {
+                        {
+                            #tag_enum
+                            let content_schema = #core::serde_json::to_value(#content).expect("cannot convert content to value");
+                            let mut properties: ::std::collections::HashMap<String, #core::serde_json::Value> = ::std::collections::HashMap::new();
+                            properties.insert(#tag_name_str.to_string(), #core::serde_json::to_value(tag_enum).unwrap());
+                            properties.insert(#content_name_str.to_string(), content_schema);
+                            let mut variant_object: ::std::collections::HashMap<String, #core::serde_json::Value> = ::std::collections::HashMap::new();
+                            variant_object.insert("title".to_string(), #core::serde_json::to_value(#variant_string).unwrap());
+                            variant_object.insert("type".to_string(), #core::serde_json::to_value("object").unwrap());
+                            variant_object.insert("properties".to_string(), #core::serde_json::to_value(properties).unwrap());
+                            variant_object.insert("required".to_string(), #core::serde_json::to_value(vec![#tag_name_str, #content_name_str]).unwrap());
+                            variant_object
+                        }
                     }
                 }
-            } else if is_unit {
-                // Unit variant: Variant
-                // Only has the tag, no content
-                quote! {
-                    {
-                        // Tag enum schema
-                        let mut tag_enum: ::std::collections::HashMap<String, #core::serde_json::Value> = ::std::collections::HashMap::new();
-                        tag_enum.insert("type".to_string(), #core::serde_json::to_value("string").unwrap());
-                        tag_enum.insert("enum".to_string(), #core::serde_json::to_value(vec![#variant_string]).unwrap());
-
-                        let mut properties: ::std::collections::HashMap<String, #core::serde_json::Value> = ::std::collections::HashMap::new();
-                        properties.insert(#tag_name_str.to_string(), #core::serde_json::to_value(tag_enum).unwrap());
-
-                        let mut variant_object: ::std::collections::HashMap<String, #core::serde_json::Value> = ::std::collections::HashMap::new();
-                        variant_object.insert("title".to_string(), #core::serde_json::to_value(#variant_string).unwrap());
-                        variant_object.insert("type".to_string(), #core::serde_json::to_value("object").unwrap());
-                        variant_object.insert("properties".to_string(), #core::serde_json::to_value(properties).unwrap());
-                        variant_object.insert("required".to_string(), #core::serde_json::to_value(vec![#tag_name_str]).unwrap());
-                        variant_object
+                darling::ast::Style::Unit => {
+                    // Unit variant: only the tag, no content.
+                    quote! {
+                        {
+                            #tag_enum
+                            let mut properties: ::std::collections::HashMap<String, #core::serde_json::Value> = ::std::collections::HashMap::new();
+                            properties.insert(#tag_name_str.to_string(), #core::serde_json::to_value(tag_enum).unwrap());
+                            let mut variant_object: ::std::collections::HashMap<String, #core::serde_json::Value> = ::std::collections::HashMap::new();
+                            variant_object.insert("title".to_string(), #core::serde_json::to_value(#variant_string).unwrap());
+                            variant_object.insert("type".to_string(), #core::serde_json::to_value("object").unwrap());
+                            variant_object.insert("properties".to_string(), #core::serde_json::to_value(properties).unwrap());
+                            variant_object.insert("required".to_string(), #core::serde_json::to_value(vec![#tag_name_str]).unwrap());
+                            variant_object
+                        }
                     }
                 }
-            } else if is_tuple {
-                // Tuple variant `Variant(A, B)` (including `Variant()`) serializes as `[a, b]`.
-                let array_schema = crate::schematic::tuple_variant_schema(core, &fields.fields);
-                quote! {
-                    {
-                        let mut tag_enum: ::std::collections::HashMap<String, #core::serde_json::Value> = ::std::collections::HashMap::new();
-                        tag_enum.insert("type".to_string(), #core::serde_json::to_value("string").unwrap());
-                        tag_enum.insert("enum".to_string(), #core::serde_json::to_value(vec![#variant_string]).unwrap());
-                        let content_schema = #array_schema;
-                        let mut properties: ::std::collections::HashMap<String, #core::serde_json::Value> = ::std::collections::HashMap::new();
-                        properties.insert(#tag_name_str.to_string(), #core::serde_json::to_value(tag_enum).unwrap());
-                        properties.insert(#content_name_str.to_string(), content_schema);
-                        let mut variant_object: ::std::collections::HashMap<String, #core::serde_json::Value> = ::std::collections::HashMap::new();
-                        variant_object.insert("title".to_string(), #core::serde_json::to_value(#variant_string).unwrap());
-                        variant_object.insert("type".to_string(), #core::serde_json::to_value("object").unwrap());
-                        variant_object.insert("properties".to_string(), #core::serde_json::to_value(properties).unwrap());
-                        variant_object.insert("required".to_string(), #core::serde_json::to_value(vec![#tag_name_str, #content_name_str]).unwrap());
-                        variant_object
-                    }
-                }
-            } else {
-                // Named fields variant: Variant { field1, field2, ... }
-                // Content is an object with the fields
-                let fields_stream: Vec<TokenStream2> = fields
-                    .into_iter()
-                    .filter_map(|field| {
-                        let field_ident = field.ident.as_ref()?;
-                        let field_ident_str = field_ident.to_string();
-                        let field_rename = parse_serde_rename(&field.attrs);
-                        let field_name = get_serde_name(&field_ident_str, field_rename.as_deref(), None);
-                        let (field_description, customizations) = field.schema_customizations(core);
-                        let field_ty = field.schema_type().clone();
-                        let presence = serde_field_presence(&field_ty, &field.attrs, false);
-                        let schema_ty = presence.schema_type;
-                        let required_override = match presence.required {
-                            Some(required) => quote! { field_schema.required = #required; },
-                            None => quote! {},
-                        };
-                        Some(quote! {
+                darling::ast::Style::Tuple => {
+                    let content_schema = if variant.fields.fields.len() == 1 {
+                        let field = &variant.fields.fields[0];
+                        let inner_ty = field.schema_type().clone();
+                        let (description, customizations) = field.value_schema_customizations(core);
+                        quote! {
                             {
-                                let mut field_schema = <#schema_ty as #core::Schematic>::generate_schema();
-                                field_schema.schema.description = #field_description;
-                                #required_override
-                                #( #customizations )*
-                                content_properties.insert(#field_name.to_string(), field_schema.schema.to_value());
-                                if field_schema.required {
-                                    content_required.push(#field_name.to_string());
+                                let mut field_schema = <#inner_ty as #core::Schematic>::generate_schema();
+                                let description: Option<String> = #description;
+                                if let Some(description) = description {
+                                    field_schema.schema.description = Some(description);
                                 }
+                                #( #customizations )*
+                                field_schema.schema.to_value()
                             }
-                        })
-                    })
-                    .collect();
-
-                quote! {
-                    {
-                        // Tag enum schema
-                        let mut tag_enum: ::std::collections::HashMap<String, #core::serde_json::Value> = ::std::collections::HashMap::new();
-                        tag_enum.insert("type".to_string(), #core::serde_json::to_value("string").unwrap());
-                        tag_enum.insert("enum".to_string(), #core::serde_json::to_value(vec![#variant_string]).unwrap());
-
-                        // Build content object schema
-                        let mut content_properties: ::std::collections::HashMap<String, #core::serde_json::Value> = ::std::collections::HashMap::new();
-                        let mut content_required: Vec<String> = vec![];
-                        #(
-                            #fields_stream
-                        )*
-
-                        let mut content_schema: ::std::collections::HashMap<String, #core::serde_json::Value> = ::std::collections::HashMap::new();
-                        content_schema.insert("type".to_string(), #core::serde_json::to_value("object").unwrap());
-                        content_schema.insert("properties".to_string(), #core::serde_json::to_value(content_properties).unwrap());
-                        content_schema.insert("required".to_string(), #core::serde_json::to_value(content_required).unwrap());
-
-                        // Build variant object
-                        let mut properties: ::std::collections::HashMap<String, #core::serde_json::Value> = ::std::collections::HashMap::new();
-                        properties.insert(#tag_name_str.to_string(), #core::serde_json::to_value(tag_enum).unwrap());
-                        properties.insert(#content_name_str.to_string(), #core::serde_json::to_value(content_schema).unwrap());
-
-                        let mut variant_object: ::std::collections::HashMap<String, #core::serde_json::Value> = ::std::collections::HashMap::new();
-                        variant_object.insert("title".to_string(), #core::serde_json::to_value(#variant_string).unwrap());
-                        variant_object.insert("type".to_string(), #core::serde_json::to_value("object").unwrap());
-                        variant_object.insert("properties".to_string(), #core::serde_json::to_value(properties).unwrap());
-                        variant_object.insert("required".to_string(), #core::serde_json::to_value(vec![#tag_name_str, #content_name_str]).unwrap());
-                        variant_object
+                        }
+                    } else {
+                        crate::schematic::tuple_variant_schema(core, &variant.fields.fields)
+                    };
+                    quote! {
+                        {
+                            #tag_enum
+                            let content_schema = #content_schema;
+                            let mut properties: ::std::collections::HashMap<String, #core::serde_json::Value> = ::std::collections::HashMap::new();
+                            properties.insert(#tag_name_str.to_string(), #core::serde_json::to_value(tag_enum).unwrap());
+                            properties.insert(#content_name_str.to_string(), content_schema);
+                            let mut variant_object: ::std::collections::HashMap<String, #core::serde_json::Value> = ::std::collections::HashMap::new();
+                            variant_object.insert("title".to_string(), #core::serde_json::to_value(#variant_string).unwrap());
+                            variant_object.insert("type".to_string(), #core::serde_json::to_value("object").unwrap());
+                            variant_object.insert("properties".to_string(), #core::serde_json::to_value(properties).unwrap());
+                            variant_object.insert("required".to_string(), #core::serde_json::to_value(vec![#tag_name_str, #content_name_str]).unwrap());
+                            variant_object
+                        }
                     }
                 }
             }
