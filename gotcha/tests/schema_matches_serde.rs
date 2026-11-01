@@ -5287,3 +5287,8 @@ fn a_conversion_leaves_the_struct_tag_undocumented() {
 // - Flattening an untagged enum whose newtype variant wraps a struct that itself flattens a map
 //   composes through that struct's `$ref`, so the map's `additionalProperties` still constrains
 //   the parent's fields.
+// - Flattening an untagged enum whose newtype variant wraps a hand-written `Schematic` that only
+//   implements `generate_schema` and composes a closed schema in `allOf` or `anyOf`: the branch
+//   opens to an empty object, so a required field stops being documented and
+//   `{"own":"s"}` is accepted by the document and rejected by serde (on `main` the document
+//   rejects it too). Derived types are unaffected.
