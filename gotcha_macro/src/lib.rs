@@ -268,30 +268,6 @@ pub fn derive_parameter(input: TokenStream) -> TokenStream {
     }
 }
 
-/// Marks a struct as a Gotcha application state so it can be extracted directly
-/// with axum's `State<T>` in handlers.
-///
-/// It generates `impl<C> FromRef<GotchaContext<T, C>> for T`, which
-/// pulls the state out of the `GotchaContext` that the framework injects as the
-/// axum state. Without this, handlers would have to extract the whole
-/// `State<GotchaContext<T, C>>` and reach into `.state`.
-///
-/// The struct must be `Clone` and non-generic. (For a generic state, write the
-/// `FromRef` impl by hand.)
-///
-/// ```ignore
-/// use gotcha::prelude::*;
-///
-/// #[state]
-/// #[derive(Clone, Default)]
-/// struct AppState {
-///     started_at: std::time::SystemTime,
-/// }
-///
-/// async fn handler(State(state): State<AppState>) -> impl Responder {
-///     format!("{:?}", state.started_at)
-/// }
-/// ```
 /// Marks a struct as the application configuration so it can be extracted directly with
 /// axum's `State<T>` in handlers.
 ///
@@ -320,13 +296,14 @@ pub fn derive_parameter(input: TokenStream) -> TokenStream {
 pub fn config(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let input = syn::parse_macro_input!(item as syn::DeriveInput);
     let ident = input.ident.clone();
+    let gotcha = crate::utils::gotcha_crate_path();
 
     let generated = if input.generics.params.is_empty() {
         quote::quote! {
             impl<__GotchaState>
-                ::gotcha::axum::extract::FromRef<::gotcha::GotchaContext<__GotchaState, #ident>> for #ident
+                #gotcha::axum::extract::FromRef<#gotcha::GotchaContext<__GotchaState, #ident>> for #ident
             {
-                fn from_ref(context: &::gotcha::GotchaContext<__GotchaState, #ident>) -> Self {
+                fn from_ref(context: &#gotcha::GotchaContext<__GotchaState, #ident>) -> Self {
                     ::core::clone::Clone::clone(&context.config.app)
                 }
             }
@@ -346,15 +323,40 @@ pub fn config(_attr: TokenStream, item: TokenStream) -> TokenStream {
     .into()
 }
 
+/// Marks a struct as a Gotcha application state so it can be extracted directly
+/// with axum's `State<T>` in handlers.
+///
+/// It generates `impl<C> FromRef<GotchaContext<T, C>> for T`, which
+/// pulls the state out of the `GotchaContext` that the framework injects as the
+/// axum state. Without this, handlers would have to extract the whole
+/// `State<GotchaContext<T, C>>` and reach into `.state`.
+///
+/// The struct must be `Clone` and non-generic. (For a generic state, write the
+/// `FromRef` impl by hand.)
+///
+/// ```ignore
+/// use gotcha::prelude::*;
+///
+/// #[state]
+/// #[derive(Clone, Default)]
+/// struct AppState {
+///     started_at: std::time::SystemTime,
+/// }
+///
+/// async fn handler(State(state): State<AppState>) -> impl Responder {
+///     format!("{:?}", state.started_at)
+/// }
+/// ```
 #[proc_macro_attribute]
 pub fn state(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let input = syn::parse_macro_input!(item as syn::DeriveInput);
     let ident = input.ident.clone();
+    let gotcha = crate::utils::gotcha_crate_path();
 
     let generated = if input.generics.params.is_empty() {
         quote::quote! {
-            impl<__GotchaConfig> ::gotcha::axum::extract::FromRef<::gotcha::GotchaContext<#ident, __GotchaConfig>> for #ident {
-                fn from_ref(context: &::gotcha::GotchaContext<#ident, __GotchaConfig>) -> Self {
+            impl<__GotchaConfig> #gotcha::axum::extract::FromRef<#gotcha::GotchaContext<#ident, __GotchaConfig>> for #ident {
+                fn from_ref(context: &#gotcha::GotchaContext<#ident, __GotchaConfig>) -> Self {
                     ::core::clone::Clone::clone(&context.state)
                 }
             }

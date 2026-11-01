@@ -1,7 +1,6 @@
 use darling::ast::Data;
 use darling::{FromDeriveInput, FromField, FromVariant};
 use proc_macro2::{Delimiter, Group, Span, TokenStream as TokenStream2, TokenTree};
-use proc_macro_crate::{crate_name, FoundCrate};
 use quote::quote;
 use syn::{parse2, DeriveInput};
 
@@ -433,19 +432,11 @@ pub(crate) struct ParameterEnumVariantOpt {
 // Libraries can stay on core alone; applications can use gotcha's re-export. Cargo
 // dependency aliases are resolved by package name, including workspace dependencies.
 fn core_crate_path() -> Result<TokenStream2, &'static str> {
-    for package in ["gotcha_core", "gotcha"] {
-        if let Ok(found) = crate_name(package) {
-            let name = match found {
-                FoundCrate::Itself => package.to_owned(),
-                FoundCrate::Name(name) => name,
-            };
-            let ident = syn::Ident::new(&name, Span::call_site());
-            return Ok(if package == "gotcha_core" {
-                quote! { ::#ident }
-            } else {
-                quote! { ::#ident::gotcha_core }
-            });
-        }
+    if let Some(core) = crate::utils::crate_path("gotcha_core") {
+        return Ok(core);
+    }
+    if let Some(gotcha) = crate::utils::crate_path("gotcha") {
+        return Ok(quote! { #gotcha::gotcha_core });
     }
     Err("Schematic requires a gotcha_core or gotcha dependency; use #[schematic(crate = \"path::to::gotcha_core\")] for a custom re-export")
 }
