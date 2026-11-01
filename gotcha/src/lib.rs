@@ -554,6 +554,20 @@ mod test {
         t.pass("tests/pass/openapi/*.rs");
     }
 
+    /// Fixtures that need a data-type impl, kept out of the glob so `--no-default-features`
+    /// builds without that feature still compile.
+    #[test]
+    #[cfg(all(feature = "openapi", feature = "uuid"))]
+    fn pass_uuid_fixtures() {
+        trybuild::TestCases::new().pass("tests/pass/openapi/data_types/uuid_newtype_struct.rs");
+    }
+
+    #[test]
+    #[cfg(all(feature = "openapi", feature = "rust_decimal"))]
+    fn pass_rust_decimal_fixtures() {
+        trybuild::TestCases::new().pass("tests/pass/openapi/data_types/rust_decimal.rs");
+    }
+
     #[test]
     #[cfg(feature = "openapi")]
     fn test_handler() {

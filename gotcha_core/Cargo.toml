@@ -16,6 +16,14 @@ rustdoc-args = ["--cfg", "docsrs"]
 doctest = true
 
 [features]
+# `Schematic` implementations for common third-party data types. All are on by default, so a
+# plain `gotcha_core` dependency documents them as before; a crate that never uses one can turn
+# it off with `default-features = false` and its own feature list.
+default = ["bigdecimal", "chrono", "rust_decimal", "uuid"]
+bigdecimal = ["dep:bigdecimal"]
+chrono = ["dep:chrono"]
+rust_decimal = ["dep:rust_decimal"]
+uuid = ["dep:uuid"]
 # Enables the axum-facing schema glue: `Responsible for Json<T>` and the whole
 # `ParameterProvider` family (impls for Path/Json/Query/Form/State/Extension/Request/Multipart/
 # WebSocketUpgrade). Off by default so a crate that only needs the Schematic schema layer stays
@@ -33,10 +41,10 @@ regex = { version = "1", optional = true }
 either = { version = "1", optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-bigdecimal = "0.4"
-chrono = "0.4"
-uuid = { version = "1.10" }
-rust_decimal = "1.36"
+bigdecimal = { version = "0.4", optional = true }
+chrono = { version = "0.4", optional = true }
+uuid = { version = "1.10", optional = true }
+rust_decimal = { version = "1.36", optional = true }
 
 tracing = "0.1"
 convert_case = "0.6"

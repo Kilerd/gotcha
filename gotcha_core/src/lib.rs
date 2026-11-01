@@ -17,6 +17,10 @@
 //! `Schematic` at its root. Both entry points use this same trait; libraries can
 //! implement it for their types without depending on the application framework.
 //!
+//! The `Schematic` implementations for `bigdecimal`, `chrono`, `rust_decimal`, and `uuid` are
+//! default features. Leave them enabled to keep those impls; turn default features off and list
+//! only the data types you document to avoid the dependencies.
+//!
 //! ```
 //! #[derive(gotcha_core::Schematic)]
 //! struct Record {
@@ -31,7 +35,9 @@ extern crate self as gotcha_core;
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
+#[cfg(feature = "bigdecimal")]
 use bigdecimal::BigDecimal;
+#[cfg(feature = "chrono")]
 use chrono::{DateTime, Utc};
 /// Re-export of the [`Schematic`] derive macro. Kept alongside the trait of the same
 /// name (different namespaces) so `use gotcha_core::Schematic;` brings in both.
@@ -495,6 +501,8 @@ impl Schematic for &str {
     }
 }
 
+#[cfg(feature = "uuid")]
+#[cfg_attr(docsrs, doc(cfg(feature = "uuid")))]
 impl Schematic for uuid::Uuid {
     fn name() -> &'static str {
         "uuid"
@@ -511,6 +519,8 @@ impl Schematic for uuid::Uuid {
     }
 }
 
+#[cfg(feature = "chrono")]
+#[cfg_attr(docsrs, doc(cfg(feature = "chrono")))]
 impl Schematic for chrono::NaiveDateTime {
     fn name() -> &'static str {
         "datetime"
@@ -529,6 +539,8 @@ impl Schematic for chrono::NaiveDateTime {
     }
 }
 
+#[cfg(feature = "chrono")]
+#[cfg_attr(docsrs, doc(cfg(feature = "chrono")))]
 impl Schematic for chrono::NaiveDate {
     fn name() -> &'static str {
         "date"
@@ -782,6 +794,8 @@ impl<T: Schematic, const N: usize> Schematic for [T; N] {
     }
 }
 
+#[cfg(feature = "bigdecimal")]
+#[cfg_attr(docsrs, doc(cfg(feature = "bigdecimal")))]
 impl Schematic for BigDecimal {
     fn name() -> &'static str {
         "string"
@@ -796,6 +810,8 @@ impl Schematic for BigDecimal {
     }
 }
 
+#[cfg(feature = "rust_decimal")]
+#[cfg_attr(docsrs, doc(cfg(feature = "rust_decimal")))]
 impl Schematic for rust_decimal::Decimal {
     fn name() -> &'static str {
         "decimal"
@@ -930,6 +946,8 @@ impl<K: ToString, V: Schematic> Schematic for BTreeMap<K, V> {
     }
 }
 
+#[cfg(feature = "chrono")]
+#[cfg_attr(docsrs, doc(cfg(feature = "chrono")))]
 impl Schematic for DateTime<Utc> {
     fn name() -> &'static str {
         "datetime"
@@ -948,6 +966,8 @@ impl Schematic for DateTime<Utc> {
     }
 }
 
+#[cfg(feature = "chrono")]
+#[cfg_attr(docsrs, doc(cfg(feature = "chrono")))]
 impl Schematic for DateTime<chrono::FixedOffset> {
     fn name() -> &'static str {
         "datetime"
@@ -966,6 +986,8 @@ impl Schematic for DateTime<chrono::FixedOffset> {
     }
 }
 
+#[cfg(feature = "chrono")]
+#[cfg_attr(docsrs, doc(cfg(feature = "chrono")))]
 impl Schematic for DateTime<chrono::Local> {
     fn name() -> &'static str {
         "datetime"
@@ -984,6 +1006,8 @@ impl Schematic for DateTime<chrono::Local> {
     }
 }
 
+#[cfg(feature = "chrono")]
+#[cfg_attr(docsrs, doc(cfg(feature = "chrono")))]
 impl Schematic for chrono::NaiveTime {
     fn name() -> &'static str {
         "time"
@@ -1034,6 +1058,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "chrono")]
     #[test]
     fn datetime_utc_has_date_time_format() {
         let schema = <DateTime<Utc> as Schematic>::generate_schema();
@@ -1158,6 +1183,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "chrono")]
     #[test]
     fn chrono_time_types_document_their_formats() {
         assert_eq!(

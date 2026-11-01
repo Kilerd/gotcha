@@ -1,6 +1,7 @@
 # Migration Guide
 
 - [Unreleased: duplicate operation ids are suffixed](#unreleased-duplicate-operation-ids-are-suffixed)
+- [Unreleased: data-type Schematic impls are features](#unreleased-data-type-schematic-impls-are-features)
 - [Unreleased: validation `length` keywords follow the schema type](#unreleased-validation-length-keywords-follow-the-schema-type)
 - [Unreleased: extractor rejection responses in OpenAPI](#unreleased-extractor-rejection-responses-in-openapi)
 - [Unreleased: neutral OpenAPI info defaults](#unreleased-neutral-openapi-info-defaults)
@@ -45,6 +46,30 @@ Because a suffix depends on the order of the operations, adding a route can rena
 operation in the generated document (and therefore in clients generated from it). Give operations
 an explicit `#[api(id = "…")]` when their ids must stay stable. Documents whose ids were already
 unique are unchanged.
+
+---
+
+# Unreleased: data-type Schematic impls are features
+
+**`gotcha_core`'s `Schematic` implementations for `bigdecimal`, `chrono`, `rust_decimal`, and
+`uuid` are now default features of `gotcha_core`.** A default dependency behaves exactly as
+before, and `gotcha` forwards the four features from its own default set, so applications that
+just depend on `gotcha` keep every implementation. This only affects manifests that already pass
+`default-features = false` today: in 0.4.x the only default feature was `http1`, so some
+applications do; they now also lose the data-type implementations unless they list them.
+Nothing changes for a manifest that leaves default features enabled.
+
+- `gotcha_core = { ..., default-features = false }` no longer implements `Schematic` for
+  `uuid::Uuid`, `bigdecimal::BigDecimal`, `rust_decimal::Decimal`, or the chrono types. List the
+  implementations you use, for example
+  `features = ["uuid", "chrono"]`, or leave the default features enabled.
+- `gotcha = { ..., default-features = false }` no longer enables those forwarded implementations
+  either; add `bigdecimal`, `chrono`, `rust_decimal`, or `uuid` to its feature list. `chrono`
+  remains a direct dependency for task scheduling even without the feature; only its `Schematic`
+  implementations are affected.
+
+Applications that never document these types can now leave them out with
+`default-features = false`, which drops the corresponding crates (and their dependencies).
 
 ---
 

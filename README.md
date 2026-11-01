@@ -269,6 +269,7 @@ gotcha = { version = "0.4", features = ["openapi", "prometheus", "cors", "static
 ```
 
 Available features:
+- `bigdecimal`, `chrono`, `rust_decimal`, `uuid` - `Schematic` implementations for those data types. On by default; disable them with `default-features = false` when the application never documents them.
 - `openapi` - OpenAPI document generation: `#[api]`, request/response components, and the documentation endpoints. `Schematic`, `#[derive(Schematic)]`, and `Valid`'s wire-name mapping work without it.
 - `prometheus` - Opt-in Prometheus metrics endpoint (`/metrics` by default) and `metrics` re-exports
 - `cors` - Cross-Origin Resource Sharing support
