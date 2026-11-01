@@ -1,21 +1,25 @@
-//! Per-extractor rejection configuration.
+//! Per-provider rejection configuration.
 //!
-//! Each extractor has a config type with a default error handler. Applications replace a
-//! provider's handler with [`error_handler`](JsonConfig::error_handler); the handler receives
-//! that provider's concrete rejection type and returns the status and body to send.
+//! Each extractor's rejections come from a [`RejectionProvider`], which supplies the default
+//! response. Applications replace a provider's handler with a [`RejectionConfig`] (for the built-in
+//! providers, [`JsonConfig`] and friends) and its [`error_handler`](RejectionConfig::error_handler);
+//! the handler receives that provider's concrete rejection type and returns the status and body to
+//! send.
 //!
 //! Configs reach extractors through request extensions inserted by the framework during
 //! assembly. An extractor used without that assembly (a plain Axum router, or a unit test calling
 //! `from_request`) uses the defaults.
 
+use std::any::{Any, TypeId};
+use std::marker::PhantomData;
 use std::sync::Arc;
 
 use axum::http::{Extensions, StatusCode};
 use axum::response::Response;
-use once_cell::sync::Lazy;
 use serde::Serialize;
 
 use crate::error::json_response;
+use crate::{ErrorBody, Rejected};
 
 /// A body type accepted by an extractor error handler.
 ///
@@ -41,6 +45,27 @@ pub trait ErrorBodyResponse: Serialize + Send + Sync + 'static {}
 #[cfg(not(feature = "openapi"))]
 impl<T: Serialize + Send + Sync + 'static> ErrorBodyResponse for T {}
 
+/// The source of an extractor's rejections and their default response.
+///
+/// Each built-in extractor has an uninhabited marker type implementing this, such as
+/// [`JsonProvider`]; an application configures it with [`RejectionConfig<P>`](RejectionConfig).
+/// Every item is compiled in every feature set.
+pub trait RejectionProvider: 'static {
+    /// The rejection the extractor produces, passed to the configured error handler.
+    type Rejection: 'static;
+
+    /// The statuses the default response can carry, each with the phrase that describes it in
+    /// OpenAPI. They are documented unless the application declares its own with
+    /// [`statuses`](RejectionConfig::statuses).
+    const STATUSES: &'static [(StatusCode, &'static str)];
+
+    /// The phrase for a declared status that [`STATUSES`](Self::STATUSES) does not describe.
+    const FALLBACK_PHRASE: &'static str = "request rejected";
+
+    /// The status and body sent when the application has not configured an error handler.
+    fn default_error(rejection: &Self::Rejection) -> (StatusCode, ErrorBody);
+}
+
 /// A provider's rejection configuration, accepted by
 /// [`Gotcha::extractor_config`](crate::Gotcha::extractor_config).
 pub trait ExtractorConfig: Send + Sync + 'static {
@@ -50,41 +75,10 @@ pub trait ExtractorConfig: Send + Sync + 'static {
 }
 
 struct ErrorHandler<R> {
-    render: Arc<dyn Fn(&R) -> Response + Send + Sync>,
+    render: Box<dyn Fn(&R) -> Response + Send + Sync>,
     /// The schema of the body this handler sends, stored type-erased with the handler.
     #[cfg(feature = "openapi")]
     schema: fn() -> crate::EnhancedSchema,
-}
-
-impl<R: 'static> ErrorHandler<R> {
-    fn default_handler<E: ErrorBodyResponse>(render: impl Fn(&R) -> Response + Send + Sync + 'static) -> Self {
-        Self {
-            render: Arc::new(render),
-            #[cfg(feature = "openapi")]
-            schema: schema_of::<E>(),
-        }
-    }
-
-    fn custom<E: ErrorBodyResponse>(handler: impl Fn(&R) -> (StatusCode, E) + Send + Sync + 'static) -> Self {
-        Self {
-            render: Arc::new(move |rejection| {
-                let (status, body) = handler(rejection);
-                json_response(status, body)
-            }),
-            #[cfg(feature = "openapi")]
-            schema: schema_of::<E>(),
-        }
-    }
-
-    fn render(&self, rejection: &R) -> Response {
-        (self.render)(rejection)
-    }
-
-    /// The schema of the body this handler always sends, including the default `ErrorBody`.
-    #[cfg(feature = "openapi")]
-    fn body_schema(&self) -> fn() -> crate::EnhancedSchema {
-        self.schema
-    }
 }
 
 #[cfg(feature = "openapi")]
@@ -95,245 +89,61 @@ fn schema_of<E: ErrorBodyResponse>() -> fn() -> crate::EnhancedSchema {
     build::<E>
 }
 
-fn default_error(status: StatusCode, message: impl Into<String>) -> Response {
-    json_response(status, crate::ErrorBody::new(message))
+/// Send `P`'s default error. Every provider's default response is rendered here.
+fn render_default<P: RejectionProvider>(rejection: &P::Rejection) -> Response {
+    let (status, body) = P::default_error(rejection);
+    json_response(status, body)
 }
-
-/// A default rejection status and the phrase used to describe it in OpenAPI.
-#[cfg(feature = "openapi")]
-pub(crate) type StatusDescription = (StatusCode, &'static str);
 
 /// One configured provider's rejection contract, ready for document assembly.
 #[cfg(feature = "openapi")]
 pub(crate) struct RejectionSpec {
-    pub(crate) statuses: Vec<StatusDescription>,
+    pub(crate) statuses: Vec<(StatusCode, &'static str)>,
     pub(crate) body_schema: fn() -> crate::EnhancedSchema,
 }
 
-/// Describe `status` with its default phrase, or the provider's fallback for a custom status.
-#[cfg(feature = "openapi")]
-fn describe_status(defaults: &'static [StatusDescription], status: StatusCode, fallback: &'static str) -> &'static str {
-    defaults
-        .iter()
-        .find(|(candidate, _)| *candidate == status)
-        .map(|(_, phrase)| *phrase)
-        .unwrap_or(fallback)
-}
-
-macro_rules! rejection_config {
-    ($config:ident, $field:ident, $rejection:ty, $doc:literal, |$rejection_var:ident| $render:expr, $fallback:literal, [$($status:expr => $phrase:literal),* $(,)?]) => {
-        #[doc = $doc]
-        pub struct $config {
-            handler: ErrorHandler<$rejection>,
-            /// Statuses declared by the application's handler; `None` uses this provider's defaults.
-            statuses: Option<Vec<StatusCode>>,
-        }
-
-        impl $config {
-            /// The statuses this provider rejects with when it uses its default handler.
-            #[cfg(feature = "openapi")]
-            const DEFAULT_STATUSES: &'static [StatusDescription] = &[$(($status, $phrase)),*];
-
-            /// Replace the response used for this extractor's rejections.
-            ///
-            /// The handler receives a reference to the extractor's concrete rejection type, so
-            /// the extractor can return the original rejection alongside the rendered response
-            /// (see [`Rejected`](crate::Rejected)), and returns the status and body to send.
-            /// With the `openapi` feature, operations that document this provider's rejections
-            /// reference the body type as a component.
-            pub fn error_handler<E>(self, handler: impl Fn(&$rejection) -> (StatusCode, E) + Send + Sync + 'static) -> Self
-            where
-                E: ErrorBodyResponse,
-            {
-                Self {
-                    handler: ErrorHandler::custom(handler),
-                    statuses: self.statuses,
-                }
-            }
-
-            /// Declare the statuses the configured error handler can return.
-            ///
-            /// Document generation adds one rejection response per status, with the body type
-            /// passed to [`error_handler`](Self::error_handler). Without this call, the
-            /// provider's default statuses are documented. This only affects documentation.
-            pub fn statuses<I>(mut self, statuses: I) -> Self
-            where
-                I: IntoIterator<Item = StatusCode>,
-            {
-                self.statuses = Some(statuses.into_iter().collect());
-                self
-            }
-
-            pub(crate) fn render(&self, rejection: &$rejection) -> Response {
-                self.handler.render(rejection)
-            }
-
-            #[cfg(feature = "openapi")]
-            pub(crate) fn rejection_spec(&self) -> RejectionSpec {
-                RejectionSpec {
-                    statuses: match &self.statuses {
-                        Some(statuses) => statuses
-                            .iter()
-                            .map(|status| (*status, describe_status(Self::DEFAULT_STATUSES, *status, $fallback)))
-                            .collect(),
-                        None => Self::DEFAULT_STATUSES.to_vec(),
-                    },
-                    body_schema: self.handler.body_schema(),
-                }
-            }
-        }
-
-        impl Default for $config {
-            fn default() -> Self {
-                Self {
-                    handler: ErrorHandler::default_handler::<crate::ErrorBody>(|$rejection_var: &$rejection| $render),
-                    statuses: None,
-                }
-            }
-        }
-
-        impl ExtractorConfig for $config {
-            fn apply(self, configs: &mut ExtractorConfigs) {
-                configs.$field = self;
-            }
-        }
-    };
-}
-
-rejection_config!(
-    JsonConfig,
-    json,
-    axum::extract::rejection::JsonRejection,
-    "Configuration for [`Json`](crate::Json) rejections.",
-    |rejection| default_error(rejection.status(), rejection.body_text()),
-    "invalid JSON body",
-    [
-        StatusCode::BAD_REQUEST => "invalid JSON body",
-        StatusCode::PAYLOAD_TOO_LARGE => "JSON body too large",
-        StatusCode::UNSUPPORTED_MEDIA_TYPE => "missing or invalid JSON content type",
-        StatusCode::UNPROCESSABLE_ENTITY => "JSON body did not match the expected type",
-    ]
-);
-
-rejection_config!(
-    FormConfig,
-    form,
-    axum::extract::rejection::FormRejection,
-    "Configuration for [`Form`](crate::Form) rejections.",
-    |rejection| default_error(rejection.status(), rejection.body_text()),
-    "invalid form body",
-    [
-        StatusCode::BAD_REQUEST => "invalid form body",
-        StatusCode::PAYLOAD_TOO_LARGE => "form body too large",
-        StatusCode::UNSUPPORTED_MEDIA_TYPE => "missing or invalid form content type",
-        StatusCode::UNPROCESSABLE_ENTITY => "form body did not match the expected type",
-    ]
-);
-
-rejection_config!(
-    QueryConfig,
-    query,
-    axum::extract::rejection::QueryRejection,
-    "Configuration for [`Query`](crate::Query) rejections.",
-    |rejection| default_error(rejection.status(), rejection.body_text()),
-    "invalid query string",
-    [StatusCode::BAD_REQUEST => "invalid query string"]
-);
-
-rejection_config!(
-    PathConfig,
-    path,
-    axum::extract::rejection::PathRejection,
-    "Configuration for [`Path`](crate::Path) rejections.",
-    |rejection| default_error(rejection.status(), rejection.body_text()),
-    "invalid path parameters",
-    [StatusCode::BAD_REQUEST => "invalid path parameters"]
-);
-
-rejection_config!(
-    MultipartConfig,
-    multipart,
-    axum::extract::multipart::MultipartRejection,
-    "Configuration for [`Multipart`](crate::Multipart) rejections.",
-    |rejection| default_error(rejection.status(), rejection.body_text()),
-    "invalid multipart body",
-    [StatusCode::BAD_REQUEST => "invalid multipart boundary"]
-);
-
-rejection_config!(
-    TypedHeaderConfig,
-    typed_header,
-    axum_extra::typed_header::TypedHeaderRejection,
-    "Configuration for [`TypedHeader`](crate::TypedHeader) rejections.",
-    |rejection| default_error(StatusCode::BAD_REQUEST, rejection.to_string()),
-    "missing or invalid typed header",
-    [StatusCode::BAD_REQUEST => "missing or invalid typed header"]
-);
-
-rejection_config!(
-    HeaderConfig,
-    header,
-    crate::params::ParamRejection,
-    "Configuration for [`Header`](crate::Header) rejections.",
-    |rejection| default_error(StatusCode::BAD_REQUEST, rejection.to_string()),
-    "missing or invalid header parameter",
-    [StatusCode::BAD_REQUEST => "missing or invalid header parameter"]
-);
-
-rejection_config!(
-    CookieConfig,
-    cookie,
-    crate::params::ParamRejection,
-    "Configuration for [`Cookie`](crate::Cookie) rejections.",
-    |rejection| default_error(StatusCode::BAD_REQUEST, rejection.to_string()),
-    "missing or invalid cookie parameter",
-    [StatusCode::BAD_REQUEST => "missing or invalid cookie parameter"]
-);
-
-/// Configuration for [`Valid`](crate::Valid) validation failures.
+/// The rejection configuration of provider `P`.
 ///
-/// The default sends `422 Unprocessable Entity` with an [`ErrorBody`](crate::ErrorBody) whose
-/// `fields` map holds the flattened validation errors (see
-/// [`flatten_errors`](crate::validation::flatten_errors)).
-///
-/// A malformed JSON body inside `Valid<Json<T>>` is a [`Json`](crate::Json) rejection and uses
-/// [`JsonConfig`]; only a body that deserialized and then failed validation reaches this handler.
-/// The errors are already keyed by serde wire names, so a handler can report them without
-/// translating Rust identifiers.
-pub struct ValidConfig {
-    handler: ErrorHandler<validator::ValidationErrors>,
+/// The default configuration changes nothing: `P`'s [`default_error`](RejectionProvider::default_error)
+/// renders its rejections and its [`STATUSES`](RejectionProvider::STATUSES) are documented.
+pub struct RejectionConfig<P: RejectionProvider> {
+    /// The application's handler; `None` sends this provider's default error.
+    handler: Option<ErrorHandler<P::Rejection>>,
     /// Statuses declared by the application's handler; `None` uses this provider's defaults.
     statuses: Option<Vec<StatusCode>>,
+    provider: PhantomData<fn() -> P>,
 }
 
-impl ValidConfig {
-    /// The statuses validation rejects with when it uses its default handler.
-    #[cfg(feature = "openapi")]
-    const DEFAULT_STATUSES: &'static [StatusDescription] = &[(StatusCode::UNPROCESSABLE_ENTITY, "request body failed validation")];
-
-    /// Replace the response used when validation fails.
+impl<P: RejectionProvider> RejectionConfig<P> {
+    /// Replace the response used for this extractor's rejections.
     ///
-    /// The handler receives a reference to the structured [`validator::ValidationErrors`] and
-    /// returns the status and body to send. Its keys are the serde wire names, already remapped
-    /// through [`Schematic::wire_fields`](crate::Schematic::wire_fields) by [`Valid`](crate::Valid).
-    /// Use [`flatten_errors`](crate::validation::flatten_errors) to render the same field map the
-    /// default body uses. With the `openapi` feature, operations that document validation failures
+    /// The handler receives a reference to the extractor's concrete rejection type, so
+    /// the extractor can return the original rejection alongside the rendered response
+    /// (see [`Rejected`](crate::Rejected)), and returns the status and body to send.
+    /// With the `openapi` feature, operations that document this provider's rejections
     /// reference the body type as a component.
-    pub fn error_handler<E>(self, handler: impl Fn(&validator::ValidationErrors) -> (StatusCode, E) + Send + Sync + 'static) -> Self
+    pub fn error_handler<E>(self, handler: impl Fn(&P::Rejection) -> (StatusCode, E) + Send + Sync + 'static) -> Self
     where
         E: ErrorBodyResponse,
     {
         Self {
-            handler: ErrorHandler::custom(handler),
-            statuses: self.statuses,
+            handler: Some(ErrorHandler {
+                render: Box::new(move |rejection| {
+                    let (status, body) = handler(rejection);
+                    json_response(status, body)
+                }),
+                #[cfg(feature = "openapi")]
+                schema: schema_of::<E>(),
+            }),
+            ..self
         }
     }
 
     /// Declare the statuses the configured error handler can return.
     ///
-    /// Document generation adds one rejection response per status, with the body type passed to
-    /// [`error_handler`](Self::error_handler). Without this call, `422` is documented. This only
-    /// affects documentation; the inner extractor's own rejections are separate.
+    /// Document generation adds one rejection response per status, with the body type
+    /// passed to [`error_handler`](Self::error_handler). Without this call, the
+    /// provider's default statuses are documented. This only affects documentation.
     pub fn statuses<I>(mut self, statuses: I) -> Self
     where
         I: IntoIterator<Item = StatusCode>,
@@ -342,63 +152,91 @@ impl ValidConfig {
         self
     }
 
-    pub(crate) fn render(&self, rejection: &validator::ValidationErrors) -> Response {
-        self.handler.render(rejection)
+    /// Render `rejection` with the configured error handler, or the provider's default.
+    pub fn render(&self, rejection: &P::Rejection) -> Response {
+        match &self.handler {
+            Some(handler) => (handler.render)(rejection),
+            None => render_default::<P>(rejection),
+        }
     }
 
     #[cfg(feature = "openapi")]
     pub(crate) fn rejection_spec(&self) -> RejectionSpec {
         RejectionSpec {
             statuses: match &self.statuses {
-                Some(statuses) => statuses
-                    .iter()
-                    .map(|status| (*status, describe_status(Self::DEFAULT_STATUSES, *status, "request body failed validation")))
-                    .collect(),
-                None => Self::DEFAULT_STATUSES.to_vec(),
+                Some(statuses) => statuses.iter().map(|status| (*status, describe_status::<P>(*status))).collect(),
+                None => P::STATUSES.to_vec(),
             },
-            body_schema: self.handler.body_schema(),
+            body_schema: self.handler.as_ref().map_or(schema_of::<ErrorBody>(), |handler| handler.schema),
         }
     }
 }
 
-impl Default for ValidConfig {
+/// Describe `status` with `P`'s default phrase, or its fallback for a custom status.
+#[cfg(feature = "openapi")]
+fn describe_status<P: RejectionProvider>(status: StatusCode) -> &'static str {
+    P::STATUSES
+        .iter()
+        .find(|(candidate, _)| *candidate == status)
+        .map_or(P::FALLBACK_PHRASE, |(_, phrase)| *phrase)
+}
+
+impl<P: RejectionProvider> Default for RejectionConfig<P> {
     fn default() -> Self {
         Self {
-            handler: ErrorHandler::default_handler::<crate::ErrorBody>(crate::validation::validation_error_response),
+            handler: None,
             statuses: None,
+            provider: PhantomData,
         }
     }
 }
 
-impl ExtractorConfig for ValidConfig {
+impl<P: RejectionProvider> ExtractorConfig for RejectionConfig<P> {
     fn apply(self, configs: &mut ExtractorConfigs) {
-        configs.valid = self;
+        let id = TypeId::of::<P>();
+        let config: Box<dyn Any + Send + Sync> = Box::new(self);
+        match configs.overrides.iter_mut().find(|(each, _)| *each == id) {
+            Some((_, existing)) => *existing = config,
+            None => configs.overrides.push((id, config)),
+        }
     }
 }
 
-/// The rejection configurations in effect for an application, one per extractor.
+/// The rejection configurations an application set, one per provider.
 ///
-/// The defaults are the responses Gotcha uses when an application has not overridden them.
-/// Extractors read this from request extensions; when it is absent they use
-/// [`ExtractorConfigs::default`].
+/// Only overrides are stored: a provider without one renders and documents its defaults.
+/// Extractors read this from request extensions; when it is absent they use the defaults.
 #[derive(Default)]
 pub struct ExtractorConfigs {
-    pub(crate) json: JsonConfig,
-    pub(crate) form: FormConfig,
-    pub(crate) query: QueryConfig,
-    pub(crate) path: PathConfig,
-    pub(crate) multipart: MultipartConfig,
-    pub(crate) typed_header: TypedHeaderConfig,
-    pub(crate) header: HeaderConfig,
-    pub(crate) cookie: CookieConfig,
-    pub(crate) valid: ValidConfig,
+    /// One `RejectionConfig<P>` per configured provider, keyed by `TypeId::of::<P>()`.
+    overrides: Vec<(TypeId, Box<dyn Any + Send + Sync>)>,
 }
+
+/// The configurations of a request that carries none: every provider uses its defaults.
+static NO_OVERRIDES: ExtractorConfigs = ExtractorConfigs { overrides: Vec::new() };
 
 impl ExtractorConfigs {
     /// Replace the configuration belonging to `config`'s provider.
     pub fn set<C: ExtractorConfig>(mut self, config: C) -> Self {
         config.apply(&mut self);
         self
+    }
+
+    /// The configuration set for provider `P`, or `None` when `P` uses its defaults.
+    pub fn get<P: RejectionProvider>(&self) -> Option<&RejectionConfig<P>> {
+        let id = TypeId::of::<P>();
+        self.overrides
+            .iter()
+            .find(|(each, _)| *each == id)
+            .and_then(|(_, config)| config.downcast_ref())
+    }
+
+    /// Render `rejection` with `P`'s configured error handler, or `P`'s default.
+    pub fn render<P: RejectionProvider>(&self, rejection: &P::Rejection) -> Response {
+        match self.get::<P>() {
+            Some(config) => config.render(rejection),
+            None => render_default::<P>(rejection),
+        }
     }
 
     /// Insert these configurations into every request's extensions.
@@ -415,59 +253,280 @@ impl ExtractorConfigs {
     #[cfg(feature = "openapi")]
     pub(crate) fn rejection_spec(&self, kind: crate::ExtractorKind) -> RejectionSpec {
         match kind {
-            crate::ExtractorKind::Json => self.json.rejection_spec(),
-            crate::ExtractorKind::Form => self.form.rejection_spec(),
-            crate::ExtractorKind::Query => self.query.rejection_spec(),
-            crate::ExtractorKind::Path => self.path.rejection_spec(),
-            crate::ExtractorKind::Multipart => self.multipart.rejection_spec(),
-            crate::ExtractorKind::TypedHeader => self.typed_header.rejection_spec(),
-            crate::ExtractorKind::Header => self.header.rejection_spec(),
-            crate::ExtractorKind::Cookie => self.cookie.rejection_spec(),
-            crate::ExtractorKind::Valid => self.valid.rejection_spec(),
+            crate::ExtractorKind::Json => self.provider_spec::<JsonProvider>(),
+            crate::ExtractorKind::Form => self.provider_spec::<FormProvider>(),
+            crate::ExtractorKind::Query => self.provider_spec::<QueryProvider>(),
+            crate::ExtractorKind::Path => self.provider_spec::<PathProvider>(),
+            crate::ExtractorKind::Multipart => self.provider_spec::<MultipartProvider>(),
+            crate::ExtractorKind::TypedHeader => self.provider_spec::<TypedHeaderProvider>(),
+            crate::ExtractorKind::Header => self.provider_spec::<HeaderProvider>(),
+            crate::ExtractorKind::Cookie => self.provider_spec::<CookieProvider>(),
+            crate::ExtractorKind::Valid => self.provider_spec::<ValidProvider>(),
             // `ExtractorKind` is non-exhaustive: a provider added in a later release documents no
             // rejection until it is wired here. An empty status list adds no response.
             _ => RejectionSpec {
                 statuses: Vec::new(),
-                body_schema: schema_of::<crate::ErrorBody>(),
+                body_schema: schema_of::<ErrorBody>(),
             },
+        }
+    }
+
+    #[cfg(feature = "openapi")]
+    fn provider_spec<P: RejectionProvider>(&self) -> RejectionSpec {
+        match self.get::<P>() {
+            Some(config) => config.rejection_spec(),
+            None => RejectionConfig::<P>::default().rejection_spec(),
         }
     }
 }
 
-/// The configurations for the current request, or the defaults when the application did not
-/// insert them (a plain Axum router or a direct extractor call).
+/// A request's extractor configurations, held by a body extractor while another extractor
+/// consumes the request.
 ///
-/// Parts-based extractors call this only from their error path, so a successful extraction does
-/// not touch the shared [`Arc`]'s refcount.
-pub(crate) fn configs(extensions: &Extensions) -> Arc<ExtractorConfigs> {
-    extensions.get::<Arc<ExtractorConfigs>>().cloned().unwrap_or_else(|| Arc::clone(defaults()))
-}
-
-/// The configurations taken out of a request that is about to be consumed, or the defaults.
+/// [`take`](Self::take) removes them from the request: use it when the request goes to an extractor
+/// that never reads them, such as Axum's own `Json`. Nothing can then observe that the extension is
+/// gone, and a successful extraction costs one extension-map removal with no refcount bump.
 ///
-/// A body extractor delegates to Axum's extractor, which consumes the request and its extensions.
-/// Removing the extension first keeps the [`Arc`] alive without a refcount bump on the success
-/// path; only the delegated extractor sees the request, and it is dropped there, so nothing can
-/// observe that the extension is gone. The cost is one extension-map removal per body extraction.
-pub(crate) struct TakenConfigs(Option<Arc<ExtractorConfigs>>);
+/// [`share`](Self::share) keeps them in the request: use it when the request goes to another Gotcha
+/// extractor (or any extractor that renders through these configurations) and the caller may still
+/// reject afterwards. Taking them there would make the inner extractor fall back to its defaults.
+/// It costs one lookup and one refcount increment per extraction.
+///
+/// When neither is needed, render a rejection with [`reject`] before the request is consumed.
+pub struct RequestConfigs(Option<Arc<ExtractorConfigs>>);
 
-impl TakenConfigs {
-    pub(crate) fn take(extensions: &mut Extensions) -> Self {
+impl RequestConfigs {
+    /// Take the configurations out of a request's extensions before the request is consumed.
+    pub fn take(extensions: &mut Extensions) -> Self {
         Self(extensions.remove::<Arc<ExtractorConfigs>>())
     }
-}
 
-impl std::ops::Deref for TakenConfigs {
-    type Target = ExtractorConfigs;
+    /// Keep a handle to the configurations and leave them in the request's extensions.
+    pub fn share(extensions: &Extensions) -> Self {
+        Self(extensions.get::<Arc<ExtractorConfigs>>().cloned())
+    }
 
-    fn deref(&self) -> &ExtractorConfigs {
-        self.0.as_deref().unwrap_or_else(|| &**defaults())
+    /// Render `rejection` with `P`'s configured error handler, or `P`'s default.
+    pub fn render<P: RejectionProvider>(&self, rejection: &P::Rejection) -> Response {
+        self.configs().render::<P>(rejection)
+    }
+
+    /// Render `rejection` with `P`'s configuration and keep it next to the response.
+    pub fn reject<P: RejectionProvider>(&self, rejection: P::Rejection) -> Rejected<P::Rejection> {
+        reject_with::<P>(self.configs(), rejection)
+    }
+
+    /// The configurations in effect: the defaults when the request carried none.
+    fn configs(&self) -> &ExtractorConfigs {
+        self.0.as_deref().unwrap_or(&NO_OVERRIDES)
     }
 }
 
-/// The shared default configuration, used when the application did not insert its own.
-fn defaults() -> &'static Arc<ExtractorConfigs> {
-    static DEFAULT: Lazy<Arc<ExtractorConfigs>> = Lazy::new(|| Arc::new(ExtractorConfigs::default()));
+/// Render a rejection with `P`'s configuration from the request's extensions, which are the
+/// defaults when the request carries none.
+///
+/// For extractors that only borrow the request parts, and for body extractors that reject before
+/// consuming the request. Call it from the error path only, so a successful extraction does no
+/// lookup.
+pub fn reject<P: RejectionProvider>(extensions: &Extensions, rejection: P::Rejection) -> Rejected<P::Rejection> {
+    let configs = extensions.get::<Arc<ExtractorConfigs>>().map_or(&NO_OVERRIDES, |configs| &**configs);
+    reject_with::<P>(configs, rejection)
+}
 
-    &DEFAULT
+fn reject_with<P: RejectionProvider>(configs: &ExtractorConfigs, rejection: P::Rejection) -> Rejected<P::Rejection> {
+    let response = configs.render::<P>(&rejection);
+    Rejected::new(rejection, response)
+}
+
+/// Define a built-in provider's marker type and its configuration alias.
+macro_rules! builtin_provider {
+    (
+        $(#[$provider_doc:meta])* $provider:ident,
+        $(#[$config_doc:meta])* $config:ident,
+        $rejection:ty,
+        |$rejection_var:ident| $default:expr,
+        $fallback:literal,
+        [$($status:expr => $phrase:literal),* $(,)?]
+    ) => {
+        $(#[$provider_doc])*
+        pub enum $provider {}
+
+        impl RejectionProvider for $provider {
+            type Rejection = $rejection;
+            const STATUSES: &'static [(StatusCode, &'static str)] = &[$(($status, $phrase)),*];
+            const FALLBACK_PHRASE: &'static str = $fallback;
+
+            fn default_error($rejection_var: &$rejection) -> (StatusCode, ErrorBody) {
+                $default
+            }
+        }
+
+        $(#[$config_doc])*
+        pub type $config = RejectionConfig<$provider>;
+    };
+}
+
+builtin_provider!(
+    /// The [`Json`](crate::Json) rejection provider.
+    JsonProvider,
+    /// Configuration for [`Json`](crate::Json) rejections.
+    JsonConfig,
+    axum::extract::rejection::JsonRejection,
+    |rejection| (rejection.status(), ErrorBody::new(rejection.body_text())),
+    "invalid JSON body",
+    [
+        StatusCode::BAD_REQUEST => "invalid JSON body",
+        StatusCode::PAYLOAD_TOO_LARGE => "JSON body too large",
+        StatusCode::UNSUPPORTED_MEDIA_TYPE => "missing or invalid JSON content type",
+        StatusCode::UNPROCESSABLE_ENTITY => "JSON body did not match the expected type",
+    ]
+);
+
+builtin_provider!(
+    /// The [`Form`](crate::Form) rejection provider.
+    FormProvider,
+    /// Configuration for [`Form`](crate::Form) rejections.
+    FormConfig,
+    axum::extract::rejection::FormRejection,
+    |rejection| (rejection.status(), ErrorBody::new(rejection.body_text())),
+    "invalid form body",
+    [
+        StatusCode::BAD_REQUEST => "invalid form body",
+        StatusCode::PAYLOAD_TOO_LARGE => "form body too large",
+        StatusCode::UNSUPPORTED_MEDIA_TYPE => "missing or invalid form content type",
+        StatusCode::UNPROCESSABLE_ENTITY => "form body did not match the expected type",
+    ]
+);
+
+builtin_provider!(
+    /// The [`Query`](crate::Query) rejection provider.
+    QueryProvider,
+    /// Configuration for [`Query`](crate::Query) rejections.
+    QueryConfig,
+    axum::extract::rejection::QueryRejection,
+    |rejection| (rejection.status(), ErrorBody::new(rejection.body_text())),
+    "invalid query string",
+    [StatusCode::BAD_REQUEST => "invalid query string"]
+);
+
+builtin_provider!(
+    /// The [`Path`](crate::Path) rejection provider.
+    PathProvider,
+    /// Configuration for [`Path`](crate::Path) rejections.
+    PathConfig,
+    axum::extract::rejection::PathRejection,
+    |rejection| (rejection.status(), ErrorBody::new(rejection.body_text())),
+    "invalid path parameters",
+    [StatusCode::BAD_REQUEST => "invalid path parameters"]
+);
+
+builtin_provider!(
+    /// The [`Multipart`](crate::Multipart) rejection provider.
+    MultipartProvider,
+    /// Configuration for [`Multipart`](crate::Multipart) rejections.
+    MultipartConfig,
+    axum::extract::multipart::MultipartRejection,
+    |rejection| (rejection.status(), ErrorBody::new(rejection.body_text())),
+    "invalid multipart body",
+    [StatusCode::BAD_REQUEST => "invalid multipart boundary"]
+);
+
+builtin_provider!(
+    /// The [`TypedHeader`](crate::TypedHeader) rejection provider.
+    TypedHeaderProvider,
+    /// Configuration for [`TypedHeader`](crate::TypedHeader) rejections.
+    TypedHeaderConfig,
+    axum_extra::typed_header::TypedHeaderRejection,
+    |rejection| (StatusCode::BAD_REQUEST, ErrorBody::new(rejection.to_string())),
+    "missing or invalid typed header",
+    [StatusCode::BAD_REQUEST => "missing or invalid typed header"]
+);
+
+builtin_provider!(
+    /// The [`Header`](crate::Header) rejection provider.
+    HeaderProvider,
+    /// Configuration for [`Header`](crate::Header) rejections.
+    HeaderConfig,
+    crate::params::ParamRejection,
+    |rejection| (StatusCode::BAD_REQUEST, ErrorBody::new(rejection.to_string())),
+    "missing or invalid header parameter",
+    [StatusCode::BAD_REQUEST => "missing or invalid header parameter"]
+);
+
+builtin_provider!(
+    /// The [`Cookie`](crate::Cookie) rejection provider.
+    CookieProvider,
+    /// Configuration for [`Cookie`](crate::Cookie) rejections.
+    CookieConfig,
+    crate::params::ParamRejection,
+    |rejection| (StatusCode::BAD_REQUEST, ErrorBody::new(rejection.to_string())),
+    "missing or invalid cookie parameter",
+    [StatusCode::BAD_REQUEST => "missing or invalid cookie parameter"]
+);
+
+builtin_provider!(
+    /// The [`Valid`](crate::Valid) validation failure provider.
+    ValidProvider,
+    /// Configuration for [`Valid`](crate::Valid) validation failures.
+    ///
+    /// The default sends `422 Unprocessable Entity` with an [`ErrorBody`](crate::ErrorBody) whose
+    /// `fields` map holds the flattened validation errors (see
+    /// [`flatten_errors`](crate::validation::flatten_errors)).
+    ///
+    /// A malformed JSON body inside `Valid<Json<T>>` is a [`Json`](crate::Json) rejection and uses
+    /// [`JsonConfig`]; only a body that deserialized and then failed validation reaches this handler.
+    ///
+    /// The [`error_handler`](RejectionConfig::error_handler) receives the structured
+    /// [`validator::ValidationErrors`]. Its keys are the serde wire names, already remapped through
+    /// [`Schematic::wire_fields`](crate::Schematic::wire_fields) by [`Valid`](crate::Valid), so a
+    /// handler can report them without translating Rust identifiers. Use
+    /// [`flatten_errors`](crate::validation::flatten_errors) to render the same field map the
+    /// default body uses. Without [`statuses`](RejectionConfig::statuses), `422` is documented;
+    /// the inner extractor's own rejections are separate.
+    ValidConfig,
+    validator::ValidationErrors,
+    |errors| (StatusCode::UNPROCESSABLE_ENTITY, ErrorBody::with_fields("validation failed", crate::validation::flatten_errors(errors))),
+    "request body failed validation",
+    [StatusCode::UNPROCESSABLE_ENTITY => "request body failed validation"]
+);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::params::ParamRejection;
+
+    fn missing() -> ParamRejection {
+        ParamRejection::Missing {
+            kind: "header",
+            name: "x-request-id",
+        }
+    }
+
+    #[test]
+    fn share_leaves_the_configurations_in_the_request_and_take_removes_them() {
+        let mut extensions = Extensions::new();
+        let configs = ExtractorConfigs::default().set(HeaderConfig::default().error_handler(|_| (StatusCode::IM_A_TEAPOT, ErrorBody::new("teapot"))));
+        extensions.insert(Arc::new(configs));
+
+        let shared = RequestConfigs::share(&extensions);
+        assert!(extensions.get::<Arc<ExtractorConfigs>>().is_some(), "an inner extractor still finds them");
+        assert_eq!(shared.render::<HeaderProvider>(&missing()).status(), StatusCode::IM_A_TEAPOT);
+        assert_eq!(reject::<HeaderProvider>(&extensions, missing()).response().status(), StatusCode::IM_A_TEAPOT);
+
+        let taken = RequestConfigs::take(&mut extensions);
+        assert!(extensions.get::<Arc<ExtractorConfigs>>().is_none());
+        assert_eq!(taken.reject::<HeaderProvider>(missing()).response().status(), StatusCode::IM_A_TEAPOT);
+        // Only `Header` is configured.
+        assert_eq!(taken.render::<CookieProvider>(&missing()).status(), StatusCode::BAD_REQUEST);
+
+        // A request without configurations uses the provider's default.
+        assert_eq!(
+            RequestConfigs::share(&extensions).render::<HeaderProvider>(&missing()).status(),
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            RequestConfigs::take(&mut extensions).reject::<HeaderProvider>(missing()).response().status(),
+            StatusCode::BAD_REQUEST
+        );
+    }
 }

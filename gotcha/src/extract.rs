@@ -29,7 +29,6 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 
 use crate::error::HttpError;
-use crate::extract::config::{configs, TakenConfigs};
 
 /// A rejection that keeps the original Axum rejection next to its rendered response.
 ///
@@ -99,8 +98,9 @@ impl<R> IntoResponse for Rejected<R> {
 }
 
 pub use config::{
-    CookieConfig, ErrorBodyResponse, ExtractorConfig, ExtractorConfigs, FormConfig, HeaderConfig, JsonConfig, MultipartConfig, PathConfig, QueryConfig,
-    TypedHeaderConfig, ValidConfig,
+    reject, CookieConfig, CookieProvider, ErrorBodyResponse, ExtractorConfig, ExtractorConfigs, FormConfig, FormProvider, HeaderConfig, HeaderProvider,
+    JsonConfig, JsonProvider, MultipartConfig, MultipartProvider, PathConfig, PathProvider, QueryConfig, QueryProvider, RejectionConfig, RejectionProvider,
+    RequestConfigs, TypedHeaderConfig, TypedHeaderProvider, ValidConfig, ValidProvider,
 };
 
 /// JSON extractor and response.
@@ -316,14 +316,11 @@ where
     type Rejection = Rejected<axum::extract::rejection::JsonRejection>;
 
     async fn from_request(mut req: Request, state: &S) -> Result<Self, Self::Rejection> {
-        let configs = TakenConfigs::take(req.extensions_mut());
+        let configs = RequestConfigs::take(req.extensions_mut());
         <axum::Json<T> as FromRequest<S>>::from_request(req, state)
             .await
             .map(|axum::Json(value)| Json(value))
-            .map_err(|rejection| {
-                let response = configs.json.render(&rejection);
-                Rejected::new(rejection, response)
-            })
+            .map_err(|rejection| configs.reject::<JsonProvider>(rejection))
     }
 }
 
@@ -335,14 +332,11 @@ where
     type Rejection = Rejected<axum::extract::rejection::JsonRejection>;
 
     async fn from_request(mut req: Request, state: &S) -> Result<Option<Self>, Self::Rejection> {
-        let configs = TakenConfigs::take(req.extensions_mut());
+        let configs = RequestConfigs::take(req.extensions_mut());
         <axum::Json<T> as OptionalFromRequest<S>>::from_request(req, state)
             .await
             .map(|value| value.map(|axum::Json(value)| Json(value)))
-            .map_err(|rejection| {
-                let response = configs.json.render(&rejection);
-                Rejected::new(rejection, response)
-            })
+            .map_err(|rejection| configs.reject::<JsonProvider>(rejection))
     }
 }
 
@@ -354,14 +348,11 @@ where
     type Rejection = Rejected<axum::extract::rejection::FormRejection>;
 
     async fn from_request(mut req: Request, state: &S) -> Result<Self, Self::Rejection> {
-        let configs = TakenConfigs::take(req.extensions_mut());
+        let configs = RequestConfigs::take(req.extensions_mut());
         <axum::extract::Form<T> as FromRequest<S>>::from_request(req, state)
             .await
             .map(|axum::extract::Form(value)| Form(value))
-            .map_err(|rejection| {
-                let response = configs.form.render(&rejection);
-                Rejected::new(rejection, response)
-            })
+            .map_err(|rejection| configs.reject::<FormProvider>(rejection))
     }
 }
 
@@ -372,14 +363,11 @@ where
     type Rejection = Rejected<axum::extract::multipart::MultipartRejection>;
 
     async fn from_request(mut req: Request, state: &S) -> Result<Self, Self::Rejection> {
-        let configs = TakenConfigs::take(req.extensions_mut());
+        let configs = RequestConfigs::take(req.extensions_mut());
         <axum::extract::Multipart as FromRequest<S>>::from_request(req, state)
             .await
             .map(Multipart)
-            .map_err(|rejection| {
-                let response = configs.multipart.render(&rejection);
-                Rejected::new(rejection, response)
-            })
+            .map_err(|rejection| configs.reject::<MultipartProvider>(rejection))
     }
 }
 
@@ -390,14 +378,11 @@ where
     type Rejection = Rejected<axum::extract::multipart::MultipartRejection>;
 
     async fn from_request(mut req: Request, state: &S) -> Result<Option<Self>, Self::Rejection> {
-        let configs = TakenConfigs::take(req.extensions_mut());
+        let configs = RequestConfigs::take(req.extensions_mut());
         <axum::extract::Multipart as OptionalFromRequest<S>>::from_request(req, state)
             .await
             .map(|value| value.map(Multipart))
-            .map_err(|rejection| {
-                let response = configs.multipart.render(&rejection);
-                Rejected::new(rejection, response)
-            })
+            .map_err(|rejection| configs.reject::<MultipartProvider>(rejection))
     }
 }
 
@@ -412,10 +397,7 @@ where
         <axum::extract::Path<T> as FromRequestParts<S>>::from_request_parts(parts, state)
             .await
             .map(|axum::extract::Path(value)| Path(value))
-            .map_err(|rejection| {
-                let response = configs(&parts.extensions).path.render(&rejection);
-                Rejected::new(rejection, response)
-            })
+            .map_err(|rejection| reject::<PathProvider>(&parts.extensions, rejection))
     }
 }
 
@@ -430,10 +412,7 @@ where
         <axum::extract::Path<T> as OptionalFromRequestParts<S>>::from_request_parts(parts, state)
             .await
             .map(|value| value.map(|axum::extract::Path(value)| Path(value)))
-            .map_err(|rejection| {
-                let response = configs(&parts.extensions).path.render(&rejection);
-                Rejected::new(rejection, response)
-            })
+            .map_err(|rejection| reject::<PathProvider>(&parts.extensions, rejection))
     }
 }
 
@@ -448,10 +427,7 @@ where
         <axum::extract::Query<T> as FromRequestParts<S>>::from_request_parts(parts, state)
             .await
             .map(|axum::extract::Query(value)| Query(value))
-            .map_err(|rejection| {
-                let response = configs(&parts.extensions).query.render(&rejection);
-                Rejected::new(rejection, response)
-            })
+            .map_err(|rejection| reject::<QueryProvider>(&parts.extensions, rejection))
     }
 }
 
@@ -466,10 +442,7 @@ where
         <axum_extra::TypedHeader<T> as FromRequestParts<S>>::from_request_parts(parts, state)
             .await
             .map(|axum_extra::TypedHeader(value)| TypedHeader(value))
-            .map_err(|rejection| {
-                let response = configs(&parts.extensions).typed_header.render(&rejection);
-                Rejected::new(rejection, response)
-            })
+            .map_err(|rejection| reject::<TypedHeaderProvider>(&parts.extensions, rejection))
     }
 }
 
@@ -484,10 +457,7 @@ where
         <axum_extra::TypedHeader<T> as OptionalFromRequestParts<S>>::from_request_parts(parts, state)
             .await
             .map(|value| value.map(|axum_extra::TypedHeader(value)| TypedHeader(value)))
-            .map_err(|rejection| {
-                let response = configs(&parts.extensions).typed_header.render(&rejection);
-                Rejected::new(rejection, response)
-            })
+            .map_err(|rejection| reject::<TypedHeaderProvider>(&parts.extensions, rejection))
     }
 }
 

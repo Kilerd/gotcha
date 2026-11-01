@@ -69,8 +69,7 @@ use std::collections::{BTreeMap, HashMap};
 
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{FromRequest, Request};
-use axum::http::StatusCode;
-use axum::response::{IntoResponse, Response};
+use axum::response::IntoResponse;
 use serde::de::DeserializeOwned;
 use validator::{Validate, ValidationError, ValidationErrors, ValidationErrorsKind};
 
@@ -346,13 +345,6 @@ impl std::fmt::Display for ValidRejection {
     }
 }
 
-/// The default `Valid` rejection: send the flattened errors inside an [`ErrorBody`](crate::ErrorBody)
-/// as `422 Unprocessable Entity`.
-pub(crate) fn validation_error_response(errors: &ValidationErrors) -> Response {
-    let body = crate::ErrorBody::with_fields("validation failed", flatten_errors(errors));
-    crate::error::json_response(StatusCode::UNPROCESSABLE_ENTITY, body)
-}
-
 /// A human-readable description of a validation failure, built from its code and params.
 fn default_message(error: &ValidationError) -> String {
     let param = |name: &str| error.params.get(name).map(render_param);
@@ -413,18 +405,18 @@ where
         // body is a `Json` rejection rendered by `JsonConfig`, and a decoded body that fails
         // validation is rendered by `ValidConfig`. Delegating straight to Axum's `Json` keeps this
         // to one lookup instead of the wrapper's lookup plus `Json`'s own.
-        let configs = crate::extract::config::TakenConfigs::take(req.extensions_mut());
+        let configs = crate::extract::RequestConfigs::take(req.extensions_mut());
         let axum::extract::Json(value) = <axum::extract::Json<T> as FromRequest<S>>::from_request(req, state)
             .await
             .map_err(|rejection| {
-                let response = configs.json.render(&rejection);
+                let response = configs.render::<crate::extract::JsonProvider>(&rejection);
                 Rejected::new(ValidRejection::Json(rejection), response)
             })?;
         // Only a body that deserialized and failed validation reaches `ValidConfig`. Rewrite the
         // keys first so the handler, the rendered body, and `Rejected` all see wire names.
         value.validate().map_err(|mut errors| {
             remap_to_wire_names::<T>(&mut errors);
-            let response = configs.valid.render(&errors);
+            let response = configs.render::<crate::extract::ValidProvider>(&errors);
             Rejected::new(ValidRejection::Invalid(errors), response)
         })?;
         Ok(Valid(Json(value)))
@@ -442,7 +434,7 @@ where
         // Choosing the Axum original keeps its own rejection response, so only a validation
         // failure needs the configurations. They are taken out of the consumed request without a
         // refcount bump and used only if validation fails.
-        let configs = crate::extract::config::TakenConfigs::take(req.extensions_mut());
+        let configs = crate::extract::RequestConfigs::take(req.extensions_mut());
         let axum::extract::Json(value) = <axum::extract::Json<T> as FromRequest<S>>::from_request(req, state)
             .await
             .map_err(|rejection| {
@@ -453,7 +445,7 @@ where
             })?;
         value.validate().map_err(|mut errors| {
             remap_to_wire_names::<T>(&mut errors);
-            let response = configs.valid.render(&errors);
+            let response = configs.render::<crate::extract::ValidProvider>(&errors);
             Rejected::new(ValidRejection::Invalid(errors), response)
         })?;
         Ok(Valid(axum::extract::Json(value)))
@@ -502,6 +494,7 @@ where
 #[cfg(test)]
 mod tests {
     use axum::body::{to_bytes, Body};
+    use axum::http::StatusCode;
     use serde::Deserialize;
 
     use super::*;

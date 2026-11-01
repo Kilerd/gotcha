@@ -196,8 +196,7 @@ where
                 Ok(value) => Some(value),
                 Err(_) => {
                     let rejection = ParamRejection::NotText { kind: "header", name: T::NAME };
-                    let response = crate::extract::config::configs(&parts.extensions).header.render(&rejection);
-                    return Err(crate::Rejected::new(rejection, response));
+                    return Err(crate::extract::reject::<crate::extract::HeaderProvider>(&parts.extensions, rejection));
                 }
             },
             None => None,
@@ -206,10 +205,7 @@ where
         // not touch the shared `Arc<ExtractorConfigs>`.
         resolve("header", T::NAME, T::REQUIRED, raw, T::parse, T::missing)
             .map(Header)
-            .map_err(|rejection| {
-                let response = crate::extract::config::configs(&parts.extensions).header.render(&rejection);
-                crate::Rejected::new(rejection, response)
-            })
+            .map_err(|rejection| crate::extract::reject::<crate::extract::HeaderProvider>(&parts.extensions, rejection))
     }
 }
 
@@ -231,10 +227,7 @@ where
         // not touch the shared `Arc<ExtractorConfigs>`.
         resolve("cookie", T::NAME, T::REQUIRED, raw, T::parse, T::missing)
             .map(Cookie)
-            .map_err(|rejection| {
-                let response = crate::extract::config::configs(&parts.extensions).cookie.render(&rejection);
-                crate::Rejected::new(rejection, response)
-            })
+            .map_err(|rejection| crate::extract::reject::<crate::extract::CookieProvider>(&parts.extensions, rejection))
     }
 }
 
@@ -257,16 +250,12 @@ where
             Ok(value) => value,
             Err(_) => {
                 let rejection = ParamRejection::NotText { kind: "header", name: T::NAME };
-                let response = crate::extract::config::configs(&parts.extensions).header.render(&rejection);
-                return Err(crate::Rejected::new(rejection, response));
+                return Err(crate::extract::reject::<crate::extract::HeaderProvider>(&parts.extensions, rejection));
             }
         };
         parse_value("header", T::NAME, raw, T::parse)
             .map(|value| Some(Header(value)))
-            .map_err(|rejection| {
-                let response = crate::extract::config::configs(&parts.extensions).header.render(&rejection);
-                crate::Rejected::new(rejection, response)
-            })
+            .map_err(|rejection| crate::extract::reject::<crate::extract::HeaderProvider>(&parts.extensions, rejection))
     }
 }
 
@@ -291,10 +280,7 @@ where
         };
         parse_value("cookie", T::NAME, raw, T::parse)
             .map(|value| Some(Cookie(value)))
-            .map_err(|rejection| {
-                let response = crate::extract::config::configs(&parts.extensions).cookie.render(&rejection);
-                crate::Rejected::new(rejection, response)
-            })
+            .map_err(|rejection| crate::extract::reject::<crate::extract::CookieProvider>(&parts.extensions, rejection))
     }
 }
 
