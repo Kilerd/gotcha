@@ -8,6 +8,9 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  # Keep line tables for backtraces but drop full debug info, which is most of a test target
+  # directory. Without this the all-features job ran the runner out of disk.
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
 
 jobs:
 
@@ -38,6 +41,14 @@ jobs:
 
     steps:
       - uses: actions/checkout@v3
+
+      - name: Free disk space
+        # The all-features job (trybuild fixtures, jsonschema, data-type crates) has filled the
+        # runner's disk; none of these preinstalled toolchains are used here.
+        run: |
+          df -h /
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h /
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
