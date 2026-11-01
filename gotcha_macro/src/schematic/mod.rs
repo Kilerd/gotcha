@@ -8,97 +8,16 @@ pub mod adjacent_tagged_enum;
 pub mod external_tagged_enum;
 pub mod named_struct;
 pub mod newtype_struct;
+pub mod serde_model;
 pub mod simple_enum;
 pub mod tagged_enum;
 pub mod untagged_enum;
 
-use crate::utils::{
-    expr_lit, get_serde_name, has_serde_default, has_serde_flatten, has_serde_skip, has_serde_skip_serializing, has_serde_transparent, lit_str,
-    parse_serde_rename, parse_serde_rename_all, parse_serde_rename_all_deserialize, parse_serde_rename_all_fields, serde_field_presence, AttributesExt,
-    RenameAll,
-};
-
-#[derive(Debug, PartialEq, Eq)]
-enum SerdeTagKind {
-    /// #[serde(tag = "type")] - internally tagged
-    Internal(String),
-    /// #[serde(tag = "type", content = "data")] - adjacently tagged
-    Adjacent { tag: String, content: String },
-    /// #[serde(untagged)] - no tag
-    Untagged,
-}
-
-#[derive(Debug)]
-struct ParameterExtraField {
-    tag_kind: Option<SerdeTagKind>,
-    rename_all: Option<RenameAll>,
-    /// The deserialize direction of `rename_all`, used only for validation wire names.
-    rename_all_deserialize: Option<RenameAll>,
-    /// `#[serde(default)]` on a struct container makes every field optional.
-    container_default: bool,
-    /// `#[serde(transparent)]` serializes the single inner field directly.
-    transparent: bool,
-    /// `#[serde(rename_all_fields = "..")]` on a container renames struct-variant fields.
-    rename_all_fields: Option<RenameAll>,
-}
-
-impl ParameterExtraField {
-    fn from_attr(attrs: &[syn::Attribute]) -> Self {
-        let mut tag_name: Option<String> = None;
-        let mut content_name: Option<String> = None;
-        let mut is_untagged = false;
-        let rename_all = parse_serde_rename_all(attrs);
-        let rename_all_deserialize = parse_serde_rename_all_deserialize(attrs);
-
-        for attr in attrs {
-            if attr.path().is_ident("serde") {
-                if let Ok(nested) = attr.parse_args_with(syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated) {
-                    for meta in nested {
-                        match meta {
-                            syn::Meta::NameValue(name_value) => {
-                                if name_value.path.is_ident("tag") {
-                                    if let Some(tag) = lit_str(&name_value.value) {
-                                        tag_name = Some(tag);
-                                    }
-                                } else if name_value.path.is_ident("content") {
-                                    if let Some(content) = lit_str(&name_value.value) {
-                                        content_name = Some(content);
-                                    }
-                                }
-                            }
-                            syn::Meta::Path(path) if path.is_ident("untagged") => {
-                                is_untagged = true;
-                            }
-                            _ => {}
-                        }
-                    }
-                }
-            }
-        }
-
-        let tag_kind = if is_untagged {
-            Some(SerdeTagKind::Untagged)
-        } else {
-            match (tag_name, content_name) {
-                (Some(tag), Some(content)) => Some(SerdeTagKind::Adjacent { tag, content }),
-                (Some(tag), None) => Some(SerdeTagKind::Internal(tag)),
-                _ => None,
-            }
-        };
-
-        ParameterExtraField {
-            tag_kind,
-            rename_all,
-            rename_all_deserialize,
-            container_default: has_serde_default(attrs),
-            transparent: has_serde_transparent(attrs),
-            rename_all_fields: parse_serde_rename_all_fields(attrs),
-        }
-    }
-}
+use crate::utils::{expr_lit, AttributesExt, RenameAll};
+use serde_model::{SerdeContainer, SerdeField, SerdeVariant, Tagging};
 
 #[derive(Debug, FromDeriveInput)]
-#[darling(attributes(schematic), forward_attrs(allow, doc, cfg, serde))]
+#[darling(attributes(schematic), forward_attrs(allow, doc, cfg))]
 pub(crate) struct ParameterOpts {
     ident: syn::Ident,
     generics: syn::Generics,
@@ -182,11 +101,14 @@ impl SchemaValue {
 }
 
 #[derive(Debug, FromField)]
-#[darling(attributes(schematic), forward_attrs(allow, doc, cfg, serde, validate))]
+#[darling(attributes(schematic), forward_attrs(allow, doc, cfg, serde, validate), and_then = Self::parse_serde)]
 pub(crate) struct ParameterStructFieldOpt {
     ident: Option<syn::Ident>,
     ty: syn::Type,
     attrs: Vec<syn::Attribute>,
+    /// The `#[serde(..)]` attributes among `attrs`, parsed once.
+    #[darling(skip)]
+    serde: SerdeField,
 
     // `#[schematic(...)]` field customizations — pure schema *documentation* only. darling
     // treats `Option<_>` fields as optional automatically, so an absent attribute maps to `None`.
@@ -411,6 +333,11 @@ fn lit_to_u64(lit: &syn::Lit) -> Option<u64> {
 }
 
 impl ParameterStructFieldOpt {
+    fn parse_serde(mut self) -> darling::Result<Self> {
+        self.serde = SerdeField::from_attrs(&self.attrs);
+        Ok(self)
+    }
+
     /// The type whose `Schematic` describes this field: the `#[schematic(as = "...")]` type when
     /// present, otherwise the declared field type. The original type is then never required to
     /// implement `Schematic`.
@@ -582,11 +509,11 @@ pub(crate) fn named_variant_object(
             let ident = field.ident.as_ref()?;
             // `skip` / `skip_serializing` fields are not written; a field skipped only for
             // deserialization is still serialized and must stay in the schema.
-            if has_serde_skip_serializing(&field.attrs) {
+            if field.serde.skip_serializing {
                 return None;
             }
             let field_ty = field.schema_type().clone();
-            if has_serde_flatten(&field.attrs) {
+            if field.serde.flatten {
                 // Keep the flattened type's own fields *and* its composed schema: the former for
                 // structs, the latter for enums. A type that is not required (`Option<T>`) may be
                 // absent, which makes the fields it contributes optional.
@@ -610,10 +537,8 @@ pub(crate) fn named_variant_object(
                     }
                 });
             }
-            let ident_str = ident.to_string();
-            let rename = parse_serde_rename(&field.attrs);
-            let field_name = get_serde_name(&ident_str, rename.as_deref(), field_rename_all);
-            let presence = serde_field_presence(&field_ty, &field.attrs, false);
+            let field_name = field.serde.schema_name(&ident.to_string(), field_rename_all);
+            let presence = field.serde.presence(&field_ty, false);
             let schema_ty = presence.schema_type;
             let required_override = match presence.required {
                 Some(required) => quote! { field_schema.required = #required; },
@@ -672,10 +597,13 @@ pub(crate) fn named_variant_object(
 }
 
 #[derive(Debug, FromVariant)]
-#[darling(attributes(schematic), forward_attrs(allow, doc, cfg, serde))]
+#[darling(attributes(schematic), forward_attrs(allow, doc, cfg, serde), and_then = Self::parse_serde)]
 pub(crate) struct ParameterEnumVariantOpt {
     ident: syn::Ident,
     attrs: Vec<syn::Attribute>,
+    /// The `#[serde(..)]` attributes among `attrs`, parsed once.
+    #[darling(skip)]
+    serde: SerdeVariant,
     fields: darling::ast::Fields<ParameterStructFieldOpt>,
     // Variant-level schema documentation; a doc comment is the description fallback. Only
     // annotations that are valid on every branch shape (including unit/string branches) are
@@ -685,6 +613,22 @@ pub(crate) struct ParameterEnumVariantOpt {
 }
 
 impl ParameterEnumVariantOpt {
+    fn parse_serde(mut self) -> darling::Result<Self> {
+        self.serde = SerdeVariant::from_attrs(&self.attrs);
+        Ok(self)
+    }
+
+    /// The name the schema documents for this variant.
+    pub(crate) fn serde_name(&self, naming: VariantNaming) -> String {
+        self.serde.schema_name(&self.ident.to_string(), naming.variants)
+    }
+
+    /// The case convention for this struct variant's fields: its own `rename_all`, else the
+    /// container's `rename_all_fields`.
+    pub(crate) fn field_rename_all(&self, naming: VariantNaming) -> Option<RenameAll> {
+        self.serde.rename_all.schema().or(naming.fields)
+    }
+
     /// Statements that add the variant's `#[schematic(..)]` documentation to `variant_object`.
     pub(crate) fn variant_customizations(&self, core: &TokenStream2) -> Vec<TokenStream2> {
         fn extra(core: &TokenStream2, key: &str, value: TokenStream2) -> TokenStream2 {
@@ -741,7 +685,7 @@ pub(crate) fn handler(input: TokenStream2) -> syn::Result<TokenStream2> {
         Some(name) => quote! { Some(#name) },
         None => quote! { None },
     };
-    let extra_field = ParameterExtraField::from_attr(&param_opts.attrs);
+    let serde = SerdeContainer::from_input(&x1);
     let ident = param_opts.ident.clone();
     let doc = match param_opts.attrs.get_doc() {
         None => {
@@ -761,20 +705,15 @@ pub(crate) fn handler(input: TokenStream2) -> syn::Result<TokenStream2> {
             // shape must come from the tag handler, not from the variant count.
             let is_simple_enum = enum_variants.iter().all(|variant| variant.fields.is_empty());
             let naming = VariantNaming {
-                variants: extra_field.rename_all,
-                fields: extra_field.rename_all_fields,
+                variants: serde.rename_all.schema(),
+                fields: serde.rename_all_fields.schema(),
             };
-            match extra_field.tag_kind {
-                None if is_simple_enum => simple_enum::handler(&core, schema_name.clone(), doc, enum_variants, extra_field.rename_all)?,
-                None => {
-                    // Default: externally tagged
-                    external_tagged_enum::handler(&core, schema_name.clone(), doc, enum_variants, naming)?
-                }
-                Some(SerdeTagKind::Internal(ref tag_name)) => tagged_enum::handler(&core, schema_name.clone(), doc, enum_variants, naming, tag_name.clone())?,
-                Some(SerdeTagKind::Adjacent { ref tag, ref content }) => {
-                    adjacent_tagged_enum::handler(&core, schema_name.clone(), doc, enum_variants, naming, tag.clone(), content.clone())?
-                }
-                Some(SerdeTagKind::Untagged) => untagged_enum::handler(&core, schema_name.clone(), doc, enum_variants, naming)?,
+            match serde.tagging {
+                Tagging::External if is_simple_enum => simple_enum::handler(&core, schema_name.clone(), doc, enum_variants, naming)?,
+                Tagging::External => external_tagged_enum::handler(&core, schema_name.clone(), doc, enum_variants, naming)?,
+                Tagging::Internal(tag_name) => tagged_enum::handler(&core, schema_name.clone(), doc, enum_variants, naming, tag_name)?,
+                Tagging::Adjacent { tag, content } => adjacent_tagged_enum::handler(&core, schema_name.clone(), doc, enum_variants, naming, tag, content)?,
+                Tagging::Untagged => untagged_enum::handler(&core, schema_name.clone(), doc, enum_variants, naming)?,
             }
         }
         Data::Struct(fields) => {
@@ -782,8 +721,8 @@ pub(crate) fn handler(input: TokenStream2) -> syn::Result<TokenStream2> {
             let field_count = fields.fields.len();
             // `#[serde(transparent)]` serializes its single non-skipped field; extra
             // `#[serde(skip)]` fields (the typed-ID `PhantomData` pattern) are allowed.
-            let transparent_index = if extra_field.transparent && !is_tuple {
-                let mut kept = fields.fields.iter().enumerate().filter(|(_, field)| !has_serde_skip(&field.attrs));
+            let transparent_index = if serde.transparent && !is_tuple {
+                let mut kept = fields.fields.iter().enumerate().filter(|(_, field)| !field.serde.skipped());
                 match (kept.next(), kept.next()) {
                     (Some((index, _)), None) => Some(index),
                     _ => None,
@@ -804,15 +743,7 @@ pub(crate) fn handler(input: TokenStream2) -> syn::Result<TokenStream2> {
                     "#[derive(Schematic)] does not support multi-field tuple structs; use a named struct",
                 ));
             } else {
-                named_struct::handler(
-                    &core,
-                    schema_name.clone(),
-                    doc,
-                    fields,
-                    extra_field.rename_all,
-                    extra_field.rename_all_deserialize,
-                    extra_field.container_default,
-                )?
+                named_struct::handler(&core, schema_name.clone(), doc, fields, serde.rename_all, serde.default)?
             }
         }
     };

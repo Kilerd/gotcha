@@ -1,15 +1,12 @@
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 
+use crate::schematic::serde_model::CaseRules;
 use crate::schematic::ParameterStructFieldOpt;
-use crate::utils::{
-    get_serde_name, has_serde_flatten, has_serde_skip, has_serde_skip_deserializing, parse_serde_rename, parse_serde_rename_deserialize, serde_field_presence,
-    RenameAll,
-};
 
 pub(crate) fn handler(
-    core: &TokenStream2, ident_string: String, doc: TokenStream2, fields: darling::ast::Fields<ParameterStructFieldOpt>, rename_all: Option<RenameAll>,
-    rename_all_deserialize: Option<RenameAll>, container_default: bool,
+    core: &TokenStream2, ident_string: String, doc: TokenStream2, fields: darling::ast::Fields<ParameterStructFieldOpt>, rename_all: CaseRules,
+    container_default: bool,
 ) -> syn::Result<TokenStream2> {
     let mut normal_fields_stream: Vec<TokenStream2> = Vec::new();
     let mut flatten_fields_stream: Vec<TokenStream2> = Vec::new();
@@ -22,19 +19,18 @@ pub(crate) fn handler(
 
         // `skip` and `skip_deserializing` fields never arrive on the wire, so they get neither a
         // schema entry nor a wire-name entry.
-        if has_serde_skip_deserializing(&field.attrs) {
+        if field.serde.skip_deserializing {
             continue;
         }
 
         // A field skipped only for *serialization* is still deserialized, so its input name must
         // still be remapped. It stays out of the schema, and its type is not referenced at all,
         // so it does not newly need `Schematic` (the entry therefore carries no nested mapping).
-        if has_serde_skip(&field.attrs) {
-            let entry = if has_serde_flatten(&field.attrs) {
+        if field.serde.skip_serializing {
+            let entry = if field.serde.flatten {
                 quote! { #core::WireField::new(#ident_str, #ident_str).flatten() }
             } else {
-                let rename_deserialize = parse_serde_rename_deserialize(&field.attrs);
-                let wire_name = get_serde_name(&ident_str, rename_deserialize.as_deref(), rename_all_deserialize);
+                let wire_name = field.serde.wire_name(&ident_str, rename_all.deserialize());
                 quote! { #core::WireField::new(#ident_str, #wire_name) }
             };
             wire_fields_stream.push(entry);
@@ -43,7 +39,7 @@ pub(crate) fn handler(
 
         let field_ty = field.schema_type().clone();
 
-        if has_serde_flatten(&field.attrs) {
+        if field.serde.flatten {
             // Flatten field: merge fields from the inner type at runtime. A flattened type that
             // is not required (an `Option<T>`, or a wrapper around one) may be absent, which
             // makes every field it contributes optional; otherwise their own requiredness holds.
@@ -77,20 +73,18 @@ pub(crate) fn handler(
             });
         } else {
             // Normal field: static field entry
-            let rename = parse_serde_rename(&field.attrs);
-            let field_name = get_serde_name(&ident_str, rename.as_deref(), rename_all);
+            let field_name = field.serde.schema_name(&ident_str, rename_all.schema());
             // Validation errors use the names serde accepts on input, which differ from the
             // schema-side name when only `rename(deserialize = ..)` / `rename_all(deserialize = ..)`
             // is given.
-            let rename_deserialize = parse_serde_rename_deserialize(&field.attrs);
-            let wire_name = get_serde_name(&ident_str, rename_deserialize.as_deref(), rename_all_deserialize);
+            let wire_name = field.serde.wire_name(&ident_str, rename_all.deserialize());
             wire_fields_stream.push(quote! {
                 #core::WireField::new(#ident_str, #wire_name)
                     .nested(<#field_ty as #core::Schematic>::wire_fields)
             });
             // Presence and nullability come from the serde attributes already on the field, so
             // the schema matches what deserialization requires and serialization writes.
-            let presence = serde_field_presence(&field_ty, &field.attrs, container_default);
+            let presence = field.serde.presence(&field_ty, container_default);
             let schema_ty = presence.schema_type;
             let required_override = match presence.required {
                 Some(required) => quote! { field_schema.required = #required; },

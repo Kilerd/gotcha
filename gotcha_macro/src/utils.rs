@@ -54,20 +54,6 @@ pub enum RenameAll {
 }
 
 impl RenameAll {
-    pub fn from_str(s: &str) -> Option<Self> {
-        match s {
-            "lowercase" => Some(RenameAll::LowerCase),
-            "UPPERCASE" => Some(RenameAll::UpperCase),
-            "PascalCase" => Some(RenameAll::PascalCase),
-            "camelCase" => Some(RenameAll::CamelCase),
-            "snake_case" => Some(RenameAll::SnakeCase),
-            "SCREAMING_SNAKE_CASE" => Some(RenameAll::ScreamingSnakeCase),
-            "kebab-case" => Some(RenameAll::KebabCase),
-            "SCREAMING-KEBAB-CASE" => Some(RenameAll::ScreamingKebabCase),
-            _ => None,
-        }
-    }
-
     /// Apply rename_all transformation to any identifier.
     /// First normalizes to words, then converts to target case.
     pub fn apply(&self, name: &str) -> String {
@@ -162,47 +148,6 @@ fn words_to_kebab_case(words: &[String]) -> String {
     words.join("-")
 }
 
-/// Parse serde rename attribute from field/variant attributes
-pub fn parse_serde_rename(attrs: &[Attribute]) -> Option<String> {
-    serde_name_value(attrs, "rename")
-}
-
-/// The name serde *deserializes* a field/variant from: `#[serde(rename = "..")]` applies to both
-/// directions, while `#[serde(rename(deserialize = ".."))]` overrides only this one.
-///
-/// The schema generator intentionally keeps using [`parse_serde_rename`]; this reader exists so
-/// validation errors can be reported under the key a client actually sent.
-pub fn parse_serde_rename_deserialize(attrs: &[Attribute]) -> Option<String> {
-    parse_serde_rename(attrs).or_else(|| serde_list_deserialize(attrs, "rename"))
-}
-
-/// The `deserialize = ".."` value inside a `#[serde(<key>(..))]` list, such as
-/// `rename(serialize = "out", deserialize = "in")`.
-fn serde_list_deserialize(attrs: &[Attribute], key: &str) -> Option<String> {
-    serde_metas(attrs).find_map(|meta| match meta {
-        syn::Meta::List(list) if list.path.is_ident(key) => {
-            let nested = list
-                .parse_args_with(syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated)
-                .ok()?;
-            nested.into_iter().find_map(|nested| match nested {
-                syn::Meta::NameValue(name_value) if name_value.path.is_ident("deserialize") => lit_str(&name_value.value),
-                _ => None,
-            })
-        }
-        _ => None,
-    })
-}
-
-/// The items of every `#[serde(...)]` attribute, in order. An attribute whose arguments do not
-/// parse contributes nothing.
-fn serde_metas(attrs: &[Attribute]) -> impl Iterator<Item = syn::Meta> + '_ {
-    attrs.iter().filter(|attr| attr.path().is_ident("serde")).flat_map(|attr| {
-        attr.parse_args_with(syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated)
-            .into_iter()
-            .flatten()
-    })
-}
-
 /// The literal `value` is, looking through the invisible groups a `macro_rules!` fragment such as
 /// `$name:expr` arrives in (syn 1 read those as the literal itself).
 pub(crate) fn expr_lit(value: &Expr) -> Option<&Lit> {
@@ -219,101 +164,6 @@ pub(crate) fn lit_str(value: &Expr) -> Option<String> {
         Lit::Str(lit) => Some(lit.value()),
         _ => None,
     }
-}
-
-/// Check if field has serde(flatten) attribute
-pub fn has_serde_flatten(attrs: &[Attribute]) -> bool {
-    serde_nested_any(attrs, |meta| matches!(meta, syn::Meta::Path(path) if path.is_ident("flatten")))
-}
-
-/// Run `pred` over each item inside every `#[serde(...)]` attribute; return true if any matches.
-fn serde_nested_any(attrs: &[Attribute], pred: impl Fn(&syn::Meta) -> bool) -> bool {
-    serde_metas(attrs).any(|meta| pred(&meta))
-}
-
-/// Whether a field is dropped by serde (`skip`, `skip_serializing`, `skip_deserializing`)
-/// and should therefore not appear in the schema.
-pub fn has_serde_skip(attrs: &[Attribute]) -> bool {
-    serde_nested_any(
-        attrs,
-        |meta| matches!(meta, syn::Meta::Path(path) if path.is_ident("skip") || path.is_ident("skip_serializing") || path.is_ident("skip_deserializing")),
-    )
-}
-
-/// Whether serde drops the field on *input* (`skip` or `skip_deserializing`). A field skipped
-/// only for serialization is still read from the request, so it keeps a wire-name entry.
-pub fn has_serde_skip_deserializing(attrs: &[Attribute]) -> bool {
-    serde_nested_any(
-        attrs,
-        |meta| matches!(meta, syn::Meta::Path(path) if path.is_ident("skip") || path.is_ident("skip_deserializing")),
-    )
-}
-
-/// Whether serde omits the field on *output* (`skip` or `skip_serializing`). A field skipped
-/// only for deserialization is still serialized and stays in the schema.
-pub fn has_serde_skip_serializing(attrs: &[Attribute]) -> bool {
-    serde_nested_any(
-        attrs,
-        |meta| matches!(meta, syn::Meta::Path(path) if path.is_ident("skip") || path.is_ident("skip_serializing")),
-    )
-}
-
-/// The case convention serde applies to *fields of struct variants*: the container-level
-/// `#[serde(rename_all_fields = "..")]`. A variant's own `rename_all` wins over it.
-pub fn parse_serde_rename_all_fields(attrs: &[Attribute]) -> Option<RenameAll> {
-    serde_name_value(attrs, "rename_all_fields").and_then(|case| RenameAll::from_str(&case))
-}
-
-/// Whether serde supplies a missing value: `#[serde(default)]` or `#[serde(default = "...")]`.
-pub fn has_serde_default(attrs: &[Attribute]) -> bool {
-    serde_nested_any(attrs, |meta| match meta {
-        syn::Meta::Path(path) => path.is_ident("default"),
-        syn::Meta::NameValue(nv) => nv.path.is_ident("default"),
-        _ => false,
-    })
-}
-
-/// Whether deserialization uses a custom function or module — `#[serde(deserialize_with = "...")]`
-/// or `#[serde(with = "...")]`. Without a `default`, serde then requires the key to be present.
-pub fn has_serde_deserialize_with(attrs: &[Attribute]) -> bool {
-    serde_nested_any(attrs, |meta| match meta {
-        syn::Meta::NameValue(nv) => nv.path.is_ident("deserialize_with") || nv.path.is_ident("with"),
-        _ => false,
-    })
-}
-
-/// Whether the container is `#[serde(transparent)]`: it serializes as its single inner field.
-pub fn has_serde_transparent(attrs: &[Attribute]) -> bool {
-    serde_nested_any(attrs, |meta| matches!(meta, syn::Meta::Path(path) if path.is_ident("transparent")))
-}
-
-/// Whether rendering may omit the field (`#[serde(skip_serializing_if = "...")]`).
-pub fn has_serde_skip_serializing_if(attrs: &[Attribute]) -> bool {
-    serde_nested_any(
-        attrs,
-        |meta| matches!(meta, syn::Meta::NameValue(nv) if nv.path.is_ident("skip_serializing_if")),
-    )
-}
-
-/// The string literal of a `#[serde(<key> = "...")]` attribute.
-fn serde_name_value(attrs: &[Attribute], key: &str) -> Option<String> {
-    serde_metas(attrs).find_map(|meta| match meta {
-        syn::Meta::NameValue(nv) if nv.path.is_ident(key) => lit_str(&nv.value),
-        _ => None,
-    })
-}
-
-/// Whether `skip_serializing_if` is recognisably `Option::is_none`.
-///
-/// Deliberately conservative: only the unqualified and the `std`/`core` paths, with optional
-/// leading `::`, are recognized. An alias or a local wrapper predicate keeps the null branch.
-pub fn skips_none(attrs: &[Attribute]) -> bool {
-    let Some(predicate) = serde_name_value(attrs, "skip_serializing_if") else {
-        return false;
-    };
-    let predicate = predicate.trim();
-    let predicate = predicate.strip_prefix("::").unwrap_or(predicate);
-    matches!(predicate, "Option::is_none" | "std::option::Option::is_none" | "core::option::Option::is_none")
 }
 
 /// The `T` in an `Option<T>` type. Only a literal trailing `Option` path segment is recognized;
@@ -336,68 +186,6 @@ pub fn option_inner_type(ty: &syn::Type) -> Option<&syn::Type> {
         syn::GenericArgument::Type(inner) => Some(inner),
         _ => None,
     }
-}
-
-/// How serde attributes on a named field translate into schema presence.
-pub(crate) struct SerdeFieldPresence {
-    /// The type whose schema to emit. This is the inner `T` when an `Option<T>` field skips
-    /// `None`: the serialized value is then `T`, so the outer null branch is not in the contract.
-    pub schema_type: syn::Type,
-    /// `Some` when the attributes override the type's own `Schematic::required()`.
-    pub required: Option<bool>,
-}
-
-/// Translate the serde attributes already on a field into key presence and nullability.
-///
-/// - A field-level or container-level `default` makes the key optional.
-/// - Otherwise `deserialize_with` / `with` makes it required, even for `Option<T>`: serde
-///   rejects a missing key before the option can produce `None`.
-/// - Otherwise `skip_serializing_if` makes it optional, preserving the previous behavior.
-///
-/// An `Option<T>` field skipped by a recognisable `Option::is_none` predicate emits `T`'s
-/// schema, dropping the null branch that serialization never writes. For `Option<Option<T>>`
-/// the inner option's null branch remains, keeping the tri-state.
-///
-/// A custom deserializer plus such a skip and no `default` is asymmetric: input requires the
-/// key, output may omit it, and a single schema cannot express both. That combination keeps
-/// the previous optional + nullable schema.
-pub(crate) fn serde_field_presence(ty: &syn::Type, attrs: &[Attribute], container_default: bool) -> SerdeFieldPresence {
-    let has_default = has_serde_default(attrs) || container_default;
-    let deserialize_with = has_serde_deserialize_with(attrs);
-    let inner_option = option_inner_type(ty);
-    let skips_none = inner_option.is_some() && skips_none(attrs);
-    let asymmetric = deserialize_with && skips_none && !has_default;
-
-    let required = if has_default || asymmetric {
-        Some(false)
-    } else if deserialize_with {
-        Some(true)
-    } else if has_serde_skip_serializing_if(attrs) {
-        Some(false)
-    } else {
-        None
-    };
-
-    let schema_type = match inner_option {
-        Some(inner) if skips_none && !asymmetric => inner.clone(),
-        _ => ty.clone(),
-    };
-
-    SerdeFieldPresence { schema_type, required }
-}
-
-/// Parse serde rename_all attribute from container attributes
-pub fn parse_serde_rename_all(attrs: &[Attribute]) -> Option<RenameAll> {
-    serde_name_value(attrs, "rename_all").and_then(|case| RenameAll::from_str(&case))
-}
-
-/// The case convention serde *deserializes* with: `#[serde(rename_all = "..")]` applies to both
-/// directions, while `#[serde(rename_all(deserialize = ".."))]` overrides only this one.
-///
-/// The schema generator keeps using [`parse_serde_rename_all`]; this reader exists so validation
-/// errors can be reported under the keys a client actually sent.
-pub fn parse_serde_rename_all_deserialize(attrs: &[Attribute]) -> Option<RenameAll> {
-    parse_serde_rename_all(attrs).or_else(|| serde_list_deserialize(attrs, "rename_all").and_then(|case| RenameAll::from_str(&case)))
 }
 
 /// Get the effective serialized name for a field/variant
@@ -467,28 +255,6 @@ mod tests {
     }
 
     #[test]
-    fn deserialize_rename_reads_the_deserialize_direction() {
-        let item: syn::DeriveInput = syn::parse_quote! {
-            struct Example {
-                #[serde(rename(serialize = "wire-out", deserialize = "wire-in"))]
-                directed: String,
-                #[serde(rename = "both")]
-                both: String,
-                #[serde(rename(serialize = "wire-out"))]
-                serialize_only: String,
-            }
-        };
-        let syn::Data::Struct(data) = &item.data else { unreachable!() };
-        let attrs: Vec<&[syn::Attribute]> = data.fields.iter().map(|field| field.attrs.as_slice()).collect();
-
-        assert_eq!(parse_serde_rename_deserialize(attrs[0]).as_deref(), Some("wire-in"));
-        // A plain `rename` applies to both directions.
-        assert_eq!(parse_serde_rename_deserialize(attrs[1]).as_deref(), Some("both"));
-        // A serialize-only rename leaves deserialization on the Rust name.
-        assert_eq!(parse_serde_rename_deserialize(attrs[2]), None);
-    }
-
-    #[test]
     fn doc_comments_skip_non_literal_attributes() {
         let attrs: Vec<Attribute> = vec![
             // `syn` cannot parse this argument list, but it is not a doc attribute.
@@ -500,33 +266,6 @@ mod tests {
         ];
         assert_eq!(attrs.get_doc().as_deref(), Some("field docs"));
         assert_eq!(Vec::<Attribute>::new().get_doc(), None);
-    }
-
-    #[test]
-    fn deserialize_rename_all_reads_the_deserialize_direction() {
-        let item: syn::DeriveInput = syn::parse_quote! {
-            #[serde(rename_all(deserialize = "camelCase"))]
-            struct Example {
-                value: String,
-            }
-        };
-        assert_eq!(parse_serde_rename_all_deserialize(&item.attrs), Some(RenameAll::CamelCase));
-
-        let item: syn::DeriveInput = syn::parse_quote! {
-            #[serde(rename_all = "kebab-case")]
-            struct Example {
-                value: String,
-            }
-        };
-        assert_eq!(parse_serde_rename_all_deserialize(&item.attrs), Some(RenameAll::KebabCase));
-
-        let item: syn::DeriveInput = syn::parse_quote! {
-            #[serde(rename_all(serialize = "camelCase"))]
-            struct Example {
-                value: String,
-            }
-        };
-        assert_eq!(parse_serde_rename_all_deserialize(&item.attrs), None);
     }
 
     #[test]
