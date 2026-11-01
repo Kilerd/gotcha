@@ -5,7 +5,20 @@ use crate::schematic::ParameterStructFieldOpt;
 
 pub(crate) fn handler(
     core: &TokenStream2, ident_string: String, doc: TokenStream2, fields: darling::ast::Fields<ParameterStructFieldOpt>, container_default: bool,
+    tag: Option<(&str, &str)>,
 ) -> syn::Result<TokenStream2> {
+    // `#[serde(tag = "..")]`: serde writes the tag next to the fields and ignores it when reading,
+    // so this struct's own schema documents it without requiring it. It stays out of `fields()`, so
+    // it is neither a query or path parameter nor part of a type that flattens this one. A field can
+    // be written or read under the tag's name, which leaves the tag undocumented. So does a struct
+    // with nothing in `fields()`, whose parameters come from these properties, and a flattened field
+    // because that can read the name itself: the path for flattened fields never adds the tag.
+    let own_tag = tag
+        .filter(|(tag_name, _)| fields.fields.iter().any(|field| !field.serde.skipped()) && !fields.fields.iter().any(|field| field.serde.is_named(tag_name)))
+        .map(|(tag_name, value)| {
+            quote! { properties.insert(#tag_name.to_string(), #core::serde_json::json!({ "type": "string", "enum": [#value] })); }
+        });
+
     let mut normal_fields_stream: Vec<TokenStream2> = Vec::new();
     let mut flatten_fields_stream: Vec<TokenStream2> = Vec::new();
     let mut flatten_schema_stream: Vec<TokenStream2> = Vec::new();
@@ -187,6 +200,7 @@ pub(crate) fn handler(
                     required_fields.push(field_name.to_string());
                 }
             }
+            #own_tag
             schema.schema.extras.insert("properties".to_string(), #core::serde_json::to_value(properties).unwrap());
             schema.schema.extras.insert("required".to_string(), #core::serde_json::to_value(required_fields).unwrap());
             schema

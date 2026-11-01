@@ -14,6 +14,8 @@
 //! previous readers skipped it, so a key newer than this parser would hide the items after it in
 //! the same list. `serde_derive_internals` 0.29.1 knows the same keys as `serde_derive` 1.0.229.
 
+use std::collections::BTreeSet;
+
 use serde_derive_internals::attr::{self, RenameAllRules, RenameRule, TagType};
 use serde_derive_internals::Ctxt;
 use syn::ext::IdentExt;
@@ -44,10 +46,15 @@ fn case_rules(rules: RenameAllRules, single: bool) -> RenameAllRules {
 
 /// Container-level serde attributes.
 pub(crate) struct SerdeContainer {
+    /// The name serde writes for the container, the value of an internally tagged struct's tag.
+    pub(crate) serialize_name: String,
+    /// `from`, `try_from` or `into`: serde writes or reads another type instead of this one.
+    pub(crate) converts: bool,
     pub(crate) tagging: Tagging,
     /// `#[serde(default)]` or `#[serde(default = "..")]` on a struct.
     pub(crate) default: bool,
     pub(crate) transparent: bool,
+    pub(crate) deny_unknown_fields: bool,
     /// Names a struct's fields or an enum's variants.
     pub(crate) rename_all: RenameAllRules,
     /// Names the fields of struct variants.
@@ -60,6 +67,8 @@ impl SerdeContainer {
             let parsed = attr::Container::from_ast(cx, input);
             let spelling = Spelling::of(&input.attrs);
             SerdeContainer {
+                serialize_name: parsed.name().serialize_name().to_owned(),
+                converts: parsed.type_from().is_some() || parsed.type_try_from().is_some() || parsed.type_into().is_some(),
                 tagging: match parsed.tag() {
                     TagType::External => Tagging::External,
                     TagType::Internal { tag } => Tagging::Internal(tag.clone()),
@@ -71,6 +80,7 @@ impl SerdeContainer {
                 },
                 default: !parsed.default().is_none(),
                 transparent: parsed.transparent(),
+                deny_unknown_fields: parsed.deny_unknown_fields(),
                 rename_all: case_rules(parsed.rename_all_rules(), spelling.rename_all),
                 rename_all_fields: case_rules(parsed.rename_all_fields_rules(), spelling.rename_all_fields),
             }
@@ -121,6 +131,10 @@ pub(crate) struct SerdeField {
     schema_name: String,
     /// The name serde deserializes the field from.
     wire_name: String,
+    /// The name serde serializes the field to.
+    serialize_name: String,
+    /// The names serde deserializes the field from: `wire_name` and every `alias`.
+    read_names: BTreeSet<String>,
     pub(crate) skip_serializing: bool,
     pub(crate) skip_deserializing: bool,
     pub(crate) flatten: bool,
@@ -158,6 +172,8 @@ impl SerdeField {
             SerdeField {
                 schema_name,
                 wire_name: parsed.name().deserialize_name().to_owned(),
+                serialize_name: parsed.name().serialize_name().to_owned(),
+                read_names: parsed.aliases().clone(),
                 skip_serializing: parsed.skip_serializing(),
                 skip_deserializing: parsed.skip_deserializing(),
                 flatten: parsed.flatten(),
@@ -189,6 +205,11 @@ impl SerdeField {
     /// it is the key a client actually sent.
     pub(crate) fn wire_name(&self) -> &str {
         &self.wire_name
+    }
+
+    /// Whether serde may write or read the field under `name`, through an `alias` too.
+    pub(crate) fn is_named(&self, name: &str) -> bool {
+        !self.skipped_both_ways() && (self.serialize_name == name || self.read_names.contains(name))
     }
 
     /// Translate the serde attributes on a field of type `ty` into key presence and nullability.
@@ -332,6 +353,30 @@ mod tests {
             .iter()
             .map(|field| SerdeField::parse(field.ident.as_ref(), &field.attrs, rules))
             .collect()
+    }
+
+    #[test]
+    fn a_field_is_named_by_what_serde_writes_and_reads() {
+        let item: syn::DeriveInput = syn::parse_quote! {
+            struct Example {
+                some_field: String,
+                #[serde(rename(serialize = "out"))]
+                written: String,
+                #[serde(rename(deserialize = "in"))]
+                read: String,
+                #[serde(alias = "other")]
+                aliased: String,
+                #[serde(skip)]
+                skipped: String,
+            }
+        };
+        let fields = fields_under(item, both(RenameRule::CamelCase));
+
+        assert!(fields[0].is_named("someField") && !fields[0].is_named("some_field"));
+        assert!(fields[1].is_named("out") && fields[1].is_named("written") && !fields[1].is_named("in"));
+        assert!(fields[2].is_named("in") && fields[2].is_named("read") && !fields[2].is_named("out"));
+        assert!(fields[3].is_named("other") && fields[3].is_named("aliased"));
+        assert!(!fields[4].is_named("skipped"));
     }
 
     #[test]

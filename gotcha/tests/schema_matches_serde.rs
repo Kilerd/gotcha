@@ -1506,6 +1506,504 @@ fn a_skipped_untagged_newtype_field_is_a_unit_variant() {
     assert_serialization_matches(&NewtypeSkipUntagged::Skip("x".into()));
 }
 
+/// `#[serde(tag = "..")]` on a struct: serde writes the tag with the struct's serialize name.
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(tag = "kind")]
+struct TaggedStruct {
+    value: u8,
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(tag = "kind", rename = "renamed", rename_all = "camelCase")]
+struct TaggedRenamedStruct {
+    some_field: u8,
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(tag = "kind", rename(serialize = "written", deserialize = "read"))]
+struct TaggedSplitRenameStruct {
+    value: u8,
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+struct HoldsTaggedStruct {
+    field: TaggedStruct,
+    list: Vec<TaggedStruct>,
+}
+
+/// A wrapper is its value on the wire, so it documents the value's tag.
+#[derive(Schematic, Serialize, Deserialize)]
+struct NewtypeOfTaggedStruct(TaggedStruct);
+
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(transparent)]
+struct TransparentTaggedStruct {
+    inner: TaggedStruct,
+}
+
+/// A field neither written nor read is not on the wire, so its name does not collide with the tag.
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(tag = "kind")]
+struct TagNamedLikeSkippedField {
+    #[serde(skip)]
+    kind: u8,
+    value: u8,
+}
+
+/// The tag next to a flattened type, whose fields a map can read or a branch can declare, is not
+/// documented.
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(tag = "kind")]
+struct TaggedFlattenedStruct {
+    value: u8,
+    #[serde(flatten)]
+    paging: Paging,
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(tag = "struct_kind")]
+struct TaggedFlattenedEnum {
+    value: u8,
+    #[serde(flatten)]
+    inner: InternallyTagged,
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(tag = "kind")]
+struct TaggedFlattenedMap {
+    value: u8,
+    #[serde(flatten)]
+    extra: HashMap<String, u8>,
+}
+
+/// A parent that flattens a tagged struct stays what it is without the tag.
+#[derive(Schematic, Serialize, Deserialize)]
+struct FlattensTaggedStruct {
+    parent: u8,
+    #[serde(flatten)]
+    tagged: TaggedStruct,
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+struct FlattensOptionalTaggedStruct {
+    parent: u8,
+    #[serde(flatten)]
+    tagged: Option<TaggedStruct>,
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+struct FlattensNewtypeOfTaggedStruct {
+    parent: u8,
+    #[serde(flatten)]
+    tagged: NewtypeOfTaggedStruct,
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+struct ParentFieldNamedLikeTag {
+    kind: u8,
+    #[serde(flatten)]
+    tagged: TaggedStruct,
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+struct ParentFieldNamedLikeTagOfNewtype {
+    kind: u8,
+    #[serde(flatten)]
+    tagged: NewtypeOfTaggedStruct,
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+enum VariantFlattensTaggedStruct {
+    Named {
+        parent: u8,
+        #[serde(flatten)]
+        tagged: TaggedStruct,
+    },
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(tag = "kind")]
+enum VariantTagNamedLikeStructTag {
+    Named {
+        #[serde(flatten)]
+        tagged: TaggedStruct,
+        other: u8,
+    },
+}
+
+/// An internally tagged newtype variant merges the struct's fields, and those have no tag.
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(tag = "variant")]
+enum WrapsTaggedStruct {
+    Wrapped(TaggedStruct),
+}
+
+/// With no fields, parameters come from the schema's properties, and the tag must not be one.
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(tag = "kind")]
+struct TaggedEmptyStruct {}
+
+#[allow(dead_code)]
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(tag = "kind")]
+struct TaggedStructWithOnlySkippedFields {
+    #[serde(skip)]
+    skipped: u8,
+    #[serde(skip_serializing, default)]
+    read: u8,
+}
+
+/// Every field below is written or read under the tag's name, so a tag would reject it.
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(tag = "value")]
+struct TagNamedLikeField {
+    value: u8,
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+struct FlattensTagNamedLikeField {
+    parent: u8,
+    #[serde(flatten)]
+    inner: TagNamedLikeField,
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(tag = "someKind", rename_all = "camelCase")]
+struct TagNamedLikeRenamedField {
+    some_kind: u8,
+}
+
+#[allow(dead_code)]
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(tag = "kind")]
+struct TagNamedLikeReadOnlyField {
+    #[serde(skip_serializing)]
+    kind: u8,
+    value: u8,
+}
+
+#[allow(dead_code)]
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(tag = "kind")]
+struct TagNamedLikeWriteOnlyField {
+    #[serde(skip_deserializing)]
+    kind: u8,
+    value: u8,
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(tag = "kind")]
+struct TagNamedLikeAlias {
+    #[serde(alias = "kind")]
+    value: u8,
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(tag = "kind")]
+struct TagNamedLikeReadName {
+    #[serde(rename(deserialize = "kind"))]
+    value: u8,
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(tag = "kind")]
+struct TagNamedLikeWrittenName {
+    #[serde(rename(serialize = "kind"))]
+    value: u8,
+}
+
+/// serde writes this tag and rejects a request carrying it, so the schema stays without the tag.
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(tag = "kind", deny_unknown_fields)]
+struct TaggedStructDenyingUnknownFields {
+    value: u8,
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+struct FlattensTaggedStructDenyingUnknownFields {
+    parent: u8,
+    #[serde(flatten)]
+    tagged: TaggedStructDenyingUnknownFields,
+}
+
+/// A conversion replaces what serde writes or reads, so the tag is not necessarily on the wire.
+#[derive(Serialize, Deserialize, Clone)]
+struct TaggedStructProxy {
+    value: u8,
+}
+
+#[derive(Schematic, Serialize, Deserialize, Clone)]
+#[serde(tag = "kind", into = "TaggedStructProxy")]
+struct TaggedStructInto {
+    value: u8,
+}
+
+impl From<TaggedStructInto> for TaggedStructProxy {
+    fn from(tagged: TaggedStructInto) -> Self {
+        TaggedStructProxy { value: tagged.value }
+    }
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(tag = "kind", from = "TaggedStructProxy")]
+struct TaggedStructFrom {
+    value: u8,
+}
+
+impl From<TaggedStructProxy> for TaggedStructFrom {
+    fn from(proxy: TaggedStructProxy) -> Self {
+        TaggedStructFrom { value: proxy.value }
+    }
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(tag = "kind", try_from = "TaggedStructProxy")]
+struct TaggedStructTryFrom {
+    value: u8,
+}
+
+impl TryFrom<TaggedStructProxy> for TaggedStructTryFrom {
+    type Error = String;
+
+    fn try_from(proxy: TaggedStructProxy) -> Result<Self, String> {
+        Ok(TaggedStructTryFrom { value: proxy.value })
+    }
+}
+
+#[test]
+fn a_struct_tag_is_documented() {
+    assert_serialization_matches(&TaggedStruct { value: 1 });
+    assert_eq!(
+        own_schema::<TaggedStruct>()["properties"]["kind"],
+        json!({"type": "string", "enum": ["TaggedStruct"]})
+    );
+}
+
+#[test]
+fn a_struct_tag_carries_the_renamed_name() {
+    assert_serialization_matches(&TaggedRenamedStruct { some_field: 1 });
+    assert_eq!(own_schema::<TaggedRenamedStruct>()["properties"]["kind"]["enum"], json!(["renamed"]));
+}
+
+#[test]
+fn a_struct_tag_carries_the_serialize_name() {
+    assert_serialization_matches(&TaggedSplitRenameStruct { value: 1 });
+    assert_eq!(own_schema::<TaggedSplitRenameStruct>()["properties"]["kind"]["enum"], json!(["written"]));
+}
+
+#[test]
+fn a_struct_tag_is_documented_in_a_referenced_component() {
+    assert_serialization_matches(&HoldsTaggedStruct {
+        field: TaggedStruct { value: 1 },
+        list: vec![TaggedStruct { value: 2 }],
+    });
+}
+
+#[test]
+fn a_struct_tag_is_documented_through_a_wrapper() {
+    assert_serialization_matches(&NewtypeOfTaggedStruct(TaggedStruct { value: 1 }));
+    assert_serialization_matches(&TransparentTaggedStruct {
+        inner: TaggedStruct { value: 1 },
+    });
+}
+
+#[test]
+fn a_skipped_field_named_like_a_struct_tag_does_not_hide_it() {
+    assert_serialization_matches(&TagNamedLikeSkippedField { kind: 0, value: 1 });
+    assert_eq!(
+        own_schema::<TagNamedLikeSkippedField>()["properties"]["kind"],
+        json!({"type": "string", "enum": ["TagNamedLikeSkippedField"]})
+    );
+}
+
+#[test]
+fn a_struct_tag_is_not_required_because_serde_ignores_it_when_reading() {
+    assert_request_accepted::<TaggedStruct>(json!({"value": 1}));
+}
+
+/// serde ignores the value it reads, so this is the one request the document is stricter about.
+#[test]
+fn a_struct_tag_rejects_a_value_serde_ignores() {
+    let instance = json!({"kind": "other", "value": 1});
+    assert!(serde_json::from_value::<TaggedStruct>(instance.clone()).is_ok());
+    assert!(!schema_accepts::<TaggedStruct>(&instance));
+}
+
+#[test]
+fn the_input_of_a_tagged_struct_is_what_serde_reads() {
+    assert_requests_are_read::<TaggedStruct>();
+    assert_requests_are_read::<TaggedRenamedStruct>();
+    assert_requests_are_read::<TaggedSplitRenameStruct>();
+    assert_requests_are_read::<HoldsTaggedStruct>();
+    assert_requests_are_read::<NewtypeOfTaggedStruct>();
+    assert_requests_are_read::<TransparentTaggedStruct>();
+    assert_requests_are_read::<TagNamedLikeSkippedField>();
+}
+
+#[test]
+fn a_struct_tag_is_not_a_parameter() {
+    let names: Vec<&str> = TaggedStruct::fields().into_iter().map(|(name, _)| name).collect();
+    assert_eq!(names, ["value"]);
+    let names: Vec<&str> = NewtypeOfTaggedStruct::fields().into_iter().map(|(name, _)| name).collect();
+    assert_eq!(names, ["value"]);
+}
+
+#[cfg(feature = "openapi")]
+#[test]
+fn a_fieldless_tagged_struct_has_no_parameters() {
+    use gotcha::{Either, ParameterProvider};
+    let Either::Left(parameters) = <gotcha::axum::extract::Query<TaggedEmptyStruct> as ParameterProvider>::generate("/".into()) else {
+        panic!("a query has no body");
+    };
+    assert!(parameters.is_empty(), "{parameters:?}");
+    let Either::Left(parameters) = <gotcha::axum::extract::Query<TaggedStructWithOnlySkippedFields> as ParameterProvider>::generate("/".into()) else {
+        panic!("a query has no body");
+    };
+    assert!(parameters.is_empty(), "{parameters:?}");
+}
+
+#[test]
+fn a_fieldless_struct_leaves_its_tag_undocumented() {
+    assert_eq!(own_schema::<TaggedEmptyStruct>()["properties"], json!({}));
+    assert_eq!(own_schema::<TaggedStructWithOnlySkippedFields>()["properties"], json!({}));
+    assert_request_accepted::<TaggedEmptyStruct>(json!({"kind": "other"}));
+    assert_request_accepted::<TaggedStructWithOnlySkippedFields>(json!({"kind": "other"}));
+}
+
+#[test]
+fn a_flattened_field_leaves_the_struct_tag_undocumented() {
+    assert_eq!(own_schema::<TaggedFlattenedStruct>()["properties"].get("kind"), None);
+    assert_request_accepted::<TaggedFlattenedStruct>(json!({"kind": "other", "value": 1, "page": 1, "per_page": 2}));
+    let schema = own_schema::<TaggedFlattenedEnum>();
+    assert_eq!(schema["allOf"][0]["properties"].get("struct_kind"), None, "{schema}");
+    assert_requests_are_read::<TaggedFlattenedStruct>();
+    assert_requests_are_read::<TaggedFlattenedEnum>();
+}
+
+/// serde hands the tag's name to the map, whose values are not strings, so a request carrying the
+/// tag is rejected. A document declaring the tag would accept it.
+#[test]
+fn a_flattened_map_leaves_the_struct_tag_undocumented() {
+    let instance = json!({"value": 1, "kind": "TaggedFlattenedMap"});
+    assert!(serde_json::from_value::<TaggedFlattenedMap>(instance.clone()).is_err());
+    assert!(!schema_accepts::<TaggedFlattenedMap>(&instance));
+    assert_eq!(own_schema::<TaggedFlattenedMap>()["properties"].get("kind"), None);
+}
+
+#[test]
+fn flattening_a_tagged_struct_leaves_the_tag_out_of_the_parent() {
+    for parent in [
+        own_schema::<FlattensTaggedStruct>(),
+        own_schema::<FlattensOptionalTaggedStruct>(),
+        own_schema::<FlattensNewtypeOfTaggedStruct>(),
+        own_schema::<FlattensTaggedStructDenyingUnknownFields>(),
+    ] {
+        assert_eq!(parent["type"], json!("object"));
+        assert_eq!(parent["properties"].get("kind"), None, "{parent}");
+        assert!(parent.get("allOf").is_none(), "{parent}");
+    }
+    let variant = own_schema::<VariantFlattensTaggedStruct>();
+    assert_eq!(variant["oneOf"][0]["properties"]["Named"]["properties"].get("kind"), None, "{variant}");
+    assert_requests_are_read::<FlattensTaggedStruct>();
+    assert_requests_are_read::<FlattensOptionalTaggedStruct>();
+    assert_requests_are_read::<FlattensNewtypeOfTaggedStruct>();
+    assert_requests_are_read::<VariantFlattensTaggedStruct>();
+}
+
+#[test]
+fn a_parent_field_named_like_a_flattened_tag_keeps_its_schema() {
+    assert_eq!(own_schema::<ParentFieldNamedLikeTag>()["properties"]["kind"], json!({"type": "integer"}));
+    assert_request_accepted::<ParentFieldNamedLikeTag>(json!({"kind": 1, "value": 2}));
+    assert_requests_are_read::<ParentFieldNamedLikeTag>();
+    assert_request_accepted::<ParentFieldNamedLikeTagOfNewtype>(json!({"kind": 1, "value": 2}));
+}
+
+#[test]
+fn an_enum_tag_named_like_a_flattened_tag_keeps_its_schema() {
+    assert_request_accepted::<VariantTagNamedLikeStructTag>(json!({"kind": "Named", "value": 1, "other": 2}));
+    assert_requests_are_read::<VariantTagNamedLikeStructTag>();
+}
+
+#[test]
+fn an_internally_tagged_newtype_variant_leaves_a_struct_tag_out() {
+    let schema = own_schema::<WrapsTaggedStruct>();
+    assert_eq!(schema["oneOf"][0]["properties"].get("kind"), None, "{schema}");
+    assert_request_accepted::<WrapsTaggedStruct>(json!({"variant": "Wrapped", "kind": "other", "value": 1}));
+    assert_requests_are_read::<WrapsTaggedStruct>();
+}
+
+#[test]
+fn a_field_named_like_the_tag_keeps_its_schema() {
+    assert_serialization_matches(&TagNamedLikeField { value: 1 });
+    let schema = own_schema::<TagNamedLikeField>();
+    assert_eq!(schema["properties"]["value"], json!({"type": "integer"}));
+    assert_eq!(schema["required"], json!(["value"]));
+    assert_serialization_matches(&FlattensTagNamedLikeField {
+        parent: 1,
+        inner: TagNamedLikeField { value: 2 },
+    });
+    assert_requests_are_read::<TagNamedLikeField>();
+    assert_eq!(own_schema::<TagNamedLikeRenamedField>()["properties"]["someKind"], json!({"type": "integer"}));
+    assert_requests_are_read::<TagNamedLikeRenamedField>();
+}
+
+#[test]
+fn a_tag_named_like_a_field_read_only_stays_undocumented() {
+    assert_eq!(own_schema::<TagNamedLikeReadOnlyField>()["properties"].get("kind"), None);
+    assert_request_accepted::<TagNamedLikeReadOnlyField>(json!({"kind": 1, "value": 1}));
+}
+
+#[test]
+fn a_tag_named_like_a_field_written_only_stays_undocumented() {
+    assert_eq!(own_schema::<TagNamedLikeWriteOnlyField>()["properties"].get("kind"), None);
+    assert_request_accepted::<TagNamedLikeWriteOnlyField>(json!({"kind": 1, "value": 1}));
+}
+
+#[test]
+fn a_tag_named_like_an_alias_stays_undocumented() {
+    assert_eq!(own_schema::<TagNamedLikeAlias>()["properties"].get("kind"), None);
+    assert!(serde_json::from_str::<TagNamedLikeAlias>(r#"{"kind": 1}"#).is_ok());
+    assert!(schema_accepts::<TagNamedLikeAlias>(&json!({"kind": 1, "value": 1})));
+}
+
+#[test]
+fn a_tag_named_like_a_read_name_stays_undocumented() {
+    assert_eq!(own_schema::<TagNamedLikeReadName>()["properties"].get("kind"), None);
+    assert_request_accepted::<TagNamedLikeReadName>(json!({"kind": 1, "value": 1}));
+}
+
+#[test]
+fn a_tag_named_like_a_written_name_stays_undocumented() {
+    assert_eq!(own_schema::<TagNamedLikeWrittenName>()["properties"].get("kind"), None);
+    assert_request_accepted::<TagNamedLikeWrittenName>(json!({"kind": 1, "value": 1}));
+}
+
+#[test]
+fn a_struct_tag_serde_rejects_reading_stays_undocumented() {
+    assert_eq!(own_schema::<TaggedStructDenyingUnknownFields>()["properties"].get("kind"), None);
+    assert!(serde_json::from_str::<TaggedStructDenyingUnknownFields>(r#"{"kind": "TaggedStructDenyingUnknownFields", "value": 1}"#).is_err());
+    assert_request_accepted::<TaggedStructDenyingUnknownFields>(json!({"value": 1}));
+    assert_requests_are_read::<TaggedStructDenyingUnknownFields>();
+}
+
+#[test]
+fn a_struct_tag_serde_rejects_reading_stays_out_of_a_flattening_parent() {
+    assert_request_accepted::<FlattensTaggedStructDenyingUnknownFields>(json!({"parent": 1, "value": 2}));
+    assert_requests_are_read::<FlattensTaggedStructDenyingUnknownFields>();
+}
+
+#[test]
+fn a_conversion_leaves_the_struct_tag_undocumented() {
+    assert_eq!(own_schema::<TaggedStructInto>()["properties"].get("kind"), None);
+    assert_eq!(own_schema::<TaggedStructFrom>()["properties"].get("kind"), None);
+    assert_eq!(own_schema::<TaggedStructTryFrom>()["properties"].get("kind"), None);
+    // `into` writes the proxy, which has no tag.
+    assert_eq!(
+        serde_json::to_value(TaggedStructInto { value: 1 }).expect("sample serializes"),
+        json!({"value": 1})
+    );
+}
+
 // Known mismatches, deliberately not asserted (follow-up work; arch review A4/A14):
 //
 // - One-way skips on a tuple-variant field need per-direction schemas. serde writes
@@ -1516,6 +2014,21 @@ fn a_skipped_untagged_newtype_field_is_a_unit_variant() {
 //   `{"kind":"V"}` and reads `{"kind":"V","data":null}`. The schema documents what it writes.
 // - `P(u8, #[serde(skip_serializing_if = "Option::is_none")] Option<String>)`: serde writes
 //   `{"P":[1]}` for `None`, while the schema requires one item per field.
+// - A `#[serde(tag = "..")]` struct documents its tag only in its own schema. serde also writes the
+//   tag through `#[serde(flatten)]` and an internally tagged newtype variant, and those stay
+//   without it, so strict validation rejects the output.
+// - A `#[serde(tag = "..")]` struct that leaves its tag undocumented, so strict validation rejects
+//   the output. Next to a `#[serde(flatten)]` field, a flattened map can read the tag's name. A
+//   field may be written or read under that name, through an `alias` too. `deny_unknown_fields`
+//   needs per-direction schemas: serde writes the tag and rejects a request carrying it. A
+//   conversion may not write it at all. A struct with no documented field has its parameters taken
+//   from the schema's properties, where the tag must not appear.
+// - A `#[serde(tag = "..")]` struct documents one value, while serde ignores the value it reads:
+//   `{"kind":"other","value":1}` is read by serde and rejected by the document.
+// - The same through an untagged newtype variant, whose branch is a `$ref` to the struct's own
+//   schema. Flattening that enum composes the tag with the parent, so the tag's value also conflicts
+//   with a parent's field or a sibling's property of that name: `{"kind":1,"v":1}` for
+//   `struct P { kind: u8, #[serde(flatten)] e: E }` is read by serde and rejected by the document.
 // - A flattened externally tagged enum's unit variant: serde writes `{"A": null}` next to the
 //   parent's fields, while the flattened schema documents `"A"`.
 // - An externally tagged enum whose variants are all zero-field struct variants (`A {}`): it is

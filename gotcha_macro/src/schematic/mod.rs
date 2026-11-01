@@ -749,7 +749,13 @@ pub(crate) fn handler(input: TokenStream2) -> syn::Result<TokenStream2> {
                     "#[derive(Schematic)] does not support multi-field tuple structs; use a named struct",
                 ));
             } else {
-                named_struct::handler(&core, schema_name.clone(), doc, fields, serde.default)?
+                // With `deny_unknown_fields` serde rejects a request carrying the tag it writes, and
+                // a conversion replaces what serde writes or reads, so neither documents the tag.
+                let tag = match &serde.tagging {
+                    Tagging::Internal(tag) if !serde.deny_unknown_fields && !serde.converts => Some((tag.as_str(), serde.serialize_name.as_str())),
+                    _ => None,
+                };
+                named_struct::handler(&core, schema_name.clone(), doc, fields, serde.default, tag)?
             }
         }
     };
