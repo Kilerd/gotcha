@@ -333,6 +333,69 @@ struct TransparentTypedId<T> {
     marker: std::marker::PhantomData<T>,
 }
 
+/// A type flattened into a struct variant.
+#[derive(Schematic, Serialize, Deserialize)]
+struct VariantExtra {
+    extra: u32,
+    #[serde(default)]
+    optional_extra: Option<String>,
+}
+
+/// Struct-variant fields honour skip/skip_serializing/flatten, the variant's `rename_all` and
+/// the container's `rename_all_fields`, in every tag form.
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all_fields = "camelCase")]
+enum VariantFieldsInternal {
+    Created {
+        some_field: u32,
+        #[serde(skip)]
+        hidden: String,
+        #[serde(skip_serializing)]
+        output_only_hidden: String,
+        #[serde(flatten)]
+        extra: VariantExtra,
+    },
+    #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+    Updated { some_field: u32 },
+    #[serde(skip_deserializing)]
+    OutputOnly { value: u32 },
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+enum VariantFieldsExternal {
+    Named {
+        #[serde(skip)]
+        hidden: String,
+        some_field: u32,
+        #[serde(flatten)]
+        extra: VariantExtra,
+    },
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "data")]
+enum VariantFieldsAdjacent {
+    Named {
+        #[serde(skip)]
+        hidden: String,
+        some_field: u32,
+        #[serde(flatten)]
+        extra: VariantExtra,
+    },
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(untagged)]
+enum VariantFieldsUntagged {
+    Named {
+        #[serde(skip)]
+        hidden: String,
+        some_field: u32,
+        #[serde(flatten)]
+        extra: VariantExtra,
+    },
+}
+
 /// An all-unit enum: the wire form is a plain string.
 #[derive(Schematic, Serialize, Deserialize)]
 enum SimpleEnum {
@@ -518,6 +581,38 @@ fn tuple_variants_match_serde() {
 }
 
 #[test]
+fn struct_variant_fields_match_serde() {
+    let extra = || VariantExtra {
+        extra: 2,
+        optional_extra: Some("z".into()),
+    };
+    assert_serialization_matches(&VariantFieldsInternal::Created {
+        some_field: 1,
+        hidden: "hidden".into(),
+        output_only_hidden: "output".into(),
+        extra: extra(),
+    });
+    assert_serialization_matches(&VariantFieldsInternal::Updated { some_field: 3 });
+    // `skip_deserializing` is still written, so it stays in the schema.
+    assert_serialization_matches(&VariantFieldsInternal::OutputOnly { value: 4 });
+    assert_serialization_matches(&VariantFieldsExternal::Named {
+        hidden: "hidden".into(),
+        some_field: 1,
+        extra: extra(),
+    });
+    assert_serialization_matches(&VariantFieldsAdjacent::Named {
+        hidden: "hidden".into(),
+        some_field: 1,
+        extra: extra(),
+    });
+    assert_serialization_matches(&VariantFieldsUntagged::Named {
+        hidden: "hidden".into(),
+        some_field: 1,
+        extra: extra(),
+    });
+}
+
+#[test]
 fn flattened_tagged_enums_match_serde() {
     assert_serialization_matches(&FlattensInternallyTagged {
         id: 1,
@@ -619,8 +714,8 @@ fn component_references_resolve() {
 //   parent's fields, while the flattened schema documents `"A"`.
 // - An externally tagged enum whose variants are all zero-field struct variants (`A {}`): it is
 //   still routed to the string-enum shape (the dispatch checks emptiness, not `Style::Unit`).
-// - Struct-variant fields ignore `#[serde(skip)]`, `#[serde(flatten)]` and
-//   `#[serde(rename_all_fields = "..")]`.
+// - A `#[serde(flatten)]` field whose type is a map inside a struct variant is dropped from the
+//   variant schema (the named-struct path gains `additionalProperties` only later).
 // - `#[serde(skip)]` on a tuple-variant field: serde writes the remaining elements, while the
 //   schema still requires one item per declared field.
 // - Untagged enums use `oneOf`, so a value matching several branches fails validation (`u32|f64`

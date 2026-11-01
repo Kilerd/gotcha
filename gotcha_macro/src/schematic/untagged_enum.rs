@@ -1,87 +1,62 @@
 use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::quote;
 
-use crate::schematic::ParameterEnumVariantOpt;
-use crate::utils::{get_serde_name, parse_serde_rename, serde_field_presence, RenameAll};
+use crate::schematic::{ParameterEnumVariantOpt, VariantNaming};
+use crate::utils::{get_serde_name, parse_serde_rename, parse_serde_rename_all};
 
 pub(crate) fn handler(
-    core: &TokenStream2, ident_string: String, doc: TokenStream2, variants: Vec<ParameterEnumVariantOpt>, rename_all: Option<RenameAll>,
+    core: &TokenStream2, ident_string: String, doc: TokenStream2, variants: Vec<ParameterEnumVariantOpt>, naming: VariantNaming,
 ) -> Result<TokenStream2, (Span, &'static str)> {
     let variants_codegen: Vec<TokenStream2> = variants
         .into_iter()
         .map(|variant| {
             let variant_ident_str = variant.ident.to_string();
             let variant_rename = parse_serde_rename(&variant.attrs);
-            let variant_string = get_serde_name(&variant_ident_str, variant_rename.as_deref(), rename_all);
+            let variant_string = get_serde_name(&variant_ident_str, variant_rename.as_deref(), naming.variants);
+            let field_rename_all = parse_serde_rename_all(&variant.attrs).or(naming.fields);
 
-            let is_tuple = matches!(variant.fields.style, darling::ast::Style::Tuple);
-            let is_unit = matches!(variant.fields.style, darling::ast::Style::Unit);
-            let field_count = variant.fields.fields.len();
-
-            if is_unit {
-                // A unit variant in an untagged enum serializes as null.
-                quote! {
-                    {
-                        let mut null_schema: ::std::collections::HashMap<String, #core::serde_json::Value> = ::std::collections::HashMap::new();
-                        null_schema.insert("type".to_string(), #core::serde_json::to_value("null").expect("cannot convert type to value"));
-                        #core::serde_json::to_value(null_schema).expect("cannot convert null schema to value")
+            match variant.fields.style {
+                darling::ast::Style::Struct => {
+                    let object = crate::schematic::named_variant_object(core, None, variant.fields.fields, field_rename_all);
+                    quote! {
+                        {
+                            let mut variant_object = #object;
+                            variant_object.insert("title".to_string(), #core::serde_json::to_value(#variant_string).expect("cannot convert title to value"));
+                            #core::serde_json::to_value(variant_object).expect("cannot convert variant to value")
+                        }
                     }
                 }
-            } else if is_tuple && field_count == 1 {
-                // Single unnamed field (newtype): the inner type's schema directly.
-                let inner_ty = variant.fields.fields[0].schema_type().clone();
-                quote! {
-                    <#inner_ty as #core::Schematic>::generate_schema().schema.to_value()
+                darling::ast::Style::Unit => {
+                    // A unit variant in an untagged enum serializes as null.
+                    quote! {
+                        {
+                            let mut null_schema: ::std::collections::HashMap<String, #core::serde_json::Value> = ::std::collections::HashMap::new();
+                            null_schema.insert("type".to_string(), #core::serde_json::to_value("null").expect("cannot convert type to value"));
+                            #core::serde_json::to_value(null_schema).expect("cannot convert null schema to value")
+                        }
+                    }
                 }
-            } else if is_tuple {
-                // Tuple variant `V(A, B)` (including `V()`) serializes as `[a, b]`.
-                crate::schematic::tuple_variant_schema(core, &variant.fields.fields)
-            } else {
-                // Named (struct) variant: an object schema built from its fields.
-                let fields_stream: Vec<TokenStream2> = variant
-                    .fields
-                    .fields
-                    .into_iter()
-                    .map(|field| {
-                        let (field_description, customizations) = field.schema_customizations(core);
-                        let field_ty = field.schema_type().clone();
-                        let presence = serde_field_presence(&field_ty, &field.attrs, false);
-                        let schema_ty = presence.schema_type;
-                        let required_override = match presence.required {
-                            Some(required) => quote! { field_schema.required = #required; },
-                            None => quote! {},
-                        };
-                        let field_ident_str = field.ident.as_ref().map(|i| i.to_string()).unwrap_or_default();
-                        let field_rename = parse_serde_rename(&field.attrs);
-                        // `rename_all` on an untagged enum names variants, which untagged
-                        // serialization never writes; serde does not apply it to fields.
-                        let field_name = get_serde_name(&field_ident_str, field_rename.as_deref(), None);
+                darling::ast::Style::Tuple => {
+                    if variant.fields.fields.len() == 1 {
+                        // Single unnamed field (newtype): the inner type's schema directly, with
+                        // the field's `#[schematic(..)]` annotations applied.
+                        let field = &variant.fields.fields[0];
+                        let inner_ty = field.schema_type().clone();
+                        let (description, customizations) = field.value_schema_customizations(core);
                         quote! {
-                            let mut field_schema = <#schema_ty as #core::Schematic>::generate_schema();
-                            field_schema.schema.description = #field_description;
-                            #required_override
-                            #( #customizations )*
-                            properties.insert(#field_name.to_string(), field_schema.schema.to_value());
-                            if field_schema.required {
-                                properties_required_fields.push(#field_name.to_string());
+                            {
+                                let mut field_schema = <#inner_ty as #core::Schematic>::generate_schema();
+                                let description: Option<String> = #description;
+                                if let Some(description) = description {
+                                    field_schema.schema.description = Some(description);
+                                }
+                                #( #customizations )*
+                                field_schema.schema.to_value()
                             }
                         }
-                    })
-                    .collect();
-
-                quote! {
-                    {
-                        let mut properties: ::std::collections::HashMap<String, #core::serde_json::Value> = ::std::collections::HashMap::new();
-                        let mut properties_required_fields: Vec<String> = vec![];
-                        #(
-                            #fields_stream
-                        )*
-                        let mut variant_object: ::std::collections::HashMap<String, #core::serde_json::Value> = ::std::collections::HashMap::new();
-                        variant_object.insert("title".to_string(), #core::serde_json::to_value(#variant_string).expect("cannot convert title to value"));
-                        variant_object.insert("type".to_string(), #core::serde_json::to_value("object").expect("cannot convert type to value"));
-                        variant_object.insert("properties".to_string(), #core::serde_json::to_value(properties).expect("cannot convert properties to value"));
-                        variant_object.insert("required".to_string(), #core::serde_json::to_value(properties_required_fields).expect("cannot convert required fields to value"));
-                        #core::serde_json::to_value(variant_object).expect("cannot convert variant to value")
+                    } else {
+                        // Tuple variant `V(A, B)` (including `V()`) serializes as `[a, b]`.
+                        crate::schematic::tuple_variant_schema(core, &variant.fields.fields)
                     }
                 }
             }
