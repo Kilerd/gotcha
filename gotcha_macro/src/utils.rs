@@ -452,6 +452,20 @@ mod tests {
     }
 
     #[test]
+    fn doc_comments_skip_non_literal_attributes() {
+        let attrs: Vec<Attribute> = vec![
+            // `syn` cannot parse this argument list, but it is not a doc attribute.
+            syn::parse_quote!(#[validate(regex(path = *NAME_RE))]),
+            syn::parse_quote!(#[doc = "  field docs  "]),
+            // A doc value that is an expression has no value at expansion time.
+            syn::parse_quote!(#[doc = include_str!("../README.md")]),
+            syn::parse_quote!(#[serde(rename_all = "camelCase")]),
+        ];
+        assert_eq!(attrs.get_doc().as_deref(), Some("field docs"));
+        assert_eq!(Vec::<Attribute>::new().get_doc(), None);
+    }
+
+    #[test]
     fn deserialize_rename_all_reads_the_deserialize_direction() {
         let item: syn::DeriveInput = syn::parse_quote! {
             #[serde(rename_all(deserialize = "camelCase"))]
@@ -481,20 +495,19 @@ mod tests {
 
 impl AttributesExt for Vec<Attribute> {
     fn get_doc(&self) -> Option<String> {
+        // Only `doc` attributes are read. Other attributes may contain arguments that `syn`'s
+        // `Meta` cannot represent (`#[validate(regex(path = *RE))]`, a `length(max = CONST)`)
+        // and parsing them here used to abort the whole macro expansion. A `doc` whose value is
+        // not a string literal (`#[doc = include_str!(..)]`) has no value at macro-expansion
+        // time and is skipped.
         let docs: Vec<String> = self
             .iter()
-            .filter_map(|attr| match attr.parse_meta().expect("Failed to parse attribute to get doc") {
-                Meta::NameValue(doc) => {
-                    if doc.path.is_ident("doc") {
-                        Some(doc)
-                    } else {
-                        None
-                    }
-                }
-                _ => None,
-            })
-            .filter_map(|attr| match attr.lit {
-                Lit::Str(lit_str) => Some(lit_str.value()),
+            .filter(|attr| attr.path.is_ident("doc"))
+            .filter_map(|attr| match attr.parse_meta().ok()? {
+                Meta::NameValue(doc) if doc.path.is_ident("doc") => match doc.lit {
+                    Lit::Str(lit_str) => Some(lit_str.value()),
+                    _ => None,
+                },
                 _ => None,
             })
             .map(|doc| doc.trim().to_string())
