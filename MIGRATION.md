@@ -981,9 +981,11 @@ error also stops and drains the scheduled tasks; cancelling the serving future r
 all scheduled work and signals HTTP shutdown.
 
 Cancellation requires async tasks to yield. A task blocking its thread never observes the abort:
-one second after it, shutdown names the task in a warning and continues without it, so cleanup still
-runs, but the runtime waits for that thread when it is dropped. Tasks explicitly detached by
-application code (including `Messager::spawn`) remain outside this ownership.
+one second after it, shutdown names the task in a warning and continues without it, and the runtime
+waits for that thread when it is dropped. Cleanup hooks can overlap a `Drop` that takes longer than
+that second. A task that blocks right after a timer woke it can stall the runtime itself, so that
+shutdown does not start until it stops blocking; move blocking work to
+`tokio::task::spawn_blocking`. Tasks explicitly detached by application code (including `Messager::spawn`) remain outside this ownership.
 
 Single-execution panics are logged and the schedule continues, including a panic while constructing
 the execution future. Interval tasks retain their existing immediate first tick and non-overlapping

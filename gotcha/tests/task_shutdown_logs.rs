@@ -19,6 +19,13 @@ impl std::io::Write for LogBuffer {
     }
 }
 
+struct PanicsWhenDropped;
+impl Drop for PanicsWhenDropped {
+    fn drop(&mut self) {
+        panic!("drop panic");
+    }
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn shutdown_continues_past_a_task_blocking_its_thread_and_names_it() {
     let logs = LogBuffer::default();
@@ -38,6 +45,10 @@ async fn shutdown_continues_past_a_task_blocking_its_thread_and_names_it() {
         let _ = blocked.recv();
     });
     scheduler.spawn("ignores-the-token", |_| std::future::pending());
+    scheduler.spawn("panics-when-dropped", |_| async {
+        let _resource = PanicsWhenDropped;
+        std::future::pending::<()>().await;
+    });
     scheduler.spawn("finishes", |_| async {});
     let running = scheduler.start();
     starts.recv().await.unwrap();
@@ -50,6 +61,10 @@ async fn shutdown_continues_past_a_task_blocking_its_thread_and_names_it() {
     release.send(()).unwrap();
 
     let logs = String::from_utf8(logs.0.lock().unwrap().clone()).unwrap();
-    assert!(logs.contains(r#"["blocks-its-thread", "ignores-the-token"] exceeded"#), "{logs}");
+    assert!(
+        logs.contains(r#"["blocks-its-thread", "ignores-the-token", "panics-when-dropped"] exceeded"#),
+        "{logs}"
+    );
     assert!(logs.contains(r#"["blocks-its-thread"] still running"#), "{logs}");
+    assert!(logs.contains(r#"background task "panics-when-dropped" failed"#), "{logs}");
 }

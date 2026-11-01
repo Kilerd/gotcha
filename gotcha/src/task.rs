@@ -226,7 +226,8 @@ where
     /// that handler enqueues afterwards is never consumed. As below, close the queue before the
     /// last drain, and have handlers check their `send` and refuse the work (for example with
     /// `503`) when it fails: a `send` that succeeded is handled, unless the deadline aborts the
-    /// consumer first.
+    /// consumer first. This covers one queue. When stages feed each other, stop them in order: a
+    /// later stage that closes first refuses what the stage before it had already accepted.
     ///
     /// ```no_run
     /// use gotcha::Gotcha;
@@ -326,9 +327,15 @@ impl RunningTasks {
     /// dropped. Cancelling this future also aborts the tasks.
     ///
     /// An abort takes effect when a task yields. A task blocking its thread is named in a warning
-    /// and left behind so that this returns, and application cleanup can run, but it keeps its
-    /// thread until it yields and the runtime waits for that thread when it is dropped. On a
-    /// single-threaded runtime it also blocks this wait. Application-created detached tasks are
+    /// and left behind so that this returns, but it keeps its thread until it yields and the
+    /// runtime waits for that thread when it is dropped. A future whose `Drop` takes longer than
+    /// that second is left behind the same way, so application cleanup can overlap it.
+    ///
+    /// This only helps while the runtime makes progress. On a single-threaded runtime a blocking
+    /// task stops this wait too. On a multi-threaded one, a task that blocks right after a timer
+    /// woke it (after a `sleep`, or on an interval's second tick) can stall the runtime as well:
+    /// HTTP stops responding and the shutdown signal goes unhandled until it stops blocking. Move
+    /// blocking work to [`tokio::task::spawn_blocking`]. Application-created detached tasks are
     /// outside this owner.
     pub async fn shutdown(mut self, timeout: Duration) {
         self.shutdown.cancel();
@@ -352,7 +359,7 @@ impl RunningTasks {
                     self.names.remove(&id);
                 }
                 Err(error) => {
-                    let name = self.names.remove(&error.id());
+                    let name = self.names.remove(&error.id()).unwrap_or_default();
                     if !error.is_cancelled() {
                         tracing::error!("background task {name:?} failed: {error}");
                     }

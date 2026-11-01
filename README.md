@@ -122,8 +122,15 @@ Both application APIs stop gracefully on Ctrl-C or Unix SIGTERM. When the signal
 Neither drain waits for the other, so a task can finish while a handler is still running; see
 [Background Work](#background-work) for what that means for a queue. At the task deadline, remaining
 tasks are aborted and get up to one second to stop. An abort takes effect when a task yields, so a
-task blocking its thread is named in a warning and left behind: cleanup still runs, but the runtime
-waits for that thread when it is dropped.
+task blocking its thread is named in a warning and left behind, and the runtime waits for that
+thread when it is dropped. Cleanup hooks do not wait for what is left behind, so they can overlap a
+`Drop` that takes longer than that second.
+
+These deadlines only help while the runtime makes progress. A task that blocks right after a timer
+woke it (after a `sleep`, or on an interval's second tick) can stall the runtime itself: HTTP stops
+responding, the shutdown signal goes unhandled, and cleanup does not run until it stops blocking.
+Move blocking work to `tokio::task::spawn_blocking`, which keeps serving and cleanup going; the
+process still waits for that work before it exits.
 
 At the HTTP drain deadline, remaining connections (including upgraded ones) are closed at the OS
 socket level, so a handler that is not polling its socket is disconnected too. Gotcha then waits
@@ -1298,6 +1305,10 @@ is never consumed. That is why the example closes the queue before its last drai
 then on, and every `send` that succeeded is handled unless the deadline aborts the consumer first.
 A handler has to check that result and refuse the work, for example with `503`. Ignoring it and
 answering `200` loses the job.
+
+This covers one queue. Stages that feed each other are not covered: if a later stage closes first,
+it refuses jobs the stage before it had already accepted, and no client is left to tell. Stop such
+stages in order yourself, so that each one keeps receiving until the stage before it has finished.
 
 ### Task Scheduling
 
