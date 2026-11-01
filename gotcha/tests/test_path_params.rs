@@ -1,4 +1,4 @@
-#[cfg(feature = "openapi")]
+#[cfg(all(feature = "openapi", feature = "uuid"))]
 #[test]
 fn test_path_uuid_parameter() {
     use either::Either;
@@ -25,7 +25,7 @@ fn test_path_uuid_parameter() {
     }
 }
 
-#[cfg(feature = "openapi")]
+#[cfg(all(feature = "openapi", feature = "uuid"))]
 #[test]
 fn test_path_tuple_parameter() {
     use either::Either;
@@ -100,7 +100,7 @@ mod path_struct {
     }
 }
 
-#[cfg(feature = "openapi")]
+#[cfg(all(feature = "openapi", feature = "uuid"))]
 #[test]
 fn test_multiple_path_params() {
     use either::Either;

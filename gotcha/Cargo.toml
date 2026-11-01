@@ -21,7 +21,14 @@ doctest = true
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [features]
-default = []
+# The data-type `Schematic` implementations come from `gotcha_core`; forwarding them keeps a
+# plain `gotcha` dependency documenting those types. They can be turned off together with
+# `default-features = false`. `chrono` is also a direct dependency: task scheduling reads it.
+default = ["bigdecimal", "chrono", "rust_decimal", "uuid"]
+bigdecimal = ["gotcha_core/bigdecimal"]
+chrono = ["gotcha_core/chrono"]
+rust_decimal = ["gotcha_core/rust_decimal"]
+uuid = ["gotcha_core/uuid"]
 prometheus = ["dep:axum-prometheus"]
 openapi = ["dep:oas", "gotcha_core/axum"]
 # These enable only their own half of `tower-http`. That matters: `tower-http/cors` has no
@@ -36,8 +43,9 @@ task = ["dep:cron", "dep:futures-util", "tokio/time"]
 async-trait = "0.1.60"
 gotcha_macro = { version = "0.4.1", path = "../gotcha_macro" }
 # Always compiled: `Schematic` is the source of `Valid`'s wire-name mapping even when document
-# generation (`openapi`) is off. That feature only adds the axum-facing schema glue.
-gotcha_core = { version = "0.4.1", path = "../gotcha_core" }
+# generation (`openapi`) is off. That feature only adds the axum-facing schema glue. The data-type
+# impls are forwarded by this crate's own default features.
+gotcha_core = { version = "0.4.1", path = "../gotcha_core", default-features = false }
 serde = {version = "1", features = ["derive"]}
 # `rt` also supports the always-available message system; macros and signals drive server shutdown.
 tokio = {version = "1", features = ["rt", "macros", "signal"]}
@@ -70,10 +78,7 @@ axum-macros = "0.5"
 # No features here — the `cors` / `static_files` flags each turn on the one they need.
 tower-http = { version = "0.6", optional = true, default-features = false }
 thiserror = "1.0"
-serde_json = "1"    
-bigdecimal = "0.4"
-rust_decimal = "1.36"
-uuid = {version =  "1.10" }
+serde_json = "1"
 validator = { version = "0.20", features = ["derive"] }
 
 [dev-dependencies]
@@ -86,6 +91,10 @@ assert-json-diff = "2"
 # default features so the test does not pull in HTTP/rustls reference resolution: the schemas
 # only reference components inside the same document.
 jsonschema = { version = "0.49", default-features = false }
+# Only the tests and trybuild fixtures use these data-type `Schematic` impls.
+bigdecimal = "0.4"
+rust_decimal = "1.36"
+uuid = { version = "1.10" }
 # Multiple-worker runtimes, paused-clock task tests, and socket-based lifecycle checks.
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "test-util", "io-util"] }
 futures-core = "0.3.33"
