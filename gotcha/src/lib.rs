@@ -274,6 +274,10 @@ pub trait GotchaApp: Sized + Send + Sync {
     /// stops accepting. Then HTTP connections drain, scheduled executions stop starting, and
     /// [`Self::on_shutdown`] runs after both have finished. See [`Self::bind`] for serving a
     /// pre-bound listener.
+    ///
+    /// The future is polled on the serving task, so it must not block the thread: blocking work
+    /// starves the server it is meant to stop. Use an async primitive such as
+    /// [`tokio::sync::Notify`] or a channel.
     fn shutdown_signal(&self) -> impl std::future::Future<Output = ()> + Send {
         crate::startup::shutdown_signal()
     }

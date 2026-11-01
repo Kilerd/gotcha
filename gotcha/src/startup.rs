@@ -659,7 +659,8 @@ where
     }
 }
 
-/// Owned adapter used by [`GotchaApp::bind`], which must move the application into its signal task.
+/// Owned adapter used by [`GotchaApp::bind`], which erases the application into the bound
+/// server's signal and cleanup driver.
 pub(crate) struct OwnedApp<A>(pub(crate) A);
 
 impl<A> Application for OwnedApp<A>
