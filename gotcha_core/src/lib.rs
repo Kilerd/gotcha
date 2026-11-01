@@ -604,6 +604,21 @@ impl<T: Schematic> Schematic for Option<T> {
             required: Self::required(),
         }
     }
+
+    fn fields() -> Vec<(&'static str, EnhancedSchema)> {
+        T::fields()
+    }
+
+    /// An absent `Option` contributes no fields, so a flattened inner schema cannot be required
+    /// on its own. The wrapper is `anyOf: [inner, {}]`. The empty branch accepts any instance, so
+    /// on its own the document no longer constrains the flattened fields to the inner shape.
+    /// Under strict validation (the schema test harness adds `unevaluatedProperties: false` to
+    /// the parent) the empty branch evaluates no properties, so only properties from a matching
+    /// inner branch are allowed and undeclared ones are still rejected.
+    fn flatten_schema() -> Option<serde_json::Value> {
+        T::flatten_schema().map(|inner| serde_json::json!({ "anyOf": [inner, {}] }))
+    }
+
     fn wire_fields() -> &'static [WireField] {
         T::wire_fields()
     }
@@ -614,8 +629,16 @@ impl<T: Schematic> Schematic for &T {
         T::name()
     }
 
+    fn schema_name() -> Option<&'static str> {
+        T::schema_name()
+    }
+
     fn required() -> bool {
         T::required()
+    }
+
+    fn nullable() -> Option<bool> {
+        T::nullable()
     }
 
     fn type_() -> &'static str {
@@ -624,8 +647,17 @@ impl<T: Schematic> Schematic for &T {
     fn doc() -> Option<String> {
         T::doc()
     }
+    fn format() -> Option<String> {
+        T::format()
+    }
+    fn fields() -> Vec<(&'static str, EnhancedSchema)> {
+        T::fields()
+    }
     fn generate_schema() -> EnhancedSchema {
         T::generate_schema()
+    }
+    fn flatten_schema() -> Option<serde_json::Value> {
+        T::flatten_schema()
     }
     fn wire_fields() -> &'static [WireField] {
         T::wire_fields()
@@ -1002,6 +1034,50 @@ impl Schematic for chrono::NaiveTime {
 mod tests {
     use super::*;
 
+    /// A type with a distinct value for every schema method, so a forwarder that drops one is
+    /// visible.
+    struct Pointee;
+
+    impl Schematic for Pointee {
+        fn name() -> &'static str {
+            "pointee"
+        }
+        fn schema_name() -> Option<&'static str> {
+            Some("PointeeName")
+        }
+        fn required() -> bool {
+            true
+        }
+        fn nullable() -> Option<bool> {
+            Some(true)
+        }
+        fn type_() -> &'static str {
+            "object"
+        }
+        fn doc() -> Option<String> {
+            Some("pointee doc".to_string())
+        }
+        fn format() -> Option<String> {
+            Some("custom".to_string())
+        }
+        fn fields() -> Vec<(&'static str, EnhancedSchema)> {
+            vec![(
+                "field",
+                EnhancedSchema {
+                    schema: Schema::default(),
+                    required: false,
+                },
+            )]
+        }
+        fn flatten_schema() -> Option<serde_json::Value> {
+            Some(serde_json::json!({"type": "object", "properties": {"field": {"type": "string"}}}))
+        }
+        fn wire_fields() -> &'static [WireField] {
+            const FIELDS: &[WireField] = &[WireField::new("field", "wireField")];
+            FIELDS
+        }
+    }
+
     #[test]
     fn nullable_schemas_preserve_constraints_and_reference_siblings() {
         use serde_json::json;
@@ -1124,6 +1200,50 @@ mod tests {
         ] {
             assert_eq!(wires_of(), ["firstName"]);
         }
+    }
+
+    #[test]
+    fn references_are_transparent_to_every_schema_method() {
+        assert_eq!(<&Pointee as Schematic>::name(), Pointee::name());
+        assert_eq!(<&Pointee as Schematic>::schema_name(), Pointee::schema_name());
+        assert!(<&Pointee as Schematic>::required());
+        assert_eq!(<&Pointee as Schematic>::nullable(), Pointee::nullable());
+        assert_eq!(<&Pointee as Schematic>::type_(), Pointee::type_());
+        assert_eq!(<&Pointee as Schematic>::doc(), Pointee::doc());
+        assert_eq!(<&Pointee as Schematic>::format(), Pointee::format());
+        assert_eq!(<&Pointee as Schematic>::fields().len(), 1);
+        assert_eq!(<&Pointee as Schematic>::flatten_schema(), Pointee::flatten_schema());
+        assert_eq!(<&Pointee as Schematic>::wire_fields()[0].wire, Pointee::wire_fields()[0].wire);
+    }
+
+    #[test]
+    fn option_is_transparent_and_not_required() {
+        // `Option<Inner>` keeps `Inner`'s fields and their requiredness in an ordinary position:
+        // serde requires the fields of an internally tagged newtype variant that wraps it.
+        // Flattening relaxes them because `Option::required()` is false, which is the signal the
+        // derive uses; see the flatten tests in `gotcha/tests/serde_flatten.rs`.
+        let inner = Inner::fields();
+        assert!(inner[0].1.required);
+        let transparent = <Option<Inner> as Schematic>::fields();
+        assert_eq!(transparent.len(), 1);
+        assert_eq!(transparent[0].0, inner[0].0);
+        assert!(transparent[0].1.required);
+        assert!(!<Option<Inner> as Schematic>::required());
+        assert!(<Inner as Schematic>::required());
+    }
+
+    #[test]
+    fn optional_flatten_schema_admits_absence() {
+        // The inner schema still documents the present shape, but `{}` admits an object without
+        // it (the absent `Option`), so the parent does not reject a value serde writes.
+        assert_eq!(
+            <Option<Pointee> as Schematic>::flatten_schema(),
+            Some(serde_json::json!({
+                "anyOf": [Pointee::flatten_schema().expect("Pointee flattens"), {}]
+            }))
+        );
+        // A type without a dedicated flatten schema contributes fields instead.
+        assert_eq!(<Option<Inner> as Schematic>::flatten_schema(), None);
     }
 
     #[test]
