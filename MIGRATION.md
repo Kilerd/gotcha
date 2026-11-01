@@ -1,5 +1,6 @@
 # Migration Guide
 
+- [Unreleased: invalid task registrations fail startup](#unreleased-invalid-task-registrations-fail-startup)
 - [Unreleased: validation `length` keywords follow the schema type](#unreleased-validation-length-keywords-follow-the-schema-type)
 - [Unreleased: extractor rejection responses in OpenAPI](#unreleased-extractor-rejection-responses-in-openapi)
 - [Unreleased: neutral OpenAPI info defaults](#unreleased-neutral-openapi-info-defaults)
@@ -28,6 +29,21 @@
 - [Unreleased: default configuration sources](#unreleased-default-configuration-sources)
 - [0.3 → 0.4](#03--04) — **every application must edit its route paths and configuration file**
 - [0.2 → 0.3: API simplification](#02--03-api-simplification)
+
+---
+
+# Unreleased: invalid task registrations fail startup
+
+**An application that registers an invalid cron expression or a zero interval no longer starts.**
+`TaskScheduler::cron` and `interval` previously logged the problem and dropped the task, so
+`bind()` and `run()` succeeded with a silently missing schedule. Registration problems are now
+returned from preparation as a `GotchaError`: the message names the task and, for cron, the
+expression, and the parse error stays available through the error's source chain. The listener is
+released and no pending task starts.
+
+Standalone `TaskScheduler::start()` callers keep the previous behaviour: recorded registrations are
+logged and skipped, and the valid tasks still start. Fix the expression or interval before
+upgrading.
 
 ---
 
@@ -722,7 +738,8 @@ already-due tick once when it finishes and then resumes at the next period bound
 (tokio's `MissedTickBehavior::Skip`), and cron tasks compute the next trigger from the current
 time, anchored to the last trigger that fired so a wall-clock step back cannot repeat it. The
 low-level `cron_proc_macro_wrapper` and `interval_proc_macro_wrapper` drivers share these rules.
-Invalid cron expressions and zero intervals are logged and skipped during registration.
+Invalid cron expressions and zero intervals are registration errors that fail application startup;
+see [invalid task registrations fail startup](#unreleased-invalid-task-registrations-fail-startup).
 
 ---
 
