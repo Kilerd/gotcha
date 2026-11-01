@@ -434,19 +434,23 @@ where
 {
     type Rejection = Rejected<ValidRejection>;
 
-    async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
-        // A malformed body is a `Json` rejection and is rendered by `JsonConfig`; keep that
-        // rendering while exposing the original rejection.
-        let config = crate::extract::config::configs(req.extensions());
-        let Json(value) = <Json<T> as FromRequest<S>>::from_request(req, state).await.map_err(|rejected| {
-            let (rejection, response) = rejected.into_parts();
-            Rejected::new(ValidRejection::Json(rejection), response)
-        })?;
+    async fn from_request(mut req: Request, state: &S) -> Result<Self, Self::Rejection> {
+        // The body extractor consumes the request, so take the configurations once: a malformed
+        // body is a `Json` rejection rendered by `JsonConfig`, and a decoded body that fails
+        // validation is rendered by `ValidConfig`. Delegating straight to Axum's `Json` keeps this
+        // to one lookup instead of the wrapper's lookup plus `Json`'s own.
+        let configs = crate::extract::config::TakenConfigs::take(req.extensions_mut());
+        let axum::extract::Json(value) = <axum::extract::Json<T> as FromRequest<S>>::from_request(req, state)
+            .await
+            .map_err(|rejection| {
+                let response = configs.json.render(&rejection);
+                Rejected::new(ValidRejection::Json(rejection), response)
+            })?;
         // Only a body that deserialized and failed validation reaches `ValidConfig`. Rewrite the
         // keys first so the handler, the rendered body, and `Rejected` all see wire names.
         value.validate().map_err(|mut errors| {
             remap_to_wire_names::<T>(&mut errors);
-            let response = config.valid.render(&errors);
+            let response = configs.valid.render(&errors);
             Rejected::new(ValidRejection::Invalid(errors), response)
         })?;
         Ok(Valid(Json(value)))
@@ -460,9 +464,11 @@ where
 {
     type Rejection = Rejected<ValidRejection>;
 
-    async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
-        // Choosing the Axum original keeps its own rejection response.
-        let config = crate::extract::config::configs(req.extensions());
+    async fn from_request(mut req: Request, state: &S) -> Result<Self, Self::Rejection> {
+        // Choosing the Axum original keeps its own rejection response, so only a validation
+        // failure needs the configurations. They are taken out of the consumed request without a
+        // refcount bump and used only if validation fails.
+        let configs = crate::extract::config::TakenConfigs::take(req.extensions_mut());
         let axum::extract::Json(value) = <axum::extract::Json<T> as FromRequest<S>>::from_request(req, state)
             .await
             .map_err(|rejection| {
@@ -473,7 +479,7 @@ where
             })?;
         value.validate().map_err(|mut errors| {
             remap_to_wire_names::<T>(&mut errors);
-            let response = config.valid.render(&errors);
+            let response = configs.valid.render(&errors);
             Rejected::new(ValidRejection::Invalid(errors), response)
         })?;
         Ok(Valid(axum::extract::Json(value)))

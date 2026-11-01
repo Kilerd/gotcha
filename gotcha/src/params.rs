@@ -152,23 +152,24 @@ where
     type Rejection = crate::Rejected<ParamRejection>;
 
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
-        let config = crate::extract::config::configs(&parts.extensions);
         let raw = match parts.headers.get(T::NAME) {
             // A header can carry arbitrary bytes; only text can be parsed.
             Some(value) => match value.to_str() {
                 Ok(value) => Some(value),
                 Err(_) => {
                     let rejection = ParamRejection::NotText { kind: "header", name: T::NAME };
-                    let response = config.header.render(&rejection);
+                    let response = crate::extract::config::configs(&parts.extensions).header.render(&rejection);
                     return Err(crate::Rejected::new(rejection, response));
                 }
             },
             None => None,
         };
+        // The configured handler is only consulted for a rejection: a successful extraction does
+        // not touch the shared `Arc<ExtractorConfigs>`.
         resolve("header", T::NAME, T::REQUIRED, raw, T::parse, T::missing)
             .map(Header)
             .map_err(|rejection| {
-                let response = config.header.render(&rejection);
+                let response = crate::extract::config::configs(&parts.extensions).header.render(&rejection);
                 crate::Rejected::new(rejection, response)
             })
     }
@@ -182,17 +183,18 @@ where
     type Rejection = crate::Rejected<ParamRejection>;
 
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
-        let config = crate::extract::config::configs(&parts.extensions);
         let cookies = parts
             .headers
             .get(axum::http::header::COOKIE)
             .and_then(|value| value.to_str().ok())
             .unwrap_or_default();
         let raw = cookie_value(cookies, T::NAME);
+        // The configured handler is only consulted for a rejection: a successful extraction does
+        // not touch the shared `Arc<ExtractorConfigs>`.
         resolve("cookie", T::NAME, T::REQUIRED, raw, T::parse, T::missing)
             .map(Cookie)
             .map_err(|rejection| {
-                let response = config.cookie.render(&rejection);
+                let response = crate::extract::config::configs(&parts.extensions).cookie.render(&rejection);
                 crate::Rejected::new(rejection, response)
             })
     }
