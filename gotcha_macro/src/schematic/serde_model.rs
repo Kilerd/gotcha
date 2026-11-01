@@ -5,10 +5,9 @@
 //! The schema generators read this model instead of parsing `#[serde(..)]` themselves.
 //!
 //! Names follow serde's rules: the identifier without its raw prefix, under serde's own
-//! `rename_all` conventions. The generated schemas do not follow serde everywhere yet. The schema
-//! side honours only the single-value `rename = ".."` / `rename_all = ".."` /
-//! `rename_all_fields = ".."` forms. The model records what that needs, so moving it to serde's
-//! reading is a change in this module.
+//! `rename_all` conventions. A type has one schema, so it cannot describe both directions where
+//! their names differ; [`schema_name`] says which one it documents. `Valid` errors and query and
+//! path parameters use the deserialize-side name, which is what a client sends.
 //!
 //! serde's parser stops reading a `#[serde(..)]` list at a key it does not know, where the
 //! previous readers skipped it, so a key newer than this parser would hide the items after it in
@@ -20,7 +19,7 @@ use serde_derive_internals::attr::{self, RenameAllRules, RenameRule, TagType};
 use serde_derive_internals::Ctxt;
 use syn::ext::IdentExt;
 
-use crate::utils::{lit_str, option_inner_type};
+use crate::utils::option_inner_type;
 
 /// How serde represents an enum.
 #[derive(Debug, PartialEq, Eq)]
@@ -35,12 +34,43 @@ pub(crate) enum Tagging {
     Untagged,
 }
 
-/// The conventions a `rename_all`-style attribute sets, with the schema side (`serialize`) honouring
-/// only the single-value form `key = ".."`, which sets both directions.
-fn case_rules(rules: RenameAllRules, single: bool) -> RenameAllRules {
-    RenameAllRules {
-        serialize: if single { rules.serialize } else { RenameRule::None },
-        deserialize: rules.deserialize,
+/// A `rename_all`-style convention.
+#[derive(Clone, Copy)]
+pub(crate) struct CaseRules {
+    directions: RenameAllRules,
+    /// The rule when both directions follow the same one.
+    common: RenameRule,
+}
+
+impl CaseRules {
+    fn new(directions: RenameAllRules) -> Self {
+        let common = if directions.serialize == directions.deserialize {
+            directions.serialize
+        } else {
+            RenameRule::None
+        };
+        CaseRules { directions, common }
+    }
+
+    fn or(self, other: Self) -> Self {
+        CaseRules {
+            directions: self.directions.or(other.directions),
+            common: self.common.or(other.common),
+        }
+    }
+}
+
+/// The one name a schema documents for what serde writes as `serialize` and reads as `deserialize`.
+///
+/// When the two differ, one schema cannot describe both directions. `common` is the identifier
+/// under a convention that ignores the directions. It stays when it is what serde reads, so that
+/// direction keeps working. Otherwise the serialize-side name applies: it is either `common`
+/// itself or makes the output right where `common` is wrong in both directions.
+fn schema_name(serialize: &str, deserialize: &str, common: String) -> String {
+    if common == deserialize {
+        common
+    } else {
+        serialize.to_owned()
     }
 }
 
@@ -50,25 +80,27 @@ pub(crate) struct SerdeContainer {
     pub(crate) serialize_name: String,
     /// `from`, `try_from` or `into`: serde writes or reads another type instead of this one.
     pub(crate) converts: bool,
+    /// `from` or `try_from`: serde reads another type, so this one's names are not what it reads.
+    pub(crate) reads_another_type: bool,
     pub(crate) tagging: Tagging,
     /// `#[serde(default)]` or `#[serde(default = "..")]` on a struct.
     pub(crate) default: bool,
     pub(crate) transparent: bool,
     pub(crate) deny_unknown_fields: bool,
     /// Names a struct's fields or an enum's variants.
-    pub(crate) rename_all: RenameAllRules,
+    pub(crate) rename_all: CaseRules,
     /// Names the fields of struct variants.
-    rename_all_fields: RenameAllRules,
+    rename_all_fields: CaseRules,
 }
 
 impl SerdeContainer {
     pub(crate) fn from_input(input: &syn::DeriveInput) -> Self {
         with_context(|cx| {
             let parsed = attr::Container::from_ast(cx, input);
-            let spelling = Spelling::of(&input.attrs);
             SerdeContainer {
                 serialize_name: parsed.name().serialize_name().to_owned(),
                 converts: parsed.type_from().is_some() || parsed.type_try_from().is_some() || parsed.type_into().is_some(),
+                reads_another_type: parsed.type_from().is_some() || parsed.type_try_from().is_some(),
                 tagging: match parsed.tag() {
                     TagType::External => Tagging::External,
                     TagType::Internal { tag } => Tagging::Internal(tag.clone()),
@@ -81,8 +113,8 @@ impl SerdeContainer {
                 default: !parsed.default().is_none(),
                 transparent: parsed.transparent(),
                 deny_unknown_fields: parsed.deny_unknown_fields(),
-                rename_all: case_rules(parsed.rename_all_rules(), spelling.rename_all),
-                rename_all_fields: case_rules(parsed.rename_all_fields_rules(), spelling.rename_all_fields),
+                rename_all: CaseRules::new(parsed.rename_all_rules()),
+                rename_all_fields: CaseRules::new(parsed.rename_all_fields_rules()),
             }
         })
     }
@@ -98,7 +130,7 @@ pub(crate) struct SerdeVariant {
 impl SerdeVariant {
     /// Read the attributes of the variant `ident` of `container`. Also returns the convention for
     /// the variant's fields: its own `rename_all`, else the container's `rename_all_fields`.
-    pub(crate) fn parse(ident: &syn::Ident, attrs: &[syn::Attribute], container: &SerdeContainer) -> (Self, RenameAllRules) {
+    pub(crate) fn parse(ident: &syn::Ident, attrs: &[syn::Attribute], container: &SerdeContainer) -> (Self, CaseRules) {
         with_context(|cx| {
             let variant = syn::Variant {
                 attrs: attrs.to_vec(),
@@ -106,15 +138,14 @@ impl SerdeVariant {
                 fields: syn::Fields::Unit,
                 discriminant: None,
             };
-            let parsed = attr::Variant::from_ast(cx, &variant);
-            let spelling = Spelling::of(attrs);
-            let schema_name = if spelling.rename {
-                parsed.name().serialize_name().to_owned()
-            } else {
-                container.rename_all.serialize.apply_to_variant(&ident.unraw().to_string())
+            let mut parsed = attr::Variant::from_ast(cx, &variant);
+            parsed.rename_by_rules(container.rename_all.directions);
+            let name = parsed.name();
+            let common = container.rename_all.common.apply_to_variant(&ident.unraw().to_string());
+            let serde = SerdeVariant {
+                schema_name: schema_name(name.serialize_name(), name.deserialize_name(), common),
             };
-            let field_rules = case_rules(parsed.rename_all_rules(), spelling.rename_all).or(container.rename_all_fields);
-            (SerdeVariant { schema_name }, field_rules)
+            (serde, CaseRules::new(parsed.rename_all_rules()).or(container.rename_all_fields))
         })
     }
 
@@ -149,7 +180,7 @@ pub(crate) struct SerdeField {
 
 impl SerdeField {
     /// Read the attributes of the field `ident` under the case convention `rules`.
-    pub(crate) fn parse(ident: Option<&syn::Ident>, attrs: &[syn::Attribute], rules: RenameAllRules) -> Self {
+    pub(crate) fn parse(ident: Option<&syn::Ident>, attrs: &[syn::Attribute], rules: CaseRules) -> Self {
         with_context(|cx| {
             // The unit type keeps serde from implying a `borrow` deserializer for `Cow` fields,
             // and a container default stops it from implying a field default for
@@ -163,16 +194,13 @@ impl SerdeField {
                 ty: syn::parse_quote!(()),
             };
             let mut parsed = attr::Field::from_ast(cx, 0, &field, None, &attr::Default::Default);
-            let spelling = Spelling::of(attrs);
-            parsed.rename_by_rules(rules);
-            let schema_name = match ident {
-                Some(ident) if !spelling.rename => rules.serialize.apply_to_field(&ident.unraw().to_string()),
-                _ => parsed.name().serialize_name().to_owned(),
-            };
+            parsed.rename_by_rules(rules.directions);
+            let name = parsed.name();
+            let common = ident.map_or_else(String::new, |ident| rules.common.apply_to_field(&ident.unraw().to_string()));
             SerdeField {
-                schema_name,
-                wire_name: parsed.name().deserialize_name().to_owned(),
-                serialize_name: parsed.name().serialize_name().to_owned(),
+                schema_name: schema_name(name.serialize_name(), name.deserialize_name(), common),
+                wire_name: name.deserialize_name().to_owned(),
+                serialize_name: name.serialize_name().to_owned(),
                 read_names: parsed.aliases().clone(),
                 skip_serializing: parsed.skip_serializing(),
                 skip_deserializing: parsed.skip_deserializing(),
@@ -287,46 +315,6 @@ fn with_context<T>(parse: impl FnOnce(&Ctxt) -> T) -> T {
     parsed
 }
 
-/// How the `#[serde(..)]` attributes are written, where the schema depends on more than their
-/// meaning.
-///
-/// serde reads `rename = "x"` and `rename(serialize = "x", deserialize = "x")` alike, but the
-/// schema side honours only the single-value form `key = ".."`.
-// TODO(#124): these flags go away once schema names are serde's serialize names.
-#[derive(Default)]
-struct Spelling {
-    rename: bool,
-    rename_all: bool,
-    rename_all_fields: bool,
-}
-
-impl Spelling {
-    fn of(attrs: &[syn::Attribute]) -> Self {
-        let mut spelling = Spelling::default();
-        for attr in attrs.iter().filter(|attr| attr.path().is_ident("serde")) {
-            let Ok(items) = attr.parse_args_with(syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated) else {
-                continue;
-            };
-            for item in items {
-                let syn::Meta::NameValue(item) = item else {
-                    continue;
-                };
-                if lit_str(&item.value).is_none() {
-                    continue;
-                }
-                if item.path.is_ident("rename") {
-                    spelling.rename = true;
-                } else if item.path.is_ident("rename_all") {
-                    spelling.rename_all = true;
-                } else if item.path.is_ident("rename_all_fields") {
-                    spelling.rename_all_fields = true;
-                }
-            }
-        }
-        spelling
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -344,14 +332,14 @@ mod tests {
     }
 
     fn field(field: syn::Field) -> SerdeField {
-        SerdeField::parse(field.ident.as_ref(), &field.attrs, NO_RULES)
+        SerdeField::parse(field.ident.as_ref(), &field.attrs, CaseRules::new(NO_RULES))
     }
 
     fn fields_under(item: syn::DeriveInput, rules: RenameAllRules) -> Vec<SerdeField> {
         let syn::Data::Struct(data) = item.data else { unreachable!() };
         data.fields
             .iter()
-            .map(|field| SerdeField::parse(field.ident.as_ref(), &field.attrs, rules))
+            .map(|field| SerdeField::parse(field.ident.as_ref(), &field.attrs, CaseRules::new(rules)))
             .collect()
     }
 
@@ -475,27 +463,111 @@ mod tests {
         let ident: syn::Ident = syn::parse_quote!(V);
 
         let (_, rules) = SerdeVariant::parse(&ident, &[], &container);
-        assert!(rules.serialize == RenameRule::CamelCase);
+        assert!(rules.directions.serialize == RenameRule::CamelCase);
 
         let attrs: Vec<syn::Attribute> = vec![syn::parse_quote!(#[serde(rename_all = "kebab-case")])];
         let (_, rules) = SerdeVariant::parse(&ident, &attrs, &container);
-        assert!(rules.serialize == RenameRule::KebabCase);
+        assert!(rules.directions.serialize == RenameRule::KebabCase);
     }
 
     #[test]
-    fn schema_names_honour_only_the_single_value_rename() {
+    fn a_schema_name_keeps_a_direction_it_already_documents() {
         let item: syn::DeriveInput = syn::parse_quote! {
             struct Example {
                 #[serde(rename = "both")]
-                both: String,
-                #[serde(rename(serialize = "out", deserialize = "out"))]
-                listed: String,
+                single: String,
+                #[serde(rename(serialize = "same", deserialize = "same"))]
+                same: String,
+                #[serde(rename(serialize = "out", deserialize = "in"))]
+                split: String,
+                #[serde(rename(serialize = "out"))]
+                serialize_only: String,
+                #[serde(rename(deserialize = "in"))]
+                deserialize_only: String,
+                #[serde(rename(serialize = "out", deserialize = "OWN_NAME"))]
+                own_name: String,
             }
         };
-        let fields = fields_under(item, both(RenameRule::UpperCase));
+        let names = |rules| {
+            fields_under(item.clone(), rules)
+                .iter()
+                .map(|field| field.schema_name().to_owned())
+                .collect::<Vec<_>>()
+        };
 
-        assert_eq!(fields[0].schema_name(), "both");
-        assert_eq!(fields[1].schema_name(), "LISTED");
+        assert_eq!(names(NO_RULES), ["both", "same", "out", "serialize_only", "deserialize_only", "out"]);
+        // Under a convention for both directions the identifier is what one direction uses.
+        assert_eq!(
+            names(both(RenameRule::UpperCase)),
+            ["both", "same", "out", "SERIALIZE_ONLY", "DESERIALIZE_ONLY", "OWN_NAME"]
+        );
+    }
+
+    #[test]
+    fn a_convention_for_one_direction_keeps_the_identifier() {
+        let item: syn::DeriveInput = syn::parse_quote! { struct Example { user_name: String, id: String } };
+        let names = |rules| {
+            fields_under(item.clone(), rules)
+                .iter()
+                .map(|field| field.schema_name().to_owned())
+                .collect::<Vec<_>>()
+        };
+        let rules = |serialize, deserialize| RenameAllRules { serialize, deserialize };
+
+        assert_eq!(names(rules(RenameRule::CamelCase, RenameRule::None)), ["user_name", "id"]);
+        assert_eq!(names(rules(RenameRule::None, RenameRule::CamelCase)), ["user_name", "id"]);
+        // Wrong in both directions before, so the serialize side applies.
+        assert_eq!(names(rules(RenameRule::CamelCase, RenameRule::KebabCase)), ["userName", "id"]);
+        assert_eq!(names(both(RenameRule::CamelCase)), ["userName", "id"]);
+        // The identifier is what serde reads here, so it stays.
+        assert_eq!(names(rules(RenameRule::CamelCase, RenameRule::SnakeCase)), ["user_name", "id"]);
+    }
+
+    #[test]
+    fn variant_names_keep_a_direction_they_already_document() {
+        let name = |container: syn::DeriveInput, attrs: Vec<syn::Attribute>| {
+            let ident: syn::Ident = syn::parse_quote!(SomeVariant);
+            SerdeVariant::parse(&ident, &attrs, &SerdeContainer::from_input(&container))
+                .0
+                .schema_name()
+                .to_owned()
+        };
+        let plain = || -> syn::DeriveInput {
+            syn::parse_quote! { enum E {} }
+        };
+
+        assert_eq!(name(plain(), vec![syn::parse_quote!(#[serde(rename(serialize = "out"))])]), "SomeVariant");
+        assert_eq!(
+            name(plain(), vec![syn::parse_quote!(#[serde(rename(serialize = "out", deserialize = "in"))])]),
+            "out"
+        );
+        assert_eq!(
+            name(syn::parse_quote! { #[serde(rename_all(serialize = "kebab-case"))] enum E {} }, vec![]),
+            "SomeVariant"
+        );
+        assert_eq!(
+            name(
+                syn::parse_quote! { #[serde(rename_all(serialize = "kebab-case", deserialize = "snake_case"))] enum E {} },
+                vec![]
+            ),
+            "some-variant"
+        );
+    }
+
+    #[test]
+    fn list_form_conventions_reach_the_fields_of_a_variant() {
+        let container = SerdeContainer::from_input(&syn::parse_quote! {
+            #[serde(rename_all_fields(serialize = "camelCase", deserialize = "kebab-case"))]
+            enum E {}
+        });
+        let ident: syn::Ident = syn::parse_quote!(V);
+        let (_, rules) = SerdeVariant::parse(&ident, &[], &container);
+        assert!(rules.directions.serialize == RenameRule::CamelCase);
+        assert!(rules.directions.deserialize == RenameRule::KebabCase);
+
+        let attrs: Vec<syn::Attribute> = vec![syn::parse_quote!(#[serde(rename_all(serialize = "UPPERCASE", deserialize = "lowercase"))])];
+        let (_, rules) = SerdeVariant::parse(&ident, &attrs, &container);
+        assert!(rules.directions.serialize == RenameRule::UpperCase);
     }
 
     #[test]
@@ -506,22 +578,29 @@ mod tests {
             #[serde(rename_all(deserialize = "camelCase"))]
             struct Example { value: String }
         });
-        assert!(rules.deserialize == RenameRule::CamelCase);
-        assert!(rules.serialize == RenameRule::None);
+        assert!(rules.directions.deserialize == RenameRule::CamelCase);
+        assert!(rules.directions.serialize == RenameRule::None);
+        assert!(rules.common == RenameRule::None);
 
         let rules = container(syn::parse_quote! {
             #[serde(rename_all = "kebab-case")]
             struct Example { value: String }
         });
-        assert!(rules.deserialize == RenameRule::KebabCase);
-        assert!(rules.serialize == RenameRule::KebabCase);
+        assert!(rules.common == RenameRule::KebabCase);
 
         let rules = container(syn::parse_quote! {
-            #[serde(rename_all(serialize = "camelCase"))]
+            #[serde(rename_all(serialize = "camelCase", deserialize = "camelCase"))]
             struct Example { value: String }
         });
-        assert!(rules.deserialize == RenameRule::None);
-        assert!(rules.serialize == RenameRule::None);
+        assert!(rules.common == RenameRule::CamelCase);
+
+        let rules = container(syn::parse_quote! {
+            #[serde(rename_all(serialize = "camelCase", deserialize = "kebab-case"))]
+            struct Example { value: String }
+        });
+        assert!(rules.directions.serialize == RenameRule::CamelCase);
+        assert!(rules.directions.deserialize == RenameRule::KebabCase);
+        assert!(rules.common == RenameRule::None);
     }
 
     #[test]
@@ -565,7 +644,7 @@ mod tests {
             ("is_none", false),
         ] {
             let attrs: Vec<syn::Attribute> = vec![syn::parse_quote!(#[serde(skip_serializing_if = #predicate)])];
-            assert_eq!(SerdeField::parse(None, &attrs, NO_RULES).skips_none, recognized, "{predicate}");
+            assert_eq!(SerdeField::parse(None, &attrs, CaseRules::new(NO_RULES)).skips_none, recognized, "{predicate}");
         }
     }
 

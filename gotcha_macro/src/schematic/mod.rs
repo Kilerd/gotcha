@@ -2,7 +2,6 @@ use darling::ast::Data;
 use darling::{FromDeriveInput, FromField, FromVariant};
 use proc_macro2::{Delimiter, Group, TokenStream as TokenStream2, TokenTree};
 use quote::quote;
-use serde_derive_internals::attr::RenameAllRules;
 use syn::{parse2, DeriveInput};
 
 pub mod adjacent_tagged_enum;
@@ -15,7 +14,7 @@ pub mod tagged_enum;
 pub mod untagged_enum;
 
 use crate::utils::{expr_lit, AttributesExt};
-use serde_model::{SerdeContainer, SerdeField, SerdeVariant, Tagging};
+use serde_model::{CaseRules, SerdeContainer, SerdeField, SerdeVariant, Tagging};
 
 #[derive(Debug, FromDeriveInput)]
 #[darling(attributes(schematic), forward_attrs(allow, doc, cfg))]
@@ -345,7 +344,7 @@ fn lit_to_u64(lit: &syn::Lit) -> Option<u64> {
 }
 
 impl ParameterStructFieldOpt {
-    fn parse_serde(&mut self, rules: RenameAllRules) {
+    fn parse_serde(&mut self, rules: CaseRules) {
         self.serde = SerdeField::parse(self.ident.as_ref(), &self.attrs, rules);
     }
 
@@ -755,7 +754,7 @@ pub(crate) fn handler(input: TokenStream2) -> syn::Result<TokenStream2> {
                     Tagging::Internal(tag) if !serde.deny_unknown_fields && !serde.converts => Some((tag.as_str(), serde.serialize_name.as_str())),
                     _ => None,
                 };
-                named_struct::handler(&core, schema_name.clone(), doc, fields, serde.default, tag)?
+                named_struct::handler(&core, schema_name.clone(), doc, fields, serde.default, tag, serde.reads_another_type)?
             }
         }
     };

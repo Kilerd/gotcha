@@ -88,6 +88,9 @@ pub struct WireField {
     pub rust: &'static str,
     /// The name serde accepts for this field.
     pub wire: &'static str,
+    /// The name `fields()` and the schema document for this field, which differs from `wire`
+    /// when serde writes and reads different names.
+    pub schema: &'static str,
     /// Whether the field is `#[serde(flatten)]`. A flattened field contributes no path segment:
     /// its own type's fields appear at the parent level.
     pub flatten: bool,
@@ -102,8 +105,20 @@ impl WireField {
         Self {
             rust,
             wire,
+            schema: wire,
             flatten: false,
             nested: None,
+        }
+    }
+
+    /// Record the name `fields()` and the schema document, when it is not the one serde reads.
+    pub const fn schema(self, schema: &'static str) -> Self {
+        Self {
+            rust: self.rust,
+            wire: self.wire,
+            schema,
+            flatten: self.flatten,
+            nested: self.nested,
         }
     }
 
@@ -112,6 +127,7 @@ impl WireField {
         Self {
             rust: self.rust,
             wire: self.wire,
+            schema: self.schema,
             flatten: true,
             nested: self.nested,
         }
@@ -122,6 +138,7 @@ impl WireField {
         Self {
             rust: self.rust,
             wire: self.wire,
+            schema: self.schema,
             flatten: self.flatten,
             nested: Some(nested),
         }

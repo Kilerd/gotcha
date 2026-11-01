@@ -2,6 +2,7 @@
 
 - [Unreleased: moving from GotchaApp to the builder](#unreleased-moving-from-gotchaapp-to-the-builder)
 - [Unreleased: extractor provider keys](#unreleased-extractor-provider-keys)
+- [Unreleased: names serde writes and reads differently](#unreleased-names-serde-writes-and-reads-differently)
 - [Unreleased: the macro crate needs Rust 1.88](#unreleased-the-macro-crate-needs-rust-188)
 - [Unreleased: untagged enums use anyOf](#unreleased-untagged-enums-use-anyof)
 - [Unreleased: variant-level schematic attributes](#unreleased-variant-level-schematic-attributes)
@@ -173,6 +174,31 @@ rejection responses, and the values the built-in extractors report do not change
   switch the built-in extractors to keys. See
   [Writing an extractor provider](README.md#writing-an-extractor-provider) for an extractor
   defined outside Gotcha.
+
+---
+
+# Unreleased: names serde writes and reads differently
+
+The `Schematic` derive now reads the list forms of `rename`, `rename_all` and `rename_all_fields`.
+A type has one schema, so it cannot describe both directions when the names differ. A name stays
+when it is already right in one direction, and otherwise becomes the name serde writes:
+
+| Attribute | Schema name before | Schema name now | serde reads |
+| --- | --- | --- | --- |
+| `rename(serialize = "same", deserialize = "same")` | field name | `same` | `same` |
+| `rename(serialize = "out", deserialize = "in")` | field name | `out` | `in` |
+| `rename(serialize = "out")` | field name | field name | field name |
+| `rename(deserialize = "in")` | field name | field name | `in` |
+
+The conventions behave the same way. `rename_all(serialize = "camelCase", deserialize = "snake_case")`
+keeps a snake_case field's name, because that is what serde reads.
+
+Query and path parameters now use the name serde reads. They used the schema's name, so
+`rename(deserialize = "in")` documented a parameter serde does not read. `Valid` errors are
+unchanged, and hand-written `Schematic` implementations and `WireField` tables keep working.
+
+Regenerate clients built from a type with such a form: the old document named a key serde neither
+writes nor reads.
 
 ---
 
