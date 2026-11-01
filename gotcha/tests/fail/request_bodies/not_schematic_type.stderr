@@ -1,0 +1,22 @@
+error[E0277]: the trait bound `Duration: Schematic` is not satisfied
+ --> tests/fail/request_bodies/not_schematic_type.rs:3:27
+  |
+3 | #[api(request_body(body = "std::time::Duration"))]
+  |                           ^^^^^^^^^^^^^^^^^^^^^ the trait `Schematic` is not implemented for `Duration`
+  |
+  = help: the following other types implement trait `Schematic`:
+            &T
+            &str
+            ()
+            Arc<T>
+            BTreeMap<K, V>
+            BTreeSet<T>
+            Box<T>
+            Cow<'_, T>
+          and $N others
+note: required by a bound in `request_body`
+ --> $WORKSPACE/gotcha_core/src/request.rs
+  |
+  | pub fn request_body<T: Schematic>(content_type: &str, description: Option<&str>, required: bool) -> RequestBody {
+  |                        ^^^^^^^^^ required by this bound in `request_body`
+  = note: this error originates in the attribute macro `api` (in Nightly builds, run with -Z macro-backtrace for more info)

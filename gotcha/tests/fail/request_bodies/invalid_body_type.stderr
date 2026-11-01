@@ -1,5 +1,7 @@
 error: unexpected end of input, expected one of: `for`, parentheses, `fn`, `unsafe`, `extern`, identifier, `::`, `<`, square brackets, `*`, `&`, `!`, `impl`, `_`, lifetime
- --> tests/fail/request_bodies/invalid_body_type.rs:3:7
+ --> tests/fail/request_bodies/invalid_body_type.rs:3:27
   |
 3 | #[api(request_body(body = "Vec<"))]
-  |       ^^^^^^^^^^^^
+  |                           ^^^^^^
+  |
+  = note: this error originates in the attribute macro `api` (in Nightly builds, run with -Z macro-backtrace for more info)
