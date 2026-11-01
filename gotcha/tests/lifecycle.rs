@@ -664,3 +664,46 @@ async fn panicking_cleanup_hook_runs_later_hooks_and_surfaces() {
     assert!(error.is_panic(), "a panicking cleanup hook must be re-raised");
     assert_eq!(*events.lock().unwrap(), ["first", "second"]);
 }
+
+#[tokio::test]
+async fn panicking_shutdown_signal_propagates_out_of_every_entry_point() {
+    struct App;
+    impl GotchaApp for App {
+        type State = ();
+        type Config = ();
+        fn logger(&self) -> GotchaResult<()> {
+            Ok(())
+        }
+        async fn config(&self) -> GotchaResult<ConfigWrapper<()>> {
+            Ok(config())
+        }
+        async fn state(&self, _: &ConfigWrapper<()>) -> GotchaResult<()> {
+            Ok(())
+        }
+        fn routes(&self, router: GotchaRouter<GotchaContext<(), ()>>) -> GotchaRouter<GotchaContext<(), ()>> {
+            router
+        }
+        async fn shutdown_signal(&self) {
+            panic!("shutdown signal panic");
+        }
+    }
+
+    fn assert_signal_panic<T: std::fmt::Debug>(serving: Result<T, tokio::task::JoinError>) {
+        let error = serving.expect_err("a panicking shutdown signal must stop serving");
+        assert!(error.is_panic(), "the signal panic must reach the caller: {error}");
+    }
+
+    // The trait `run()` future polls the signal inline.
+    assert_signal_panic(within(tokio::spawn(GotchaApp::run(App))).await);
+    // `bind().serve()` used to poll it in a detached driver, which swallowed the panic.
+    let server = App.bind().await.unwrap();
+    assert_signal_panic(within(tokio::spawn(server.serve())).await);
+    // Builder `run()` and `listen_on()` share the bound-server path.
+    let builder = || {
+        Gotcha::from_context(GotchaContext::new((), config())).shutdown_signal(async {
+            panic!("shutdown signal panic");
+        })
+    };
+    assert_signal_panic(within(tokio::spawn(builder().run())).await);
+    assert_signal_panic(within(tokio::spawn(builder().listen_on("127.0.0.1:0".parse().unwrap()))).await);
+}

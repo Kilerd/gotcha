@@ -971,6 +971,10 @@ where
     /// Replace the default Ctrl-C / Unix SIGTERM signal. When this future resolves, the context
     /// shutdown token is cancelled, HTTP stops accepting connections, and scheduled tasks stop
     /// starting new executions.
+    ///
+    /// The future is polled on the serving task, so it must not block the thread: blocking work
+    /// starves the server it is meant to stop. Use an async primitive such as
+    /// [`tokio::sync::Notify`] or a channel.
     pub fn shutdown_signal<F>(mut self, signal: F) -> Self
     where
         F: std::future::Future<Output = ()> + Send + 'static,

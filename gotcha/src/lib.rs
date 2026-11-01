@@ -274,6 +274,10 @@ pub trait GotchaApp: Sized + Send + Sync {
     /// stops accepting. Then HTTP connections drain, scheduled executions stop starting, and
     /// [`Self::on_shutdown`] runs after both have finished. See [`Self::bind`] for serving a
     /// pre-bound listener.
+    ///
+    /// The future is polled on the serving task, so it must not block the thread: blocking work
+    /// starves the server it is meant to stop. Use an async primitive such as
+    /// [`tokio::sync::Notify`] or a channel.
     fn shutdown_signal(&self) -> impl std::future::Future<Output = ()> + Send {
         crate::startup::shutdown_signal()
     }
@@ -528,8 +532,8 @@ pub trait GotchaApp: Sized + Send + Sync {
     ///
     /// Binding failure happens before state initialization or task registration and runs no
     /// cleanup hooks. Dropping the result without serving releases the port without running
-    /// cleanup. Requires `Self: 'static` because the signal and cleanup driver is moved into its
-    /// own task; use [`Self::run`] for applications that borrow external data.
+    /// cleanup. Requires `Self: 'static` because the bound server erases the application into
+    /// its signal and cleanup driver; use [`Self::run`] for applications that borrow external data.
     fn bind(self) -> impl std::future::Future<Output = GotchaResult<BoundServer>> + Send
     where
         Self: 'static,

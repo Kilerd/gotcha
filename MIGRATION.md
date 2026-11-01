@@ -831,8 +831,8 @@ instead of serving. `BoundServer::local_addr()` reports the effective address, i
 selected for port `0`, and `BoundServer::serve()` runs the server. `run()`, `listen()`, and
 `listen_on()` keep their signatures and are now thin wrappers over `bind*().serve()`.
 
-`GotchaApp::bind()` requires `Self: 'static` because the signal and cleanup driver runs in its own
-task. Applications that borrow external data can keep using `run()`.
+`GotchaApp::bind()` requires `Self: 'static` because the bound server erases the application into
+its signal and cleanup driver. Applications that borrow external data can keep using `run()`.
 
 Signal handling starts only when serving starts. An unserved `BoundServer` does not install a
 signal handler, so holding one does not swallow Ctrl-C/SIGTERM. Dropping one cancels the context
