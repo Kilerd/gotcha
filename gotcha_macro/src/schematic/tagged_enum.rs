@@ -2,7 +2,6 @@ use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 
 use crate::schematic::{ParameterEnumVariantOpt, VariantNaming};
-use crate::utils::{get_serde_name, parse_serde_rename, parse_serde_rename_all};
 
 /// Whether the field carries documentation worth copying onto the variant object.
 fn has_annotations(description: &TokenStream2, customizations: &[TokenStream2]) -> bool {
@@ -17,10 +16,8 @@ pub(crate) fn handler(
     let variants_codegen: Vec<TokenStream2> = variants
         .into_iter()
         .map(|variant| {
-            let variant_ident_str = variant.ident.to_string();
-            let variant_rename = parse_serde_rename(&variant.attrs);
-            let varient_string = get_serde_name(&variant_ident_str, variant_rename.as_deref(), naming.variants);
-            let field_rename_all = parse_serde_rename_all(&variant.attrs).or(naming.fields);
+            let varient_string = variant.serde_name(naming);
+            let field_rename_all = variant.field_rename_all(naming);
             let variant_annotations = variant.variant_customizations(core);
 
             let tag_property = quote! {

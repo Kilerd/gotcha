@@ -1,19 +1,14 @@
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 
-use crate::schematic::ParameterEnumVariantOpt;
-use crate::utils::{get_serde_name, parse_serde_rename, RenameAll};
+use crate::schematic::{ParameterEnumVariantOpt, VariantNaming};
 
 pub(crate) fn handler(
-    core: &TokenStream2, ident_string: String, doc: TokenStream2, variants: Vec<ParameterEnumVariantOpt>, rename_all: Option<RenameAll>,
+    core: &TokenStream2, ident_string: String, doc: TokenStream2, variants: Vec<ParameterEnumVariantOpt>, naming: VariantNaming,
 ) -> syn::Result<TokenStream2> {
     let variant_vec: Vec<TokenStream2> = variants
         .into_iter()
-        .map(|variant| {
-            let ident_str = variant.ident.to_string();
-            let rename = parse_serde_rename(&variant.attrs);
-            get_serde_name(&ident_str, rename.as_deref(), rename_all)
-        })
+        .map(|variant| variant.serde_name(naming))
         .map(|variant_str| quote! { #variant_str })
         .collect();
 

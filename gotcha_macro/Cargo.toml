@@ -20,4 +20,6 @@ syn = { version = "2.0.15", features = ["full", "extra-traits"] }
 quote = "1.0.18"
 proc-macro2 = "1.0.86"
 darling = "0.23"
+# serde's own attribute parser, so `#[serde(..)]` is read exactly as serde reads it.
+serde_derive_internals = "0.29.1"
 proc-macro-crate = "3"
