@@ -258,7 +258,6 @@ mod tests {
             async fn state(&self, _: &ConfigWrapper<EmptyConfig>) -> GotchaResult<()> {
                 panic!("export must not initialize state")
             }
-            #[cfg(feature = "task")]
             async fn tasks(&self, _: &mut crate::TaskScheduler<(), EmptyConfig>) -> GotchaResult<()> {
                 panic!("export must not register tasks")
             }
@@ -437,9 +436,8 @@ mod tests {
             let builder = Gotcha::with_state::<NeverDefault>()
                 .with_file_config("this-file-must-not-be-opened-during-export.toml")
                 .app_layer(NeverLayer)
-                .get("/hello", hello);
-            #[cfg(feature = "task")]
-            let builder = builder.tasks(|_| panic!("export must not register tasks"));
+                .get("/hello", hello)
+                .tasks(|_| panic!("export must not register tasks"));
             assert!(builder.into_openapi().paths.contains_key("/hello"));
             assert!(App::default().openapi_document().paths.contains_key("/api/hello"));
         }

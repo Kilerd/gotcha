@@ -1,12 +1,13 @@
 //! # Task Module
 //!
-//! This module provides task scheduling capabilities for Gotcha web applications.
-//! It supports both cron-based and interval-based task scheduling.
+//! This module runs background work that the application owns: it starts together with serving,
+//! sees the shutdown token through its context, and is joined before cleanup hooks run.
 //!
 //! ## Features
 //!
-//! - Cron expression based scheduling
-//! - Fixed interval scheduling
+//! - Long-running work such as queue consumers and watchers ([`TaskScheduler::spawn`])
+//! - Fixed interval scheduling ([`TaskScheduler::interval`])
+//! - Cron expression based scheduling (`TaskScheduler::cron`, requires the `task` feature)
 //! - Async task execution with application-owned shutdown
 //! - Access to application context in tasks
 //!
@@ -19,19 +20,28 @@
 //! # #[derive(Clone)]
 //! # struct Config {}
 //! fn setup(scheduler: &mut TaskScheduler<(), Config>) {
-//!     // Schedule a cron task (the expression is a `String`)
-//!     scheduler.cron("daily-cleanup", "0 0 0 * * *".to_string(), |_ctx| async move {
-//!         // Task implementation
+//!     // Run a loop until shutdown
+//!     scheduler.spawn("consumer", |ctx| async move {
+//!         let shutdown = ctx.shutdown();
+//!         shutdown.cancelled().await;
+//!         // Flush what the loop holds, then return
 //!     });
 //!
 //!     // Schedule an interval task
 //!     scheduler.interval("heartbeat", Duration::from_secs(60), |_ctx| async move {
 //!         // Task implementation
 //!     });
+//!
+//!     // Schedule a cron task (the expression is a `String`; requires the `task` feature)
+//!     # #[cfg(feature = "task")]
+//!     scheduler.cron("daily-cleanup", "0 0 0 * * *".to_string(), |_ctx| async move {
+//!         // Task implementation
+//!     });
 //! }
 //! ```
 //!
 //! Tasks have access to the application context and can be used for:
+//! - Queue consumers and file watchers
 //! - Periodic cleanup jobs
 //! - Data synchronization
 //! - Health checks
@@ -43,10 +53,13 @@ use std::fmt;
 use std::future::Future;
 use std::panic::AssertUnwindSafe;
 use std::pin::Pin;
+#[cfg(feature = "task")]
 use std::str::FromStr;
 use std::time::Duration;
 
+#[cfg(feature = "task")]
 use chrono::{DateTime, Utc};
+#[cfg(feature = "task")]
 use cron::Schedule;
 use futures_util::FutureExt;
 use tokio::task::JoinSet;
@@ -62,7 +75,7 @@ pub(crate) const DEFAULT_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(30);
 #[derive(Debug)]
 struct RegistrationFailure {
     message: String,
-    source: Option<cron::error::Error>,
+    source: Option<Box<dyn std::error::Error + Send + Sync>>,
 }
 
 impl fmt::Display for RegistrationFailure {
@@ -91,7 +104,7 @@ impl fmt::Display for RegistrationErrors {
 impl std::error::Error for RegistrationErrors {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         // The cron parser produces the only source in this chain; zero intervals have none.
-        self.0.iter().find_map(|failure| failure.source.as_ref()).map(|source| source as _)
+        self.0.iter().find_map(|failure| failure.source.as_deref()).map(|source| source as _)
     }
 }
 
@@ -139,6 +152,8 @@ where
     /// log the error and skip the task. Each trigger is computed from the current time and the
     /// last trigger that fired, so an execution that overruns a trigger skips it instead of
     /// running again immediately, and a wall-clock step back cannot fire the same trigger twice.
+    #[cfg(feature = "task")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "task")))]
     pub fn cron<F, FF>(&mut self, name: impl AsRef<str>, expression: String, task: F)
     where
         F: Fn(GotchaContext<T1, T2>) -> FF + Send + 'static,
@@ -150,7 +165,7 @@ where
             Err(source) => {
                 self.registration_errors.push(RegistrationFailure {
                     message: format!("cron task {name:?} has an invalid schedule {expression:?}"),
-                    source: Some(source),
+                    source: Some(Box::new(source)),
                 });
                 return;
             }
@@ -180,6 +195,43 @@ where
         }
         self.tasks
             .push(Box::pin(run_interval(self.context.clone(), interval, name, task, self.shutdown.clone())));
+    }
+
+    /// Register one long-running or one-off future, such as a queue consumer or a watcher.
+    ///
+    /// The application owns it like every other task. It starts when serving starts, and it does
+    /// not start at all if a registration fails. When shutdown is requested,
+    /// [`GotchaContext::shutdown`] fires and the future has until the task shutdown timeout to
+    /// return; at the deadline it is aborted. Cleanup hooks run only after that. Returning before
+    /// shutdown is not an error and the future does not run again. A panic is logged and ends only
+    /// this task: other tasks and the server keep running.
+    ///
+    /// ```no_run
+    /// use gotcha::Gotcha;
+    /// use tokio::sync::mpsc;
+    ///
+    /// let (jobs, mut queue) = mpsc::channel::<String>(16);
+    /// let app = Gotcha::new().tasks(move |scheduler| {
+    ///     scheduler.spawn("consumer", |ctx| async move {
+    ///         let shutdown = ctx.shutdown();
+    ///         loop {
+    ///             tokio::select! {
+    ///                 _ = shutdown.cancelled() => break,
+    ///                 Some(job) = queue.recv() => println!("{job}"),
+    ///             }
+    ///         }
+    ///         // Flush what the loop holds here; cleanup hooks run after this returns.
+    ///     });
+    /// });
+    /// # drop(jobs);
+    /// ```
+    pub fn spawn<F, FF>(&mut self, name: impl AsRef<str>, task: F)
+    where
+        F: FnOnce(GotchaContext<T1, T2>) -> FF + Send + 'static,
+        FF: Future<Output = ()> + Send + 'static,
+    {
+        let name = name.as_ref().to_string();
+        self.tasks.push(Box::pin(run_spawned(self.context.clone(), name, task)));
     }
 
     /// Start the registered tasks on Tokio. Dropping the returned owner aborts them.
@@ -215,9 +267,9 @@ where
     }
 }
 
-/// Owns all running scheduled tasks, including their current executions.
+/// Owns all running tasks: spawned futures and schedules, including their current executions.
 /// Dropping this value requests immediate abortion; [`Self::shutdown`] also waits for cleanup.
-/// Tasks spawned independently by application code are outside this owner.
+/// Tasks spawned independently by application code (`tokio::spawn`) are outside this owner.
 #[must_use = "dropping the task owner aborts all scheduled tasks"]
 pub struct RunningTasks {
     tasks: JoinSet<()>,
@@ -233,7 +285,8 @@ impl RunningTasks {
         Self { tasks, shutdown }
     }
 
-    /// Stop new executions and wait up to `timeout` for current executions to complete.
+    /// Stop new executions and wait up to `timeout` for spawned futures and current executions to
+    /// complete.
     /// Also cancels the scheduler's shutdown token, which is a child of the context token for
     /// schedulers built with [`TaskScheduler::new`], releasing executions that wait on it without
     /// cancelling that token or other schedulers sharing it.
@@ -245,25 +298,25 @@ impl RunningTasks {
         let drain = async {
             while let Some(result) = self.tasks.join_next().await {
                 if let Err(error) = result {
-                    tracing::error!("scheduled task loop failed: {error}");
+                    tracing::error!("background task failed: {error}");
                 }
             }
         };
         if tokio::time::timeout(timeout, drain).await.is_err() {
-            tracing::warn!("scheduled tasks exceeded shutdown timeout {timeout:?}; aborting remaining tasks");
+            tracing::warn!("background tasks exceeded shutdown timeout {timeout:?}; aborting remaining tasks");
             self.tasks.shutdown().await;
         }
     }
 }
 
-// Run the callback and its future in the owned loop. Catch both construction and polling panics
-// without spawning an execution that could outlive the loop. A mutable borrow retains F: Send
-// without requiring F: Sync.
-async fn run_supervised<T1, T2, F, FF>(name: &str, context: GotchaContext<T1, T2>, task: &mut F)
+// Run the callback and its future in the owned task. Catch both construction and polling panics
+// without spawning an execution that could outlive the task. Schedules pass a mutable borrow, which
+// retains F: Send without requiring F: Sync.
+async fn run_supervised<T1, T2, F, FF>(name: &str, context: GotchaContext<T1, T2>, task: F)
 where
     T1: Clone + Send + Sync + 'static,
     T2: Clone + Send + Sync + 'static,
-    F: Fn(GotchaContext<T1, T2>) -> FF + Send,
+    F: FnOnce(GotchaContext<T1, T2>) -> FF + Send,
     FF: Future<Output = ()> + Send,
 {
     if let Err(panic) = AssertUnwindSafe(async move { task(context).await }).catch_unwind().await {
@@ -272,19 +325,32 @@ where
             .copied()
             .or_else(|| panic.downcast_ref::<String>().map(String::as_str))
             .unwrap_or("non-string panic payload");
-        tracing::error!("scheduled task {name:?} panicked: {message}");
+        tracing::error!("background task {name:?} panicked: {message}");
     }
+}
+
+async fn run_spawned<T1, T2, F, FF>(context: GotchaContext<T1, T2>, name: String, task: F)
+where
+    T1: Clone + Send + Sync + 'static,
+    T2: Clone + Send + Sync + 'static,
+    F: FnOnce(GotchaContext<T1, T2>) -> FF + Send + 'static,
+    FF: Future<Output = ()> + Send + 'static,
+{
+    tracing::info!("starting background task: {name}");
+    run_supervised(&name, context, task).await;
 }
 
 /// The first trigger after `now` and after the trigger that already fired. Recomputing it every
 /// loop iteration keeps a slow execution from replaying triggers that elapsed while it ran, and
 /// anchoring to `last` keeps a wall-clock step back (or timer/wall-clock drift) from firing the
 /// same trigger twice.
+#[cfg(feature = "task")]
 fn next_cron_trigger(schedule: &Schedule, now: DateTime<Utc>, last: Option<DateTime<Utc>>) -> Option<DateTime<Utc>> {
     let reference = last.map_or(now, |last| now.max(last));
     schedule.after(&reference).next()
 }
 
+#[cfg(feature = "task")]
 async fn run_cron<T1, T2, F, FF>(context: GotchaContext<T1, T2>, schedule: Schedule, name: String, mut task: F, shutdown: CancellationToken)
 where
     T1: Clone + Send + Sync + 'static,
@@ -335,6 +401,8 @@ where
 /// prefer [`TaskScheduler`] for managed shutdown and waiting. Triggers follow
 /// [`TaskScheduler::cron`]: they are recomputed from the current time and missed triggers are
 /// skipped.
+#[cfg(feature = "task")]
+#[cfg_attr(docsrs, doc(cfg(feature = "task")))]
 pub async fn cron_proc_macro_wrapper<T1, T2, F, FF>(context: GotchaContext<T1, T2>, schedule: Schedule, name: String, task: F)
 where
     T1: Clone + Send + Sync + 'static,

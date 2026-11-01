@@ -134,8 +134,6 @@ pub use tokio_util::sync::CancellationToken;
 pub mod router;
 pub mod routing;
 
-#[cfg(feature = "task")]
-#[cfg_attr(docsrs, doc(cfg(feature = "task")))]
 pub mod task;
 pub mod validation;
 
@@ -154,8 +152,6 @@ pub mod layers {
 }
 
 pub use serde_json;
-#[cfg(feature = "task")]
-#[cfg_attr(docsrs, doc(cfg(feature = "task")))]
 pub use task::{RunningTasks, TaskScheduler};
 #[cfg(feature = "static_files")]
 #[cfg_attr(docsrs, doc(cfg(feature = "static_files")))]
@@ -313,10 +309,9 @@ pub trait GotchaApp: Sized + Send + Sync {
         async {}
     }
 
-    /// How long to wait for in-flight scheduled executions after shutdown is requested.
-    /// Defaults to 30 seconds. At the deadline, remaining scheduled tasks are aborted and joined.
+    /// How long to wait for background tasks and in-flight scheduled executions after shutdown is
+    /// requested. Defaults to 30 seconds. At the deadline, remaining tasks are aborted and joined.
     /// This runs concurrently with HTTP request draining.
-    #[cfg(feature = "task")]
     fn task_shutdown_timeout(&self) -> std::time::Duration {
         crate::task::DEFAULT_SHUTDOWN_TIMEOUT
     }
@@ -342,7 +337,6 @@ pub trait GotchaApp: Sized + Send + Sync {
     /// Build the application state, given the loaded configuration.
     fn state(&self, config: &ConfigWrapper<Self::Config>) -> impl std::future::Future<Output = GotchaResult<Self::State>> + Send;
 
-    #[cfg(feature = "task")]
     /// Register background tasks without starting them. Returning an error discards all registrations.
     /// Tasks start with serving after successful initialization. The default registers none.
     fn tasks(&self, _task_scheduler: &mut TaskScheduler<Self::State, Self::Config>) -> impl std::future::Future<Output = GotchaResult<()>> + Send {
