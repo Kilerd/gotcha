@@ -661,8 +661,30 @@ private business routes and public documentation, keep authentication on those b
 Use `.app_layer(auth_layer)` on the builder for authentication, CORS, or other middleware that must
 cover every application endpoint and fallback. It applies after routes and documentation are
 assembled, even when registered before them. Repeated calls wrap in Axum order: the last registered
-application layer sees incoming requests first. `with_cors()` retains its existing `layer` scope;
-use `app_layer(CorsLayer::permissive())` when CORS should also cover documentation.
+application layer sees incoming requests first. `with_cors()` installs
+`CorsLayer::permissive()` as an application layer too, so it covers the complete application
+regardless of the order in which it is called. This changes behaviour compared with the previous
+business-route scope:
+
+- Documentation endpoints and `/metrics` now send `Access-Control-Allow-Origin: *`; an `OPTIONS`
+  preflight to `/metrics` returns `200` instead of `405`.
+- Routes registered after the call are covered: `.get("/public").with_cors().get("/admin")` also
+  allows cross-origin requests to `/admin`.
+- Application layers keep their usual order (the last one registered runs first). With
+  `.app_layer(auth).with_cors()`, or `.with_cors().layer(auth)` for a business layer, the preflight
+  is answered with `200` before authentication runs: auth, rate limiting, and audit logging no
+  longer observe `OPTIONS` preflight requests. Registering auth with
+  `.with_cors().app_layer(auth)` keeps auth outside CORS, as for any other application layer.
+- The Prometheus metric layer no longer observes `OPTIONS` preflight requests in any call order,
+  because CORS answers them before request metrics are recorded.
+- Preflights for paths that match no route already returned `200` on main in three of the four
+  call orders; only `.with_cors()` before a custom `.fallback(..)` left them at `404`, and they now
+  return `200` in that order too.
+
+To keep the old business-route-only scope, register the routes first and then call
+`.layer(CorsLayer::permissive())`; `with_cors()` is now equivalent to
+`.app_layer(CorsLayer::permissive())`. As on main, that layer still covers the fallback, so
+unmatched paths keep receiving CORS headers.
 
 The corresponding trait hook is
 `fn finish_router(&self, router: axum::Router, context: &GotchaContext<Self::State, Self::Config>) -> axum::Router`.
