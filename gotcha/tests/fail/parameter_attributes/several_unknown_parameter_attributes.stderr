@@ -1,0 +1,11 @@
+error: unknown parameter-level #[api(...)]; only #[api(skip)] is supported
+ --> tests/fail/parameter_attributes/several_unknown_parameter_attributes.rs:5:20
+  |
+5 | async fn handler(#[api(skipper)] first: String, #[api(skip = true)] second: String) -> String {
+  |                    ^^^^^^^^^^^^
+
+error: unknown parameter-level #[api(...)]; only #[api(skip)] is supported
+ --> tests/fail/parameter_attributes/several_unknown_parameter_attributes.rs:5:51
+  |
+5 | async fn handler(#[api(skipper)] first: String, #[api(skip = true)] second: String) -> String {
+  |                                                   ^^^^^^^^^^^^^^^^

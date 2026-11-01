@@ -1,0 +1,5 @@
+error: invalid digit found in string
+ --> tests/fail/error_responses/negative_status.rs:3:35
+  |
+3 | #[api(responses(response(status = -1)))]
+  |                                   ^

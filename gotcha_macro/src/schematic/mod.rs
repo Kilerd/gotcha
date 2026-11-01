@@ -121,13 +121,14 @@ impl darling::FromMeta for SchemaValue {
         match expr {
             syn::Expr::Lit(lit) => Self::from_value(&lit.lit),
             syn::Expr::Group(group) => Self::from_expr(&group.expr),
+            // `-$x` with a `macro_rules!` fragment negates an invisible group around the literal.
             syn::Expr::Unary(syn::ExprUnary {
                 op: syn::UnOp::Neg(_),
                 expr: inner,
                 ..
-            }) => match &**inner {
-                syn::Expr::Lit(inner) => Self::negative(&inner.lit),
-                _ => Err(darling::Error::unexpected_expr_type(expr)),
+            }) => match expr_lit(inner) {
+                Some(lit) => Self::negative(lit),
+                None => Err(darling::Error::unexpected_expr_type(expr)),
             },
             _ => Err(darling::Error::unexpected_expr_type(expr)),
         }
@@ -880,5 +881,31 @@ mod validate_tests {
         })
         .unwrap();
         assert!(output.to_string().contains("Schematic"));
+    }
+}
+
+#[cfg(test)]
+mod schema_value_tests {
+    use super::*;
+
+    fn derive_with_example(value: TokenStream2) -> syn::Result<TokenStream2> {
+        handler(quote! {
+            #[schematic(crate = "::gotcha_core")]
+            struct Example {
+                #[schematic(example = #value, title = "t")]
+                value: i64,
+            }
+        })
+    }
+
+    #[test]
+    fn only_number_literals_are_negated() {
+        for value in [quote!(--1), quote!(-"x"), quote!(-true), quote!(-LIMIT)] {
+            assert!(derive_with_example(value.clone()).is_err(), "{value}");
+        }
+        // A `macro_rules!` fragment arrives in an invisible group, which is looked through.
+        let fragment = Group::new(Delimiter::None, quote!(7));
+        let output = derive_with_example(quote!(-#fragment)).unwrap().to_string().replace(' ', "");
+        assert!(output.contains("[-7i64]"), "{output}");
     }
 }
