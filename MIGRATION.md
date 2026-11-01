@@ -1,5 +1,6 @@
 # Migration Guide
 
+- [Unreleased: validation `length` keywords follow the schema type](#unreleased-validation-length-keywords-follow-the-schema-type)
 - [Unreleased: extractor rejection responses in OpenAPI](#unreleased-extractor-rejection-responses-in-openapi)
 - [Unreleased: neutral OpenAPI info defaults](#unreleased-neutral-openapi-info-defaults)
 - [Unreleased: serde-driven field presence](#unreleased-serde-driven-field-presence)
@@ -29,6 +30,23 @@
 - [0.2 → 0.3: API simplification](#02--03-api-simplification)
 
 ---
+
+# Unreleased: validation `length` keywords follow the schema type
+
+`#[validate(length(min = .., max = ..))]` now documents the keywords of the schema the field
+serializes to, chosen at runtime:
+
+- strings → `minLength`/`maxLength`
+- arrays, sets and deques → `minItems`/`maxItems`
+- maps → `minProperties`/`maxProperties`
+
+String and `Vec<_>` fields keep their existing keywords. Documents change for fields whose Rust
+type is a set, a deque or a map (previously `minLength`/`maxLength`, now items/properties), and
+for types the old source-text check could not see through: `Box<Vec<_>>`, a `Vec` type alias, a
+newtype wrapping a `Vec`, and `[T; N]` (previously `minLength`/`maxLength`; now
+`minItems`/`maxItems`, merged with the array's exact length so the tighter bound wins).
+
+Generated clients that pinned the old keywords on such fields must be regenerated.
 
 # Unreleased: extractor rejection responses in OpenAPI
 
