@@ -1,4 +1,5 @@
 use super::*;
+use crate::config::tests::in_isolated_child;
 use crate::config::ConfigBuilder;
 use crate::{Gotcha, GotchaRouter, State};
 use std::path::Path;
@@ -153,6 +154,10 @@ async fn assert_http(prepared: PreparedServer, label: &str) {
 
 #[tokio::test]
 async fn both_apis_serve_the_loaded_config_and_actual_bound_address() {
+    // The builder's sources include the `APP` environment, which would override the file's port.
+    if !in_isolated_child("startup::tests::both_apis_serve_the_loaded_config_and_actual_bound_address", &[]) {
+        return;
+    }
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("config.toml");
     std::fs::write(&path, "label = 'loaded'\n[server]\nhost = '127.0.0.1'\nport = 0").unwrap();
@@ -257,6 +262,10 @@ async fn custom_config_loader_errors_follow_the_error_policy() {
 
 #[tokio::test]
 async fn run_uses_configured_address_and_does_not_initialize_after_bind_failure() {
+    // The builder's sources include the `APP` environment, which would override the file's port.
+    if !in_isolated_child("startup::tests::run_uses_configured_address_and_does_not_initialize_after_bind_failure", &[]) {
+        return;
+    }
     let occupied = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = occupied.local_addr().unwrap();
     let dir = tempfile::tempdir().unwrap();

@@ -1226,20 +1226,46 @@ Configuration supports:
   A single underscore stays part of the field name, so snake_case fields are addressable, and
   typed fields (numbers, booleans) parse the value rather than rejecting it.
 
-Variable substitution is enabled for automatic loading and for every `with_*` source helper,
-including `with_default_config()`, `with_default_files()`, and `with_default_env()`.
+Every application loads the standard sources, `ConfigBuilder::standard()`, and the builder's
+`with_*` methods add to them. Whatever order those methods are called in, the precedence from
+lowest to highest is:
 
-Framework-managed loading installs typed defaults for the reserved `[server]` section beneath
-every file and environment source. Environment-only configuration therefore works without a
-configuration file:
+1. the framework's typed `[server]` defaults
+2. `configurations/application.toml`, if it exists
+3. `configurations/application_{profile}.toml` for `GOTCHA_ACTIVE_PROFILE`, if set and the file exists
+4. files added with `with_file_config` (required) or `with_optional_config`, in call order
+5. the `APP` environment prefix
+6. prefixes added with `with_env_config`, in call order
+
+```rust,no_run
+use gotcha::prelude::*;
+
+// All of the above, with local.toml above the conventional files and MYAPP_* on top.
+let app = Gotcha::new()
+    .with_env_config("MYAPP")
+    .with_optional_config("local.toml");
+```
+
+The environment overrides files even when a file is added after it. A path or prefix that is
+already listed keeps its place and is not read twice. Variable substitution applies to every
+source. `with_default_config()`, `with_default_files()`, `with_default_env()`, and
+`enable_variable_substitution()` change nothing: they state what is already there.
+
+The typed `[server]` defaults mean environment-only configuration works without a configuration
+file:
 
 ```sh
 APP_SERVER__PORT=9000 cargo run
 ```
 
-Applications can register their own typed defaults at the same layer with
-`ConfigBuilder::defaults`. Application defaults beat the framework's `127.0.0.1:3000`, while
-files and environment variables still beat them:
+For full control, `Gotcha::build_config` loads exactly what its closure registers, later sources
+overriding earlier ones. The closure starts from the framework's `[server]` defaults and **nothing
+else**: no `application.toml`, no profile file, no `APP` environment, and no `${VAR}` substitution
+unless it adds them. Call `standard_sources()` to opt into all of them.
+
+Applications can also register their own typed defaults with `ConfigBuilder::defaults`. Application
+defaults beat the framework's `127.0.0.1:3000`, while files and environment variables still beat
+them:
 
 ```rust,no_run
 use gotcha::prelude::*;
@@ -1259,12 +1285,17 @@ let _app = Gotcha::new()
                 server: ServerConfig { host: "0.0.0.0".into(), port: 8700 },
             })
             .expect("defaults serialize")
+            .standard_sources()
     })
     .expect("configuration loads");
 ```
 
-A custom loader passed to `load_config` can use the same builder. Manual loaders should start
-from `ConfigBuilder::framework_defaults()` rather than `ConfigBuilder::new()`; without the typed
+Without `standard_sources()`, that closure would load only the two sets of defaults and ignore
+every file and environment variable.
+
+A custom loader passed to `load_config` can use the same builder. Start from
+`ConfigBuilder::standard()` to keep the standard sources. A manual list should start from
+`ConfigBuilder::framework_defaults()` rather than `ConfigBuilder::new()`; without the typed
 `[server]` base, `APP_SERVER__PORT` is not coerced when no file supplies `server.port`:
 
 ```rust,no_run
@@ -1273,8 +1304,8 @@ use gotcha::{EmptyConfig, Gotcha};
 
 let app = Gotcha::new().load_config(|| async {
     let config: ConfigWrapper<EmptyConfig> = ConfigBuilder::framework_defaults()
-        .file_optional("configurations/application.toml")
-        .env("APP")
+        .file_optional("config.toml")
+        .env("MYAPP")
         .enable_vars()
         .build()?;
     Ok(config)

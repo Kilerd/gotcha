@@ -243,11 +243,12 @@ pub trait GotchaApp: Sized + Send + Sync {
     /// Load the configuration. The default honours `GOTCHA_ACTIVE_PROFILE`.
     /// This method's contract requires `Deserialize`, including when overridden.
     ///
-    /// The default loads `configurations/application.toml`, the profile-specific file, and the
-    /// `APP` environment prefix above the framework's typed server defaults, so
-    /// `APP_SERVER__PORT` also works without a configuration file. An override should start from
+    /// The default loads [`ConfigBuilder::standard`](config::ConfigBuilder::standard):
+    /// `configurations/application.toml`, the profile-specific file, and the `APP` environment
+    /// prefix above the framework's typed server defaults, so `APP_SERVER__PORT` also works
+    /// without a configuration file. An override can start from the same sources, or from
     /// [`ConfigBuilder::framework_defaults`](config::ConfigBuilder::framework_defaults) to keep
-    /// that typed base, and can add application defaults with
+    /// only that typed base, and can add application defaults with
     /// [`ConfigBuilder::defaults`](config::ConfigBuilder::defaults).
     /// [`Gotcha::load_config`] is the builder equivalent of an override.
     fn config(&self) -> impl std::future::Future<Output = GotchaResult<ConfigWrapper<Self::Config>>> + Send
@@ -255,7 +256,7 @@ pub trait GotchaApp: Sized + Send + Sync {
         Self::Config: for<'de> Deserialize<'de>,
     {
         async move {
-            let config = GotchaConfigLoader::load::<ConfigWrapper<Self::Config>>(std::env::var("GOTCHA_ACTIVE_PROFILE").ok())?;
+            let config = config::ConfigBuilder::standard().build::<ConfigWrapper<Self::Config>>()?;
             Ok(config)
         }
     }

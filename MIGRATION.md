@@ -1,5 +1,6 @@
 # Migration Guide
 
+- [Unreleased: additive configuration sources](#unreleased-additive-configuration-sources)
 - [Unreleased: Message and Messager moved out of gotcha](#unreleased-message-and-messager-moved-out-of-gotcha)
 - [Unreleased: deny_unknown_fields closes schemas](#unreleased-deny_unknown_fields-closes-schemas)
 - [Unreleased: from and into proxies document the type](#unreleased-from-and-into-proxies-document-the-type)
@@ -44,6 +45,66 @@
 - [Unreleased: default configuration sources](#unreleased-default-configuration-sources)
 - [0.3 → 0.4](#03--04) — **every application must edit its route paths and configuration file**
 - [0.2 → 0.3: API simplification](#02--03-api-simplification)
+
+---
+
+# Unreleased: additive configuration sources
+
+`with_env_config`, `with_file_config`, `with_optional_config`, `with_default_files`,
+`with_default_env`, and `enable_variable_substitution` were documented as adding to existing
+sources, but the first call started from the framework's server defaults alone.
+`Gotcha::new().with_env_config("MYAPP")` silently dropped `configurations/application.toml` and the
+profile file, and bound port 3000. These methods now add to the automatic sources, which have one
+public definition, `ConfigBuilder::standard()`. Whatever order the methods are called in, the
+precedence from lowest to highest is:
+
+1. the framework's typed `[server]` defaults
+2. `configurations/application.toml`, if it exists
+3. `configurations/application_{profile}.toml` for `GOTCHA_ACTIVE_PROFILE`, if set and the file exists
+4. files added with `with_file_config` or `with_optional_config`, in call order
+5. the `APP` environment prefix
+6. prefixes added with `with_env_config`, in call order
+
+What changes:
+
+- **An application calling only these methods reads more.** It starts reading
+  `configurations/application.toml`, the profile file, and `APP_*` variables. Values there can
+  change its settings, including the bound address, and an invalid file now fails startup. Check
+  for `APP_*` variables set for another purpose: `APP_SERVER__PORT` now applies, and a variable
+  whose value does not parse as the type of the setting it overrides fails loading.
+  `with_default_files()` alone now also reads `APP_*`, and `with_default_env()` alone also reads
+  the files.
+- **A file added after an environment source now loses to it.** In
+  `.with_env_config("MYAPP").with_file_config("local.toml")`, `local.toml` used to win; `MYAPP_*`
+  now does, whichever is called first. Files still override each other in call order, and so do
+  prefixes.
+- **A repeated path or prefix keeps its place.** It used to be read again and win over what was
+  added in between. Naming a standard source does the same: `.with_env_config("APP")` stays below
+  other added prefixes, and `.with_file_config("configurations/application.toml")` stays below the
+  profile file, though the file becomes required.
+- **`Config::load_default()` now honours `GOTCHA_ACTIVE_PROFILE`.** It ignored the profile before.
+  `GotchaConfigLoader::load(profile)` is unchanged: its caller names the profile.
+- **`GOTCHA_ACTIVE_PROFILE` is read when configuration loads**, not when `with_default_files()` is
+  called.
+- **`ConfigSource` gained an `ActiveProfile` variant.** Add an arm to exhaustive matches.
+
+`.config(value)` still wins over all sources, and `ConfigErrorPolicy` behaves as before. A required
+`with_file_config` file that is missing still fails startup under the strict policy.
+
+To get the old result, list the exact sources with `Gotcha::build_config`. Its closure still starts
+from the framework's server defaults alone and applies sources in the order it registers them.
+Unlike the `with_*` methods it loads immediately, returning errors from `build_config` itself
+without going through `ConfigErrorPolicy`, and enables substitution only on request:
+
+```rust,ignore
+// Before: Gotcha::new().with_env_config("MYAPP").with_file_config("local.toml")
+let app = Gotcha::new().build_config(|builder| builder.env("MYAPP").file("local.toml").enable_vars())?;
+```
+
+In a `build_config` closure, or a custom `GotchaApp::config()`, `standard_sources()` adds the
+standard sources to a builder and `ConfigBuilder::standard()` starts from them. A `build_config`
+closure that only called `.defaults(..)` was ignoring every file and environment variable; add
+`.standard_sources()` to read them.
 
 ---
 
@@ -1904,9 +1965,9 @@ let restored = ConfigBuilder::from_state(builder.state());
 ```
 
 Here `APP` overrides `base.toml`, and `local.toml` overrides both. Previously restoration grouped
-all environment sources before all files, changing precedence. `Gotcha::with_file_config`,
-`with_optional_config`, `with_env_config`, and the default-source helpers use this same ordering.
-To let environment values win, add their source after the files.
+all environment sources before all files, changing precedence. To let environment values win, add
+their source after the files. The `Gotcha::with_*` methods have their own fixed precedence; see
+[additive configuration sources](#unreleased-additive-configuration-sources).
 
 **Direct `ConfigState` construction is a source-breaking change.** Replace `file_paths` and
 `env_prefixes` with the ordered `sources` list, specifying which files are required:
