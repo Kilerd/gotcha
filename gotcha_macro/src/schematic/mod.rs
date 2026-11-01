@@ -398,6 +398,33 @@ impl ParameterStructFieldOpt {
     }
 }
 
+/// Emit an expression for a tuple variant's array schema: one positional `prefixItems` entry
+/// per field with the count pinned by `minItems`/`maxItems`.
+///
+/// External, adjacent and untagged tuple variants all serialize as an array of their fields;
+/// one emitter keeps the three shapes documented identically.
+pub(crate) fn tuple_variant_schema(core: &TokenStream2, fields: &[ParameterStructFieldOpt]) -> TokenStream2 {
+    let field_schemas: Vec<TokenStream2> = fields
+        .iter()
+        .map(|field| {
+            let field_ty = field.schema_type().clone();
+            quote! { <#field_ty as #core::Schematic>::generate_schema().schema.to_value() }
+        })
+        .collect();
+    quote! {
+        {
+            let prefix_items: Vec<#core::serde_json::Value> = vec![ #( #field_schemas ),* ];
+            let item_count = prefix_items.len();
+            let mut array_schema: ::std::collections::HashMap<String, #core::serde_json::Value> = ::std::collections::HashMap::new();
+            array_schema.insert("type".to_string(), #core::serde_json::to_value("array").expect("cannot convert type to value"));
+            array_schema.insert("prefixItems".to_string(), #core::serde_json::to_value(prefix_items).expect("cannot convert prefixItems to value"));
+            array_schema.insert("minItems".to_string(), #core::serde_json::to_value(item_count).expect("cannot convert minItems to value"));
+            array_schema.insert("maxItems".to_string(), #core::serde_json::to_value(item_count).expect("cannot convert maxItems to value"));
+            #core::serde_json::to_value(array_schema).expect("cannot convert array schema to value")
+        }
+    }
+}
+
 #[derive(Debug, FromVariant)]
 #[darling(attributes(parameter), forward_attrs(allow, doc, cfg, serde))]
 pub(crate) struct ParameterEnumVariantOpt {
