@@ -21,7 +21,7 @@
 //! | `document_extractor_errors()`                | `document_extractor_errors`                    | `documents_match`                      |
 //! | `openapi_document()`                         | `into_openapi` on a freshly built application  | `documents_match`                      |
 //! | `metrics_endpoint()`                         | `metrics`                                      | `assembled_routers_match`              |
-//! | `tasks()`                                    | `try_tasks`, `tasks`                           | `startup_stages_match`, `failing_stages_match`, `shutdown_lifecycles_match` |
+//! | `tasks()`                                    | `try_tasks`, `tasks`                           | `startup_stages_match`, `failing_stages_match`, `a_failing_registrar_stops_later_registrars`, `shutdown_lifecycles_match` |
 //! | `shutdown_signal()`                          | `shutdown_signal`                              | `shutdown_lifecycles_match`            |
 //! | `http_shutdown_timeout()`                    | `http_shutdown_timeout`                        | `shutdown_lifecycles_match`            |
 //! | `task_shutdown_timeout()`                    | `task_shutdown_timeout`                        | `shutdown_lifecycles_match`            |
@@ -461,6 +461,28 @@ async fn failing_stages_match() {
         assert_eq!(observed[0], observed[1], "trait, then builder");
         assert_eq!(observed[0].last(), Some(&stage), "nothing runs after the failure, no task starts");
     }
+}
+
+/// The trait's `tasks()` stops at its first error; the builder's registrars stop at the first
+/// one that fails.
+#[tokio::test]
+async fn a_failing_registrar_stops_later_registrars() {
+    let later = Arc::new(Mutex::new(false));
+    let ran = later.clone();
+    let config = ConfigWrapper {
+        app: (),
+        server: ServerConfig {
+            host: "127.0.0.1".into(),
+            port: 0,
+        },
+    };
+    let result = Gotcha::from_context(GotchaContext::new((), config))
+        .try_tasks(|_| Box::pin(async { Err(GotchaError::message("tasks")) }))
+        .tasks(move |_| *ran.lock().unwrap() = true)
+        .bind()
+        .await;
+    assert!(matches!(result, Err(GotchaError::Message(message)) if message == "tasks"));
+    assert!(!*later.lock().unwrap(), "registrars after a failing one do not run");
 }
 
 #[tokio::test]
