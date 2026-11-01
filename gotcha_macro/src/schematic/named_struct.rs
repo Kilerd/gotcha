@@ -14,6 +14,7 @@ pub(crate) fn handler(
     let mut normal_fields_stream: Vec<TokenStream2> = Vec::new();
     let mut flatten_fields_stream: Vec<TokenStream2> = Vec::new();
     let mut flatten_schema_stream: Vec<TokenStream2> = Vec::new();
+    let mut flatten_map_stream: Vec<TokenStream2> = Vec::new();
     let mut wire_fields_stream: Vec<TokenStream2> = Vec::new();
 
     for field in fields.fields.into_iter() {
@@ -58,6 +59,13 @@ pub(crate) fn handler(
             flatten_schema_stream.push(quote! {
                 if let Some(flatten_val) = <#field_ty as #core::Schematic>::flatten_schema() {
                     flatten_schemas.push(flatten_val);
+                }
+            });
+            // A flattened map reports its value schema through `additional_properties()`;
+            // non-map types return `None`, so nothing is generated or registered here.
+            flatten_map_stream.push(quote! {
+                if let Some(additional) = <#field_ty as #core::Schematic>::additional_properties() {
+                    flatten_maps.push(additional);
                 }
             });
             // The flattened type's fields appear at this level, so the entry carries the inner
@@ -118,6 +126,12 @@ pub(crate) fn handler(
             #(
                 #flatten_schema_stream
             )*
+            // Flattened maps contribute `additionalProperties` (or `unevaluatedProperties` when
+            // composing through allOf) instead of fields.
+            let mut flatten_maps: Vec<#core::serde_json::Value> = vec![];
+            #(
+                #flatten_map_stream
+            )*
 
             // Build the base object schema with own properties
             let mut required_fields = vec![];
@@ -131,11 +145,20 @@ pub(crate) fn handler(
                 }
             }
 
+            let combined_additional = match flatten_maps.len() {
+                0 => None,
+                1 => flatten_maps.pop(),
+                _ => Some(#core::serde_json::json!({ "anyOf": flatten_maps })),
+            };
+
             if flatten_schemas.is_empty() {
                 // No enum flatten fields, just use simple object schema
                 schema.schema._type = Some(Self::type_().into());
                 schema.schema.extras.insert("properties".to_string(), #core::serde_json::to_value(properties).unwrap());
                 schema.schema.extras.insert("required".to_string(), #core::serde_json::to_value(required_fields).unwrap());
+                if let Some(additional) = combined_additional {
+                    schema.schema.extras.insert("additionalProperties".to_string(), additional);
+                }
             } else {
                 // Has enum flatten fields, use allOf to combine
                 let mut base_schema = ::std::collections::HashMap::new();
@@ -148,6 +171,12 @@ pub(crate) fn handler(
                 ];
                 all_of.extend(flatten_schemas);
 
+                // With `allOf`, `additionalProperties` would also constrain the parent's own
+                // declared fields; `unevaluatedProperties` applies only to entries no branch
+                // evaluated (OpenAPI 3.2 supports it).
+                if let Some(additional) = combined_additional {
+                    schema.schema.extras.insert("unevaluatedProperties".to_string(), additional);
+                }
                 schema.schema._type = None;
                 schema.schema.extras.insert("allOf".to_string(), #core::serde_json::to_value(all_of).unwrap());
             }
@@ -173,6 +202,27 @@ pub(crate) fn handler(
     };
 
     // Generate flatten_schema implementation for structs
+    // Flattened maps contribute `additionalProperties` at this level. A parent that flattens
+    // this struct asks for the combined value through this method instead of generating a
+    // schema for the struct (which would register a component during collection).
+    let additional_properties_impl = if has_flatten {
+        quote! {
+            fn additional_properties() -> Option<#core::serde_json::Value> {
+                let mut flatten_maps: Vec<#core::serde_json::Value> = vec![];
+                #(
+                    #flatten_map_stream
+                )*
+                match flatten_maps.len() {
+                    0 => None,
+                    1 => flatten_maps.pop(),
+                    _ => Some(#core::serde_json::json!({ "anyOf": flatten_maps })),
+                }
+            }
+        }
+    } else {
+        quote! {}
+    };
+
     let flatten_schema_impl = if has_flatten {
         quote! {
             fn flatten_schema() -> Option<#core::serde_json::Value> {
@@ -239,6 +289,7 @@ pub(crate) fn handler(
         }
 
         #flatten_schema_impl
+        #additional_properties_impl
 
         fn generate_schema() -> #core::EnhancedSchema {
             // During spec assembly this registers the schema under `name()` and returns a `$ref`

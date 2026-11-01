@@ -74,6 +74,9 @@ pub(crate) fn handler(core: &TokenStream2, fields: Vec<ParameterStructFieldOpt>,
         fn flatten_schema() -> Option<#core::serde_json::Value> {
             <#inner_ty as #core::Schematic>::flatten_schema()
         }
+        fn additional_properties() -> Option<#core::serde_json::Value> {
+            <#inner_ty as #core::Schematic>::additional_properties()
+        }
         #wire_fields_impl
     }
 }

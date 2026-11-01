@@ -511,6 +511,9 @@ pub(crate) fn named_variant_object(
                         if let Some(flatten_val) = <#field_ty as #core::Schematic>::flatten_schema() {
                             flatten_schemas.push(flatten_val);
                         }
+                        if let Some(additional) = <#field_ty as #core::Schematic>::additional_properties() {
+                            flatten_maps.push(additional);
+                        }
                         for (inner_name, mut inner_schema) in <#field_ty as #core::Schematic>::fields() {
                             if !<#field_ty as #core::Schematic>::required() {
                                 inner_schema.required = false;
@@ -553,18 +556,30 @@ pub(crate) fn named_variant_object(
             let mut properties: ::std::collections::HashMap<String, #core::serde_json::Value> = ::std::collections::HashMap::new();
             let mut properties_required_fields: Vec<String> = vec![];
             let mut flatten_schemas: Vec<#core::serde_json::Value> = vec![];
+            let mut flatten_maps: Vec<#core::serde_json::Value> = vec![];
             #tag_code
             #( #field_statements )*
             let mut base_object: ::std::collections::HashMap<String, #core::serde_json::Value> = ::std::collections::HashMap::new();
             base_object.insert("type".to_string(), #core::serde_json::to_value("object").expect("cannot convert type to value"));
             base_object.insert("properties".to_string(), #core::serde_json::to_value(properties).expect("cannot convert properties to value"));
             base_object.insert("required".to_string(), #core::serde_json::to_value(properties_required_fields).expect("cannot convert required fields to value"));
+            let combined_additional = match flatten_maps.len() {
+                0 => None,
+                1 => flatten_maps.pop(),
+                _ => Some(#core::serde_json::json!({ "anyOf": flatten_maps })),
+            };
             if flatten_schemas.is_empty() {
+                if let Some(additional) = combined_additional {
+                    base_object.insert("additionalProperties".to_string(), additional);
+                }
                 base_object
             } else {
                 let mut all_of: Vec<#core::serde_json::Value> = vec![#core::serde_json::to_value(base_object).expect("cannot convert base object to value")];
                 all_of.extend(flatten_schemas);
                 let mut composed: ::std::collections::HashMap<String, #core::serde_json::Value> = ::std::collections::HashMap::new();
+                if let Some(additional) = combined_additional {
+                    composed.insert("unevaluatedProperties".to_string(), additional);
+                }
                 composed.insert("allOf".to_string(), #core::serde_json::to_value(all_of).expect("cannot convert allOf to value"));
                 composed
             }

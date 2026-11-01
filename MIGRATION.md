@@ -1,5 +1,6 @@
 # Migration Guide
 
+- [Unreleased: derive documents serde's wire shapes](#unreleased-derive-documents-serdes-wire-shapes)
 - [Unreleased: invalid task registrations fail startup](#unreleased-invalid-task-registrations-fail-startup)
 - [Unreleased: non-exhaustive extractor enums](#unreleased-non-exhaustive-extractor-enums)
 - [Unreleased: shared configuration](#unreleased-shared-configuration)
@@ -34,6 +35,34 @@
 - [Unreleased: default configuration sources](#unreleased-default-configuration-sources)
 - [0.3 → 0.4](#03--04) — **every application must edit its route paths and configuration file**
 - [0.2 → 0.3: API simplification](#02--03-api-simplification)
+
+---
+
+# Unreleased: derive documents serde's wire shapes
+
+The `Schematic` derive now documents enum variants and struct-variant fields the way serde writes
+them. Generated documents change for these shapes; regenerate clients built from them.
+
+- Unit variants follow the tag form: an all-unit internally or adjacently tagged enum is an
+  object (`{"kind": "A"}`), an untagged unit variant is `null`, and a unit variant in a mixed
+  externally tagged enum is the bare string. Zero-field struct (`A {}`) and tuple (`A()`) variants
+  keep their object/array shapes; a few unit combinations remain documented as known mismatches.
+- Untagged enum struct-variant fields keep their Rust names; the container `rename_all` names
+  variants, which untagged serialization never writes.
+- Struct-variant fields honour `skip`/`skip_serializing`/`skip_deserializing`, `flatten`, the
+  variant's `rename_all` and the container's `rename_all_fields`, in every tag form.
+- A multi-field tuple variant is documented as an array (`prefixItems` with pinned
+  `minItems`/`maxItems`) instead of an empty object, and tuple-field `#[schematic(..)]`
+  annotations are applied.
+- `#[serde(transparent)]` structs document their single non-skipped inner value. The wrapper no
+  longer gets a component of its own and its own doc comment no longer appears.
+- Flattened maps add `additionalProperties` to the parent (or `unevaluatedProperties` next to an
+  `allOf`); an internally tagged newtype variant wrapping a map merges its entries next to the
+  tag.
+- A tuple/newtype field's `#[schematic(..)]` applies to the value it documents. On an
+  internally tagged newtype variant only `title`/`description` can go on the object branch;
+  `example`/`default`/`format` need a value schema. Doc comments on tuple/newtype variant fields
+  are not turned into descriptions; named struct-variant fields keep theirs, as before.
 
 ---
 

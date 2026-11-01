@@ -107,12 +107,20 @@ pub(crate) fn handler(
         }
 
         fn flatten_schema() -> Option<#core::serde_json::Value> {
-            // Return the oneOf schema for flattening
-            let branches: Vec<#core::serde_json::Value> = vec![
+            // Return the oneOf schema for flattening. A branch's `additionalProperties` would
+            // also constrain the fields the parent declares next to the flattened enum, so it is
+            // dropped from object branches.
+            let mut branches: Vec<#core::serde_json::Value> = vec![
                 #(
                     #variants_codegen,
                 )*
             ];
+            for branch in &mut branches {
+                if let Some(object) = branch.as_object_mut() {
+                    object.remove("additionalProperties");
+                    object.remove("unevaluatedProperties");
+                }
+            }
             let mut obj: ::std::collections::HashMap<String, #core::serde_json::Value> = ::std::collections::HashMap::new();
             obj.insert("oneOf".to_string(), #core::serde_json::to_value(branches).unwrap());
             Some(#core::serde_json::to_value(obj).unwrap())
