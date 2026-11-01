@@ -495,9 +495,23 @@ pub(crate) fn tuple_variant_schema(core: &TokenStream2, fields: &[ParameterStruc
 /// `at_parent_level` says the object is the branch itself, not a body nested under a key. Such a
 /// branch loses a flattened map's `additionalProperties` when its enum is flattened (where the
 /// `flattening` local says so), so the value type must not be registered then.
+///
+/// `deny_unknown_fields` closes the object. A flattened field keeps it open: serde documents the
+/// combination as unsupported, and a closed object would reject the flattened fields of an `allOf`
+/// sibling. So does what leaves out a key serde writes or reads: a `skip_serializing` field, and a
+/// field with a different name in each direction.
 pub(crate) fn named_variant_object(
-    core: &TokenStream2, tag: Option<(&str, &str)>, fields: Vec<ParameterStructFieldOpt>, at_parent_level: bool,
+    core: &TokenStream2, tag: Option<(&str, &str)>, fields: Vec<ParameterStructFieldOpt>, at_parent_level: bool, deny_unknown_fields: bool,
 ) -> TokenStream2 {
+    let closed = (deny_unknown_fields
+        && !fields
+            .iter()
+            .any(|field| field.serde.flatten || (field.serde.skip_serializing && !field.serde.skip_deserializing) || field.serde.has_split_name()))
+    .then(|| {
+        quote! {
+            base_object.insert("additionalProperties".to_string(), #core::serde_json::Value::Bool(false));
+        }
+    });
     let keeps_flattened_maps = if at_parent_level {
         quote! { !flattening }
     } else {
@@ -586,6 +600,7 @@ pub(crate) fn named_variant_object(
             base_object.insert("type".to_string(), #core::serde_json::to_value("object").expect("cannot convert type to value"));
             base_object.insert("properties".to_string(), #core::serde_json::to_value(properties).expect("cannot convert properties to value"));
             base_object.insert("required".to_string(), #core::serde_json::to_value(properties_required_fields).expect("cannot convert required fields to value"));
+            #closed
             let combined_additional = match flatten_maps.len() {
                 0 => None,
                 1 => flatten_maps.pop(),
@@ -801,7 +816,7 @@ pub(crate) fn handler(input: TokenStream2) -> syn::Result<TokenStream2> {
                     Tagging::Internal(tag) if !serde.deny_unknown_fields && !serde.converts => Some((tag.as_str(), serde.serialize_name.as_str())),
                     _ => None,
                 };
-                named_struct::handler(&core, schema_name.clone(), doc, fields, serde.default, tag, serde.reads_another_type)?
+                named_struct::handler(&core, schema_name.clone(), doc, fields, &serde, tag)?
             }
         }
     };

@@ -1,5 +1,6 @@
 # Migration Guide
 
+- [Unreleased: deny_unknown_fields closes schemas](#unreleased-deny_unknown_fields-closes-schemas)
 - [Unreleased: from and into proxies document the type](#unreleased-from-and-into-proxies-document-the-type)
 - [Unreleased: moving from GotchaApp to the builder](#unreleased-moving-from-gotchaapp-to-the-builder)
 - [Unreleased: extractor provider keys](#unreleased-extractor-provider-keys)
@@ -43,6 +44,44 @@
 - [Unreleased: default configuration sources](#unreleased-default-configuration-sources)
 - [0.3 → 0.4](#03--04) — **every application must edit its route paths and configuration file**
 - [0.2 → 0.3: API simplification](#02--03-api-simplification)
+
+---
+
+# Unreleased: deny_unknown_fields closes schemas
+
+`#[serde(deny_unknown_fields)]` now adds `additionalProperties: false` to the schema, where serde
+rejects unknown keys:
+
+- a struct;
+- the body of a struct variant, in every tag form;
+- in an adjacently tagged enum, also the object holding the tag and the content.
+
+Documents become stricter and generated clients may change (for example, a TypeScript type loses
+its index signature), so regenerate them. A key the document now refuses but serde reads:
+
+- an `alias`, which the document does not list;
+- `{"t": "U", "c": null}` for an adjacently tagged unit variant, which serde also reads as
+  `{"t": "U"}`.
+
+These stay as they were:
+
+- A struct or variant with a `#[serde(flatten)]` field, because serde documents the combination as
+  not supported. A flattened struct, or an externally or adjacently tagged enum, reads valid values
+  and rejects unknown keys. A flattened internally tagged or untagged enum rejects every value. A
+  flattened map reads an empty map and rejects entries.
+- A struct or variant with a `skip_serializing` field, and a struct with a `skip_deserializing`
+  field: the schema leaves out a key serde reads or writes, so a closed schema would reject it.
+- A struct or variant with a field serde writes and reads under different names, through `rename`,
+  `rename_all` or `rename_all_fields`: the schema names one of them, so a closed schema would reject
+  the other.
+- A type with `from`, `try_from` or `into`: serde writes or reads the other type, whose keys this
+  type's schema does not know. A proxy documented for both directions follows its own attributes.
+- A struct with both `tag` and `deny_unknown_fields`: serde writes the tag and rejects a request
+  carrying it, so the schema neither declares the tag nor closes the object.
+- Internally tagged unit and newtype variants, where serde accepts unknown keys.
+- A parent that flattens such a type: `deny_unknown_fields` applies to the type, and serde accepts
+  unknown keys at the parent's level. A value with the attribute that a flattened enum's branch
+  wraps is documented inline and open there.
 
 ---
 

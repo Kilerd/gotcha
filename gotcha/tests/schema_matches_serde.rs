@@ -46,8 +46,8 @@ fn own_schema<T: Schematic>() -> Value {
 
 /// Return `document` with unknown properties rejected for validation.
 ///
-/// The generated schema leaves undeclared properties accepted, so a misspelled optional field
-/// would validate even though serde would never write it under that name. Every declared-field
+/// Without `deny_unknown_fields` the generated schema leaves undeclared properties accepted, so a
+/// misspelled optional field would validate even though serde would never write it under that name. Every declared-field
 /// object schema gets `unevaluatedProperties: false`; schemas inside an `allOf` branch are left
 /// alone because their properties are evaluated by the enclosing schema together with the
 /// sibling branches. This changes the document only for validation, not what the derive emits.
@@ -343,7 +343,7 @@ struct FlattensExternallyTagged {
     kind: ExternallyTagged,
 }
 
-#[derive(Schematic, Serialize, Deserialize)]
+#[derive(Schematic, Serialize, Deserialize, Clone)]
 struct Paging {
     page: u32,
     per_page: u32,
@@ -3652,6 +3652,1055 @@ fn a_one_sided_conversion_keeps_the_fields_of_the_other_direction() {
     assert_requests_are_read::<OnlyInto>();
 }
 
+/// `deny_unknown_fields`: the schema closes the objects serde closes.
+#[allow(dead_code)]
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct DenyStruct {
+    some_field: u8,
+    maybe_field: Option<u8>,
+    #[serde(skip)]
+    hidden: u8,
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+struct HoldsDenyStruct {
+    inner: DenyStruct,
+}
+
+/// `written` is on the wire but not in the struct's schema, so the schema must stay open.
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DenyWithWrittenField {
+    value: u8,
+    #[serde(skip_deserializing)]
+    written: u8,
+}
+
+/// `secret` is read but not in the schema, so the schema must stay open.
+#[allow(dead_code)]
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DenyWithReadField {
+    user: String,
+    #[serde(skip_serializing)]
+    secret: String,
+}
+
+#[allow(dead_code)]
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, tag = "kind")]
+enum DenyVariantWithReadField {
+    Login {
+        user: String,
+        #[serde(skip_serializing)]
+        secret: String,
+    },
+}
+
+#[derive(Schematic, Serialize, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+enum DenyExternal {
+    Named { value: u8 },
+    Newtype(u8),
+    Unit,
+}
+
+#[derive(Schematic, Serialize, Deserialize, Clone)]
+#[serde(deny_unknown_fields, tag = "kind")]
+enum DenyInternal {
+    Named { value: u8 },
+    Newtype(Paging),
+    Unit,
+}
+
+#[derive(Schematic, Serialize, Deserialize, Clone)]
+#[serde(deny_unknown_fields, tag = "kind", content = "data")]
+enum DenyAdjacent {
+    Named { value: u8 },
+    Newtype(u8),
+    Unit,
+}
+
+#[derive(Schematic, Serialize, Deserialize, Clone)]
+#[serde(deny_unknown_fields, untagged)]
+enum DenyUntagged {
+    Named { value: u8 },
+    Newtype(u8),
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, tag = "kind")]
+enum DenyUntaggedVariant {
+    Named {
+        value: u8,
+    },
+    #[serde(untagged)]
+    Bare {
+        bare: u8,
+    },
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+enum DenyExternalUntaggedVariant {
+    Tagged(u8),
+    #[serde(untagged)]
+    Bare {
+        bare: u8,
+    },
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+struct FlattensDenyExternalUntaggedVariant {
+    parent: u8,
+    #[serde(flatten)]
+    inner: DenyExternalUntaggedVariant,
+}
+
+/// serde documents `flatten` with `deny_unknown_fields` as not supported. A flattened struct or an
+/// externally or adjacently tagged enum reads valid values and rejects unknown keys, a flattened
+/// internally tagged or untagged enum rejects every value, and a flattened map reads an empty map
+/// and rejects entries. The schema stays open.
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DenyFlattensStruct {
+    value: u8,
+    #[serde(flatten)]
+    paging: Paging,
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DenyFlattensMap {
+    value: u8,
+    #[serde(flatten)]
+    extra: HashMap<String, u8>,
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DenyFlattensEnum {
+    value: u8,
+    #[serde(flatten)]
+    kind: InternallyTagged,
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, tag = "kind")]
+enum DenyVariantFlattensStruct {
+    Named {
+        value: u8,
+        #[serde(flatten)]
+        paging: Paging,
+    },
+}
+
+/// Flattening a type with `deny_unknown_fields` does not close the parent: the attribute is the
+/// flattened type's, and serde accepts unknown keys here.
+#[derive(Schematic, Serialize, Deserialize)]
+struct FlattensDenyStruct {
+    parent: u8,
+    #[serde(flatten)]
+    inner: DenyStruct,
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+struct FlattensDenyInternal {
+    parent: u8,
+    #[serde(flatten)]
+    inner: DenyInternal,
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+struct FlattensDenyAdjacent {
+    parent: u8,
+    #[serde(flatten)]
+    inner: DenyAdjacent,
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+struct FlattensDenyExternal {
+    parent: u8,
+    #[serde(flatten)]
+    inner: DenyExternal,
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+struct FlattensDenyUntagged {
+    parent: u8,
+    #[serde(flatten)]
+    inner: DenyUntagged,
+}
+
+/// A value with `deny_unknown_fields` that a flattened enum's branch wraps. A reference to it would
+/// bring `additionalProperties: false` along, which rejects the parent's fields.
+#[derive(Schematic, Serialize, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+struct ClosedValue {
+    a: u8,
+    o: Option<u8>,
+}
+
+#[derive(Schematic, Serialize, Deserialize, Clone)]
+struct NewtypeOfClosed(ClosedValue);
+
+#[derive(Schematic, Serialize, Deserialize, Clone)]
+#[serde(from = "ClosedValue", into = "ClosedValue")]
+struct ProxyOfClosed {
+    own: u8,
+}
+
+impl From<ClosedValue> for ProxyOfClosed {
+    fn from(value: ClosedValue) -> Self {
+        ProxyOfClosed { own: value.a }
+    }
+}
+
+impl From<ProxyOfClosed> for ClosedValue {
+    fn from(value: ProxyOfClosed) -> Self {
+        ClosedValue { a: value.own, o: None }
+    }
+}
+
+#[derive(Schematic, Serialize, Deserialize, Clone)]
+#[serde(untagged)]
+enum UntaggedEnumOfClosed {
+    Closed(ClosedValue),
+}
+
+macro_rules! flattened_closed_branch {
+    ($wrapped:ty, $sample:expr, $untagged:ident, $external:ident, $internal:ident, $adjacent:ident, $test:ident) => {
+        #[derive(Schematic, Serialize, Deserialize, Clone)]
+        #[serde(untagged)]
+        enum $untagged {
+            Closed($wrapped),
+            Text(String),
+        }
+
+        #[derive(Schematic, Serialize, Deserialize, Clone)]
+        enum $external {
+            Tagged(u8),
+            #[serde(untagged)]
+            Closed($wrapped),
+        }
+
+        #[derive(Schematic, Serialize, Deserialize, Clone)]
+        #[serde(tag = "kind")]
+        enum $internal {
+            Tagged {
+                value: u8,
+            },
+            #[serde(untagged)]
+            Closed($wrapped),
+        }
+
+        #[derive(Schematic, Serialize, Deserialize, Clone)]
+        #[serde(tag = "kind", content = "data")]
+        enum $adjacent {
+            Tagged(u8),
+            #[serde(untagged)]
+            Closed($wrapped),
+        }
+
+        #[test]
+        fn $test() {
+            #[derive(Schematic, Serialize, Deserialize)]
+            struct FlattensUntagged {
+                p: u8,
+                #[serde(flatten)]
+                u: $untagged,
+            }
+            #[derive(Schematic, Serialize, Deserialize)]
+            struct FlattensExternal {
+                p: u8,
+                #[serde(flatten)]
+                u: $external,
+            }
+            #[derive(Schematic, Serialize, Deserialize)]
+            struct FlattensInternal {
+                p: u8,
+                #[serde(flatten)]
+                u: $internal,
+            }
+            #[derive(Schematic, Serialize, Deserialize)]
+            struct FlattensAdjacent {
+                p: u8,
+                #[serde(flatten)]
+                u: $adjacent,
+            }
+            let sample: $wrapped = $sample;
+            assert_serialization_matches(&FlattensUntagged {
+                p: 1,
+                u: $untagged::Closed(sample.clone()),
+            });
+            assert_serialization_matches(&FlattensExternal {
+                p: 1,
+                u: $external::Closed(sample.clone()),
+            });
+            assert_serialization_matches(&FlattensInternal {
+                p: 1,
+                u: $internal::Closed(sample.clone()),
+            });
+            assert_serialization_matches(&FlattensAdjacent {
+                p: 1,
+                u: $adjacent::Closed(sample),
+            });
+            // The branch documents the value inline, so nothing is left registered for it.
+            let (_, components) = gotcha::gotcha_core::registry::collect(|| FlattensUntagged::generate_schema());
+            assert_eq!(components.keys().cloned().collect::<Vec<_>>(), ["FlattensUntagged"]);
+        }
+    };
+}
+
+flattened_closed_branch!(
+    ClosedValue,
+    ClosedValue { a: 1, o: None },
+    UntaggedClosed,
+    ExternalClosed,
+    InternalClosed,
+    AdjacentClosed,
+    a_flattened_branch_opens_a_closed_struct
+);
+flattened_closed_branch!(
+    NewtypeOfClosed,
+    NewtypeOfClosed(ClosedValue { a: 1, o: None }),
+    UntaggedNewtypeOfClosed,
+    ExternalNewtypeOfClosed,
+    InternalNewtypeOfClosed,
+    AdjacentNewtypeOfClosed,
+    a_flattened_branch_opens_a_newtype_of_a_closed_struct
+);
+flattened_closed_branch!(
+    ProxyOfClosed,
+    ProxyOfClosed { own: 1 },
+    UntaggedProxyOfClosed,
+    ExternalProxyOfClosed,
+    InternalProxyOfClosed,
+    AdjacentProxyOfClosed,
+    a_flattened_branch_opens_a_proxy_of_a_closed_struct
+);
+flattened_closed_branch!(
+    Box<ClosedValue>,
+    Box::new(ClosedValue { a: 1, o: None }),
+    UntaggedBoxOfClosed,
+    ExternalBoxOfClosed,
+    InternalBoxOfClosed,
+    AdjacentBoxOfClosed,
+    a_flattened_branch_opens_a_box_of_a_closed_struct
+);
+flattened_closed_branch!(
+    UntaggedEnumOfClosed,
+    UntaggedEnumOfClosed::Closed(ClosedValue { a: 1, o: None }),
+    UntaggedEnumBranch,
+    ExternalEnumBranch,
+    InternalEnumBranch,
+    AdjacentEnumBranch,
+    a_flattened_branch_opens_a_nested_enum_of_a_closed_struct
+);
+flattened_closed_branch!(
+    DenyAdjacent,
+    DenyAdjacent::Unit,
+    UntaggedDenyAdjacent,
+    ExternalDenyAdjacent,
+    InternalDenyAdjacent,
+    AdjacentDenyAdjacent,
+    a_flattened_branch_opens_a_closed_adjacent_enum
+);
+flattened_closed_branch!(
+    DenyInternal,
+    DenyInternal::Named { value: 1 },
+    UntaggedDenyInternal,
+    ExternalDenyInternal,
+    InternalDenyInternal,
+    AdjacentDenyInternal,
+    a_flattened_branch_opens_a_closed_internal_enum
+);
+flattened_closed_branch!(
+    DenyUntagged,
+    DenyUntagged::Named { value: 1 },
+    UntaggedDenyUntagged,
+    ExternalDenyUntagged,
+    InternalDenyUntagged,
+    AdjacentDenyUntagged,
+    a_flattened_branch_opens_a_closed_untagged_enum
+);
+
+/// Not flattened, the value keeps its own closed component.
+#[derive(Schematic, Serialize, Deserialize)]
+struct HoldsUntaggedClosed {
+    field: UntaggedClosed,
+}
+
+fn deny_struct_sample() -> DenyStruct {
+    DenyStruct {
+        some_field: 1,
+        maybe_field: None,
+        hidden: 2,
+    }
+}
+
+#[test]
+fn deny_unknown_fields_closes_a_struct() {
+    assert_rejected::<DenyStruct>(json!({"someField": 1, "maybeField": null, "unknown": 3}));
+    assert_serialization_matches(&deny_struct_sample());
+    assert_requests_are_read::<DenyStruct>();
+}
+
+#[test]
+fn deny_unknown_fields_closes_a_referenced_struct() {
+    assert_rejected::<HoldsDenyStruct>(json!({"inner": {"someField": 1, "maybeField": null, "unknown": 3}}));
+    assert_requests_are_read::<HoldsDenyStruct>();
+}
+
+#[test]
+fn deny_unknown_fields_closes_an_external_struct_variant() {
+    assert_rejected::<DenyExternal>(json!({"Named": {"value": 1, "unknown": 2}}));
+    assert_serialization_matches(&DenyExternal::Named { value: 1 });
+    assert_requests_are_read::<DenyExternal>();
+}
+
+#[test]
+fn deny_unknown_fields_closes_an_internal_struct_variant() {
+    assert_rejected::<DenyInternal>(json!({"kind": "Named", "value": 1, "unknown": 2}));
+    assert_serialization_matches(&DenyInternal::Named { value: 1 });
+    assert_requests_are_read::<DenyInternal>();
+}
+
+#[test]
+fn deny_unknown_fields_closes_an_adjacent_struct_variant_body() {
+    assert_rejected::<DenyAdjacent>(json!({"kind": "Named", "data": {"value": 1, "unknown": 2}}));
+    assert_serialization_matches(&DenyAdjacent::Named { value: 1 });
+    assert_requests_are_read::<DenyAdjacent>();
+}
+
+#[test]
+fn deny_unknown_fields_closes_the_adjacent_object_around_the_content() {
+    assert_rejected::<DenyAdjacent>(json!({"kind": "Newtype", "data": 1, "unknown": 2}));
+    assert_serialization_matches(&DenyAdjacent::Newtype(1));
+}
+
+#[test]
+fn deny_unknown_fields_closes_an_adjacent_unit_variant() {
+    assert_rejected::<DenyAdjacent>(json!({"kind": "Unit", "unknown": 2}));
+    assert_serialization_matches(&DenyAdjacent::Unit);
+}
+
+#[test]
+fn deny_unknown_fields_closes_an_untagged_struct_variant() {
+    assert_rejected::<DenyUntagged>(json!({"value": 1, "unknown": 2}));
+    assert_serialization_matches(&DenyUntagged::Named { value: 1 });
+    assert_requests_are_read::<DenyUntagged>();
+}
+
+#[test]
+fn deny_unknown_fields_closes_an_untagged_variant_of_a_tagged_enum() {
+    assert_rejected::<DenyUntaggedVariant>(json!({"bare": 1, "unknown": 2}));
+    assert_serialization_matches(&DenyUntaggedVariant::Bare { bare: 1 });
+    assert_requests_are_read::<DenyUntaggedVariant>();
+}
+
+#[test]
+fn deny_unknown_fields_leaves_internal_unit_and_newtype_variants_open_as_serde_does() {
+    for instance in [
+        json!({"kind": "Unit", "unknown": 2}),
+        json!({"kind": "Newtype", "page": 1, "per_page": 2, "unknown": 3}),
+    ] {
+        assert_request_accepted::<DenyInternal>(instance);
+    }
+}
+
+#[test]
+fn deny_unknown_fields_stays_open_for_a_field_serde_writes_and_the_schema_leaves_out() {
+    let instance = serde_json::to_value(DenyWithWrittenField { value: 1, written: 2 }).expect("sample serializes");
+    assert!(schema_accepts::<DenyWithWrittenField>(&instance), "{instance}");
+}
+
+#[test]
+fn deny_unknown_fields_stays_open_for_a_field_serde_reads_and_the_schema_leaves_out() {
+    assert_request_accepted::<DenyWithReadField>(json!({"user": "a", "secret": "b"}));
+    assert_eq!(own_schema::<DenyWithReadField>().get("additionalProperties"), None);
+}
+
+#[test]
+fn deny_unknown_fields_stays_open_for_a_variant_field_serde_reads_and_the_schema_leaves_out() {
+    assert_request_accepted::<DenyVariantWithReadField>(json!({"kind": "Login", "user": "a", "secret": "b"}));
+}
+
+/// serde writes `out` and reads `v`, or the reverse: the schema names one, so closing rejects the other.
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DenyWrittenName {
+    #[serde(rename(serialize = "out"))]
+    v: Option<u8>,
+    w: u8,
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DenyReadName {
+    #[serde(rename(deserialize = "in"))]
+    v: Option<u8>,
+    w: u8,
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DenySplitName {
+    #[serde(rename(serialize = "out", deserialize = "in"))]
+    v: Option<u8>,
+    w: u8,
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all(serialize = "camelCase"))]
+struct DenyWrittenConvention {
+    some_field: Option<u8>,
+    w: u8,
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all(deserialize = "camelCase"))]
+struct DenyReadConvention {
+    some_field: Option<u8>,
+    w: u8,
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+enum DenyExternalSplitName {
+    A {
+        #[serde(rename(serialize = "out"))]
+        v: Option<u8>,
+        w: u8,
+    },
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, tag = "t")]
+enum DenyInternalSplitName {
+    A {
+        #[serde(rename(serialize = "out"))]
+        v: Option<u8>,
+        w: u8,
+    },
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, tag = "t", content = "c")]
+enum DenyAdjacentSplitName {
+    A {
+        #[serde(rename(serialize = "out"))]
+        v: Option<u8>,
+        w: u8,
+    },
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, untagged)]
+enum DenyUntaggedSplitName {
+    A {
+        #[serde(rename(deserialize = "in"))]
+        v: Option<u8>,
+        w: u8,
+    },
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, tag = "t", rename_all_fields(serialize = "camelCase"))]
+enum DenyVariantWrittenConvention {
+    A { some_field: Option<u8>, w: u8 },
+}
+
+/// One name in both directions leaves nothing out, whichever form says it.
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DenyOneName {
+    #[serde(rename = "single")]
+    a: u8,
+    #[serde(rename(serialize = "listed", deserialize = "listed"))]
+    b: u8,
+}
+
+/// A field not on the wire has no key to leave out, whatever its names are.
+#[allow(dead_code)]
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DenyNextToSkippedSplitName {
+    #[serde(skip, rename(serialize = "out", deserialize = "in"))]
+    skipped: u8,
+    kept: u8,
+}
+
+/// A variant's `skip_deserializing` field is in the schema and written under that name.
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, tag = "t")]
+enum DenyVariantWithWrittenOnlySplitName {
+    A {
+        #[serde(skip_deserializing, rename(serialize = "out"))]
+        v: u8,
+        w: u8,
+    },
+}
+
+/// A conversion replaces what serde writes or reads, so the attribute says nothing about those keys.
+#[derive(Serialize, Deserialize, Clone)]
+struct DenyConversionProxy {
+    raw: u8,
+}
+
+#[derive(Schematic, Serialize, Deserialize, Clone)]
+#[serde(deny_unknown_fields, into = "DenyConversionProxy")]
+struct DenyInto {
+    a: Option<u8>,
+}
+
+impl From<DenyInto> for DenyConversionProxy {
+    fn from(_: DenyInto) -> Self {
+        DenyConversionProxy { raw: 1 }
+    }
+}
+
+#[derive(Schematic, Deserialize)]
+#[serde(deny_unknown_fields, from = "DenyConversionProxy")]
+struct DenyFrom {
+    a: Option<u8>,
+}
+
+impl From<DenyConversionProxy> for DenyFrom {
+    fn from(_: DenyConversionProxy) -> Self {
+        DenyFrom { a: None }
+    }
+}
+
+#[derive(Schematic, Deserialize)]
+#[serde(deny_unknown_fields, try_from = "DenyConversionProxy", tag = "t")]
+enum DenyEnumTryFrom {
+    A { a: Option<u8> },
+}
+
+impl TryFrom<DenyConversionProxy> for DenyEnumTryFrom {
+    type Error = std::convert::Infallible;
+
+    fn try_from(_: DenyConversionProxy) -> Result<Self, Self::Error> {
+        Ok(DenyEnumTryFrom::A { a: None })
+    }
+}
+
+/// A closed value leading back to itself through a flattened enum: opening it must end too.
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ClosedRecursiveNode {
+    value: u8,
+    next: Option<Box<ParentOfClosedRecursiveNode>>,
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+struct ParentOfClosedRecursiveNode {
+    own: u8,
+    #[serde(flatten)]
+    branch: BranchOfClosedRecursiveNode,
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(untagged)]
+enum BranchOfClosedRecursiveNode {
+    Node(ClosedRecursiveNode),
+    Text(String),
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(untagged)]
+enum BranchWrappingItself {
+    Again(Box<BranchWrappingItself>),
+    Closed(ClosedValue),
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+struct FlattensBranchWrappingItself {
+    own: u8,
+    #[serde(flatten)]
+    branch: BranchWrappingItself,
+}
+
+#[test]
+fn deny_unknown_fields_stays_open_for_a_name_serde_writes_and_the_schema_leaves_out() {
+    fn output<T: Serialize>(value: T) -> Value {
+        serde_json::to_value(value).expect("sample serializes")
+    }
+    let written = output(DenyWrittenName { v: None, w: 1 });
+    assert_eq!(written, json!({"out": null, "w": 1}));
+    assert!(schema_accepts::<DenyWrittenName>(&written));
+    assert!(schema_accepts::<DenySplitName>(&output(DenySplitName { v: None, w: 1 })));
+    let convention = output(DenyWrittenConvention { some_field: None, w: 1 });
+    assert_eq!(convention, json!({"someField": null, "w": 1}));
+    assert!(schema_accepts::<DenyWrittenConvention>(&convention));
+    assert!(schema_accepts::<DenyExternalSplitName>(&output(DenyExternalSplitName::A { v: None, w: 1 })));
+    assert!(schema_accepts::<DenyInternalSplitName>(&output(DenyInternalSplitName::A { v: None, w: 1 })));
+    assert!(schema_accepts::<DenyAdjacentSplitName>(&output(DenyAdjacentSplitName::A { v: None, w: 1 })));
+    assert!(schema_accepts::<DenyVariantWrittenConvention>(&output(DenyVariantWrittenConvention::A {
+        some_field: None,
+        w: 1
+    })));
+}
+
+#[test]
+fn deny_unknown_fields_stays_open_for_a_name_serde_reads_and_the_schema_leaves_out() {
+    assert_request_accepted::<DenyReadName>(json!({"in": 1, "w": 1}));
+    assert_request_accepted::<DenySplitName>(json!({"in": 1, "w": 1}));
+    assert_request_accepted::<DenyReadConvention>(json!({"someField": 1, "w": 1}));
+    assert_request_accepted::<DenyUntaggedSplitName>(json!({"in": 1, "w": 1}));
+    assert_eq!(own_schema::<DenyReadName>().get("additionalProperties"), None);
+    assert_eq!(
+        own_schema::<DenyAdjacentSplitName>()["oneOf"][0]["properties"]["c"].get("additionalProperties"),
+        None
+    );
+}
+
+#[test]
+fn deny_unknown_fields_closes_a_struct_with_one_name_in_both_directions() {
+    assert_eq!(own_schema::<DenyOneName>()["additionalProperties"], json!(false));
+    assert_serialization_matches(&DenyOneName { a: 1, b: 2 });
+    assert_requests_are_read::<DenyOneName>();
+    assert_rejected::<DenyOneName>(json!({"single": 1, "listed": 2, "unknown": 3}));
+}
+
+#[test]
+fn deny_unknown_fields_closes_past_a_field_not_on_the_wire() {
+    assert_eq!(own_schema::<DenyNextToSkippedSplitName>()["additionalProperties"], json!(false));
+    assert_eq!(
+        own_schema::<DenyVariantWithWrittenOnlySplitName>()["oneOf"][0]["additionalProperties"],
+        json!(false)
+    );
+}
+
+#[test]
+fn deny_unknown_fields_stays_open_through_a_conversion() {
+    assert_eq!(own_schema::<DenyInto>().get("additionalProperties"), None);
+    let written = serde_json::to_value(DenyInto { a: None }).expect("sample serializes");
+    assert_eq!(written, json!({"raw": 1}));
+    assert!(schema_accepts::<DenyInto>(&written));
+    assert_request_accepted::<DenyFrom>(json!({"raw": 1}));
+    assert_request_accepted::<DenyEnumTryFrom>(json!({"t": "A", "raw": 1}));
+}
+
+#[test]
+fn a_closed_value_leading_back_to_itself_through_a_flattened_enum_ends() {
+    assert_serialization_matches(&ParentOfClosedRecursiveNode {
+        own: 1,
+        branch: BranchOfClosedRecursiveNode::Node(ClosedRecursiveNode {
+            value: 2,
+            next: Some(Box::new(ParentOfClosedRecursiveNode {
+                own: 3,
+                branch: BranchOfClosedRecursiveNode::Node(ClosedRecursiveNode { value: 4, next: None }),
+            })),
+        }),
+    });
+    assert!(schema_accepts::<ClosedRecursiveNode>(
+        &json!({"value": 1, "next": {"own": 2, "value": 3, "next": null}})
+    ));
+    assert!(schema_accepts::<FlattensBranchWrappingItself>(&json!({"own": 1, "a": 2})));
+}
+
+wide_recursion!(
+    ClosedWideExpr,
+    ClosedWideKind,
+    #[serde(deny_unknown_fields)]
+    A(ClosedWideA),
+    #[serde(deny_unknown_fields)]
+    B(ClosedWideB),
+    #[serde(deny_unknown_fields)]
+    C(ClosedWideC),
+    #[serde(deny_unknown_fields)]
+    D(ClosedWideD),
+    #[serde(deny_unknown_fields)]
+    E(ClosedWideE),
+    #[serde(deny_unknown_fields)]
+    F(ClosedWideF),
+    #[serde(deny_unknown_fields)]
+    G(ClosedWideG),
+    #[serde(deny_unknown_fields)]
+    H(ClosedWideH),
+);
+
+/// A value that closes through one branch and reaches the same closed value through a flatten: both
+/// must be open where they compose with a parent.
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(untagged)]
+enum ClosedOrText {
+    Closed(ClosedValue),
+    Text(String),
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+struct FlattensClosedOrText {
+    p: u8,
+    #[serde(flatten)]
+    inner: ClosedOrText,
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(untagged)]
+enum ClosedOrFlattensIt {
+    Closed(ClosedValue),
+    Flattens(FlattensClosedOrText),
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(untagged)]
+enum WrapsClosedOrFlattensIt {
+    Inner(ClosedOrFlattensIt),
+    Text(String),
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+struct FlattensWrapsClosedOrFlattensIt {
+    q: u8,
+    #[serde(flatten)]
+    inner: WrapsClosedOrFlattensIt,
+}
+
+#[test]
+fn wide_recursion_through_closed_values_builds_each_schema_a_bounded_number_of_times() {
+    BUILT_SCHEMAS.set(0);
+    let (_, components) = gotcha::gotcha_core::registry::collect(|| ClosedWideExpr::generate_schema());
+    assert_eq!(components.len(), 1, "{:?}", components.keys());
+    let built = BUILT_SCHEMAS.get();
+    assert!(built <= 100, "the schema of a node was built {built} times");
+}
+
+#[test]
+fn a_value_reaching_a_closed_value_twice_stays_open_in_a_flattened_branch() {
+    let instance = json!({"q": 1, "a": 2, "o": null});
+    assert!(serde_json::from_value::<FlattensWrapsClosedOrFlattensIt>(instance.clone()).is_ok());
+    assert!(
+        schema_accepts::<FlattensWrapsClosedOrFlattensIt>(&instance),
+        "{}",
+        schema_document::<FlattensWrapsClosedOrFlattensIt>()
+    );
+}
+
+/// A hand-written value with a root keyword that also composes a closed value: without the keyword
+/// it still closes the object, and must not reach the parent's composition as a reference.
+macro_rules! hand_written_composition {
+    ($value:ident, $enum:ident, $parent:ident, $keyword:literal) => {
+        #[allow(dead_code)]
+        #[derive(Serialize, Deserialize)]
+        struct $value {
+            a: u8,
+            o: Option<u8>,
+        }
+
+        impl Schematic for $value {
+            fn name() -> &'static str {
+                stringify!($value)
+            }
+
+            fn required() -> bool {
+                true
+            }
+
+            fn type_() -> &'static str {
+                "object"
+            }
+
+            fn generate_schema() -> gotcha::EnhancedSchema {
+                let mut schema = gotcha::gotcha_core::oas::Schema::default();
+                schema
+                    .extras
+                    .insert("anyOf".to_owned(), json!([ClosedValue::generate_schema().schema.to_value()]));
+                schema.extras.insert("additionalProperties".to_owned(), json!($keyword));
+                gotcha::EnhancedSchema { schema, required: true }
+            }
+        }
+
+        #[derive(Schematic, Serialize, Deserialize)]
+        #[serde(untagged)]
+        enum $enum {
+            Wrapped($value),
+            Text(String),
+        }
+
+        #[derive(Schematic, Serialize, Deserialize)]
+        struct $parent {
+            p: u8,
+            #[serde(flatten)]
+            inner: $enum,
+        }
+    };
+}
+
+hand_written_composition!(OpenComposesClosed, OpenComposesClosedEnum, FlattensOpenComposesClosed, true);
+hand_written_composition!(ClosedComposesClosed, ClosedComposesClosedEnum, FlattensClosedComposesClosed, false);
+
+/// A closed value's property is not the object itself, so the value keeps it.
+#[derive(Serialize, Deserialize)]
+struct ClosedValueInAProperty {
+    nested: ClosedValue,
+}
+
+impl Schematic for ClosedValueInAProperty {
+    fn name() -> &'static str {
+        "ClosedValueInAProperty"
+    }
+
+    fn required() -> bool {
+        true
+    }
+
+    fn type_() -> &'static str {
+        "object"
+    }
+
+    fn generate_schema() -> gotcha::EnhancedSchema {
+        let mut schema = gotcha::gotcha_core::oas::Schema {
+            _type: Some(Self::type_().into()),
+            ..gotcha::gotcha_core::oas::Schema::default()
+        };
+        schema
+            .extras
+            .insert("properties".to_owned(), json!({"nested": ClosedValue::generate_schema().schema.to_value()}));
+        schema.extras.insert("additionalProperties".to_owned(), json!(false));
+        gotcha::EnhancedSchema { schema, required: true }
+    }
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(untagged)]
+enum ClosedValueInAPropertyEnum {
+    Wrapped(ClosedValueInAProperty),
+    Text(String),
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+struct FlattensClosedValueInAProperty {
+    p: u8,
+    #[serde(flatten)]
+    inner: ClosedValueInAPropertyEnum,
+}
+
+/// Whether a schema closes an object it composes with: through references, not into properties.
+fn composes_a_closed_object(schema: &Value, document: &Value) -> bool {
+    if schema.get("additionalProperties") == Some(&Value::Bool(false)) {
+        return true;
+    }
+    if let Some(name) = schema["$ref"].as_str().and_then(|reference| reference.strip_prefix("#/components/schemas/")) {
+        return composes_a_closed_object(&document["components"]["schemas"][name], document);
+    }
+    ["allOf", "anyOf", "oneOf"]
+        .iter()
+        .filter_map(|keyword| schema[*keyword].as_array())
+        .flatten()
+        .any(|branch| composes_a_closed_object(branch, document))
+}
+
+#[test]
+fn nothing_closed_reaches_a_parent_through_a_hand_written_value() {
+    fn assert_open<T: Schematic>() {
+        let document = schema_document::<T>();
+        assert_references_resolve(&document);
+        let parent = own_schema::<T>();
+        assert!(!composes_a_closed_object(&parent, &document), "{document}");
+        assert!(schema_accepts::<T>(&json!({"p": 1, "a": 2, "o": null})), "{document}");
+    }
+    assert_open::<FlattensOpenComposesClosed>();
+    assert_open::<FlattensClosedComposesClosed>();
+}
+
+#[test]
+fn a_hand_written_value_keeps_a_closed_value_in_a_property() {
+    let document = schema_document::<FlattensClosedValueInAProperty>();
+    assert_references_resolve(&document);
+    assert!(
+        !composes_a_closed_object(&own_schema::<FlattensClosedValueInAProperty>(), &document),
+        "{document}"
+    );
+    assert!(schema_accepts::<FlattensClosedValueInAProperty>(
+        &json!({"p": 1, "nested": {"a": 2, "o": null}})
+    ));
+    assert!(!schema_accepts::<FlattensClosedValueInAProperty>(
+        &json!({"p": 1, "nested": {"a": 2, "o": null, "unknown": 1}})
+    ));
+}
+
+#[test]
+fn deny_unknown_fields_stays_open_for_a_struct_tag() {
+    assert_eq!(own_schema::<TaggedStructDenyingUnknownFields>().get("additionalProperties"), None);
+    let output = serde_json::to_value(TaggedStructDenyingUnknownFields { value: 1 }).expect("sample serializes");
+    assert!(schema_accepts::<TaggedStructDenyingUnknownFields>(&output), "{output}");
+}
+
+#[test]
+fn deny_unknown_fields_stays_open_next_to_a_flattened_field() {
+    let paging = || Paging { page: 1, per_page: 2 };
+    assert_serialization_matches(&DenyFlattensStruct { value: 1, paging: paging() });
+    assert_serialization_matches(&DenyFlattensMap {
+        value: 1,
+        extra: HashMap::from([("a".to_owned(), 2)]),
+    });
+    assert_serialization_matches(&DenyFlattensEnum {
+        value: 1,
+        kind: InternallyTagged::A { x: 2 },
+    });
+    assert_serialization_matches(&DenyVariantFlattensStruct::Named { value: 1, paging: paging() });
+    assert_eq!(own_schema::<DenyFlattensStruct>().get("additionalProperties"), None);
+    assert_eq!(own_schema::<DenyFlattensEnum>().get("additionalProperties"), None);
+    assert_eq!(own_schema::<DenyVariantFlattensStruct>()["oneOf"][0].get("additionalProperties"), None);
+    assert_requests_are_read::<DenyFlattensStruct>();
+    assert_requests_are_read::<DenyVariantFlattensStruct>();
+}
+
+#[test]
+fn flattening_a_denying_struct_leaves_the_parent_open_as_serde_does() {
+    assert_serialization_matches(&FlattensDenyStruct {
+        parent: 1,
+        inner: deny_struct_sample(),
+    });
+    assert_request_accepted::<FlattensDenyStruct>(json!({"parent": 1, "someField": 2, "maybeField": null, "unknown": 4}));
+    assert_requests_are_read::<FlattensDenyStruct>();
+}
+
+#[test]
+fn flattening_a_denying_enum_does_not_constrain_the_parent() {
+    assert_serialization_matches(&FlattensDenyInternal {
+        parent: 1,
+        inner: DenyInternal::Named { value: 2 },
+    });
+    assert_serialization_matches(&FlattensDenyAdjacent {
+        parent: 1,
+        inner: DenyAdjacent::Named { value: 2 },
+    });
+    assert_serialization_matches(&FlattensDenyAdjacent {
+        parent: 1,
+        inner: DenyAdjacent::Unit,
+    });
+    assert_serialization_matches(&FlattensDenyExternal {
+        parent: 1,
+        inner: DenyExternal::Named { value: 2 },
+    });
+    assert_serialization_matches(&FlattensDenyUntagged {
+        parent: 1,
+        inner: DenyUntagged::Named { value: 2 },
+    });
+}
+
+#[test]
+fn flattening_a_closed_untagged_variant_of_an_external_enum_does_not_constrain_the_parent() {
+    assert_serialization_matches(&FlattensDenyExternalUntaggedVariant {
+        parent: 1,
+        inner: DenyExternalUntaggedVariant::Bare { bare: 2 },
+    });
+}
+
+#[test]
+fn a_closed_value_keeps_its_component_when_not_flattened() {
+    assert_serialization_matches(&HoldsUntaggedClosed {
+        field: UntaggedClosed::Closed(ClosedValue { a: 1, o: None }),
+    });
+    let document = schema_document::<HoldsUntaggedClosed>();
+    assert_eq!(document["components"]["schemas"]["ClosedValue"]["additionalProperties"], json!(false));
+}
+
 /// `#[serde(tag = "..")]` on a struct: serde writes the tag with the struct's serialize name.
 #[derive(Schematic, Serialize, Deserialize)]
 #[serde(tag = "kind")]
@@ -4152,6 +5201,13 @@ fn a_conversion_leaves_the_struct_tag_undocumented() {
 
 // Known mismatches, deliberately not asserted (follow-up work; arch review A4/A14):
 //
+// - A struct field with `#[serde(skip_deserializing)]`: serde writes it, while the struct's schema
+//   leaves it out, so strict validation rejects it. A `skip_serializing` field is the reverse:
+//   serde reads it, and the schema leaves it out. `deny_unknown_fields` cannot close such a struct.
+// - An `alias` is not documented, so a closed schema rejects a key serde reads.
+// - `deny_unknown_fields` on a field with different read and write names needs per-direction
+//   schemas: one schema names one of them, so the type stays open and accepts unknown keys serde
+//   rejects. The same holds for a conversion to or from another type.
 // - One-sided `from`, `try_from` or `into`, and `from` or `try_from` naming another type than `into`,
 //   need per-direction schemas: the schema documents the type's own fields, which at most one
 //   direction uses. Only one proxy for both directions documents the proxy.

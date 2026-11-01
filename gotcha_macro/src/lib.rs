@@ -206,6 +206,14 @@ pub fn api(args: TokenStream, input_stream: TokenStream) -> TokenStream {
 /// conversion leaves the type's own fields and adds no bound, because one schema cannot describe
 /// both directions there.
 ///
+/// `deny_unknown_fields` adds `additionalProperties: false` to a struct and to the bodies of struct
+/// variants, and in an adjacently tagged enum to the object holding the tag and the content. A
+/// struct or variant with a `#[serde(flatten)]` field stays open, because serde documents the
+/// combination as unsupported, and so does one with a field skipped in one direction or with a
+/// different name in each, because the schema leaves out a key serde reads or writes. A struct with
+/// `tag` stays open and without the tag, because serde writes it and rejects a request carrying it.
+/// A conversion leaves the type open too, because serde writes or reads another type.
+///
 /// ## Field attributes
 ///
 /// Individual fields can be annotated with `#[schematic(...)]` to enrich the

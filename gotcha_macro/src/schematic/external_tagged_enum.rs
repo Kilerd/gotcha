@@ -59,7 +59,7 @@ pub(crate) fn handler(core: &TokenStream2, ident_string: String, doc: TokenStrea
             } else {
                 // Struct variant: the shared emitter applies skip/flatten/rename and
                 // `#[schematic(..)]` to its fields.
-                let content = crate::schematic::named_variant_object(core, None, variant.fields.fields, false);
+                let content = crate::schematic::named_variant_object(core, None, variant.fields.fields, false, variant.serde.deny_unknown_fields);
                 quote! {
                     #core::serde_json::to_value(#content).expect("cannot convert variant content to value")
                 }
@@ -122,13 +122,18 @@ pub(crate) fn handler(core: &TokenStream2, ident_string: String, doc: TokenStrea
         }
 
         fn flatten_schema() -> Option<#core::serde_json::Value> {
-            // Return the union schema for flattening
+            // Return the union schema for flattening. A closed `#[serde(untagged)]` branch's
+            // `additionalProperties` would also constrain the fields the parent declares next to
+            // the flattened enum, so it is dropped here. The other branches nest under their tag.
             let mut branches: Vec<::std::collections::HashMap<String, #core::serde_json::Value>> = vec![];
             let flattening = true;
             #(
                 #variants_codegen
                 branches.push(variant_object);
             )*
+            for branch in &mut branches {
+                branch.remove("additionalProperties");
+            }
             let mut obj: ::std::collections::HashMap<String, #core::serde_json::Value> = ::std::collections::HashMap::new();
             obj.insert(#union_keyword.to_string(), #core::serde_json::to_value(branches).unwrap());
             Some(#core::serde_json::to_value(obj).unwrap())

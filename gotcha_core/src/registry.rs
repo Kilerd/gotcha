@@ -331,26 +331,73 @@ fn is_plain_map(schema: &Schema) -> bool {
 /// The schema of the value a newtype variant wraps, on a branch written without a tag.
 ///
 /// A flattened enum's branch composes with the parent's fields, so a map's
-/// `additionalProperties` cannot stay on it. A plain map is probed in a scope of its own: its value
-/// type would otherwise stay registered with nothing left referencing it. Any other value with the
-/// keyword is hand-written and is built for real, because the probe's answer may not stand alone.
+/// A flattened enum's branch composes with the parent's fields, so a map's
+/// `additionalProperties` cannot stay on it, and neither can `additionalProperties: false` on a
+/// value with `deny_unknown_fields`, which a reference would bring along. A plain map, and a value
+/// that closes, are probed in a scope of their own: a type would otherwise stay registered with
+/// nothing left referencing it. Any other value with the keyword is hand-written and is built for
+/// real, because the probe's answer may not stand alone.
 #[doc(hidden)]
 pub fn wrapped_value_schema<T: Schematic>(flattening: bool) -> EnhancedSchema {
     if flattening {
         if PROBING.get() {
             return unexamined_branch();
         }
-        let (mut probe, _) = probing(T::generate_schema);
-        if probe.schema.extras.remove("additionalProperties").is_some() {
-            if is_plain_map(&probe.schema) {
-                return probe;
-            }
-            let mut value = T::generate_schema();
-            value.schema.extras.remove("additionalProperties");
-            return value;
+        let (mut probe, components) = probing(T::generate_schema);
+        let has_keyword = probe.schema.extras.remove("additionalProperties").is_some();
+        if has_keyword && is_plain_map(&probe.schema) {
+            return probe;
         }
+        // Also without the root's keyword: what a hand-written value composes can still close it.
+        if closes_object(&probe.schema.to_value(), &components, &mut BTreeSet::new()) {
+            // Outside any probe, so the branches inside are opened too. A value reached again
+            // through its own branches ends in its reference.
+            if let Some(open) = unless_reentered::<T, _>("open_value_schema", || Some(open_value_schema::<T>())) {
+                return open;
+            }
+        }
+        let mut value = T::generate_schema();
+        if has_keyword {
+            value.schema.extras.remove("additionalProperties");
+        }
+        return value;
     }
     T::generate_schema()
+}
+
+/// Whether `schema` refuses properties it does not declare, through references and compositions
+/// that apply to the same object.
+fn closes_object(schema: &Value, components: &BTreeMap<String, Schema>, visited: &mut BTreeSet<String>) -> bool {
+    if schema.get("additionalProperties") == Some(&Value::Bool(false)) {
+        return true;
+    }
+    if let Some(name) = schema
+        .get("$ref")
+        .and_then(Value::as_str)
+        .and_then(|reference| reference.strip_prefix("#/components/schemas/"))
+    {
+        return visited.insert(name.to_owned())
+            && components
+                .get(name)
+                .is_some_and(|component| closes_object(&component.to_value(), components, visited));
+    }
+    ["oneOf", "anyOf", "allOf"]
+        .iter()
+        .filter_map(|keyword| schema[*keyword].as_array())
+        .flatten()
+        .any(|branch| closes_object(branch, components, visited))
+}
+
+/// The schema of a value with `deny_unknown_fields` when it composes with a parent's fields: what
+/// it declares, inline and without the closing keyword.
+fn open_value_schema<T: Schematic>() -> EnhancedSchema {
+    match T::flatten_schema() {
+        Some(schema) => EnhancedSchema {
+            schema: serde_json::from_value(schema).expect("a flatten schema is a schema"),
+            required: T::required(),
+        },
+        None => object_of_fields::<T>(true),
+    }
 }
 
 /// [`wrapped_value_schema`] for an internally tagged enum, whose newtype variants merge a struct's
@@ -361,18 +408,22 @@ pub fn wrapped_value_fields_schema<T: Schematic>(flattening: bool) -> EnhancedSc
     if flattening && PROBING.get() {
         return unexamined_branch();
     }
-    let fields = T::fields();
     let flattens_enum = || {
         let mut flattened = None;
         probing(|| flattened = T::flatten_schema());
         flattened.is_some()
     };
-    if fields.is_empty() || !T::required() || flattens_enum() {
+    if T::fields().is_empty() || !T::required() || flattens_enum() {
         return wrapped_value_schema::<T>(flattening);
     }
+    object_of_fields::<T>(flattening)
+}
+
+/// A value's fields as an object of its own, not a component.
+fn object_of_fields<T: Schematic>(flattening: bool) -> EnhancedSchema {
     let mut properties = HashMap::new();
     let mut required = vec![];
-    for (name, field) in fields {
+    for (name, field) in T::fields() {
         properties.insert(name.to_owned(), field.schema.to_value());
         if field.required {
             required.push(name);
