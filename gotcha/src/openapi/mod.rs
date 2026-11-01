@@ -63,7 +63,8 @@ pub type ParamType = Either<Vec<Parameter>, RequestBody>;
 pub type ParamConstructor = fn(String) -> ParamType;
 
 /// Reports the Gotcha extractor providers a handler argument uses, so document assembly can add
-/// their rejection responses. Axum's originals and custom implementations report none.
+/// their rejection responses. Axum's originals report none; a custom implementation reports the
+/// providers it rejects through, with `gotcha::extract::kind::<P>()`.
 pub type ExtractorConstructor = fn() -> &'static [crate::ExtractorKind];
 
 /// Generate the parameters an extractor contributes, dropping any request body it would infer.
@@ -198,32 +199,35 @@ inventory::collect!(Operable);
 /// explicit or inferred response is skipped before its body schema is built, so a fully
 /// overridden operation leaves no unreferenced component behind.
 fn rejection_responses(extractors: &'static [ExtractorConstructor], configs: &crate::extract::ExtractorConfigs, existing: &Responses) -> Responses {
-    let mut groups: BTreeMap<u16, RejectionGroup> = BTreeMap::new();
+    let mut specs = Vec::new();
     for constructor in extractors {
         for kind in constructor() {
-            let spec = configs.rejection_spec(*kind);
-            for (status, phrase) in spec.statuses {
-                if existing.data.contains_key(&status.as_u16().to_string()) {
-                    continue;
-                }
-                let group = groups.entry(status.as_u16()).or_default();
-                if !group.phrases.contains(&phrase) {
-                    group.phrases.push(phrase);
-                }
-                if !crate::error::status_has_body(status) {
-                    continue;
-                }
-                let schema = (spec.body_schema)().schema;
-                let value = serde_json::to_value(&schema).expect("schemas are serializable");
-                // The same configured body type generates the same reference, so only distinct
-                // bodies become alternatives.
-                if !group
-                    .schemas
-                    .iter()
-                    .any(|each| serde_json::to_value(each).expect("schemas are serializable") == value)
-                {
-                    group.schemas.push(schema);
-                }
+            configs.rejection_specs(kind, &mut specs);
+        }
+    }
+    let mut groups: BTreeMap<u16, RejectionGroup> = BTreeMap::new();
+    for spec in specs {
+        for (status, phrase) in spec.statuses {
+            if existing.data.contains_key(&status.as_u16().to_string()) {
+                continue;
+            }
+            let group = groups.entry(status.as_u16()).or_default();
+            if !group.phrases.contains(&phrase) {
+                group.phrases.push(phrase);
+            }
+            if !crate::error::status_has_body(status) {
+                continue;
+            }
+            let schema = (spec.body_schema)().schema;
+            let value = serde_json::to_value(&schema).expect("schemas are serializable");
+            // The same configured body type generates the same reference, so only distinct
+            // bodies become alternatives.
+            if !group
+                .schemas
+                .iter()
+                .any(|each| serde_json::to_value(each).expect("schemas are serializable") == value)
+            {
+                group.schemas.push(schema);
             }
         }
     }

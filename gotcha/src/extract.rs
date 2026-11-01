@@ -97,6 +97,8 @@ impl<R> IntoResponse for Rejected<R> {
     }
 }
 
+#[cfg(feature = "openapi")]
+pub use config::kind;
 pub use config::{
     reject, CookieConfig, CookieProvider, ErrorBodyResponse, ExtractorConfig, ExtractorConfigs, FormConfig, FormProvider, HeaderConfig, HeaderProvider,
     JsonConfig, JsonProvider, MultipartConfig, MultipartProvider, PathConfig, PathProvider, QueryConfig, QueryProvider, RejectionConfig, RejectionProvider,

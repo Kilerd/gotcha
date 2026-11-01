@@ -194,11 +194,24 @@ impl<P: RejectionProvider> Default for RejectionConfig<P> {
 impl<P: RejectionProvider> ExtractorConfig for RejectionConfig<P> {
     fn apply(self, configs: &mut ExtractorConfigs) {
         let id = TypeId::of::<P>();
-        let config: Box<dyn Any + Send + Sync> = Box::new(self);
+        let config: Box<dyn ErasedConfig> = Box::new(self);
         match configs.overrides.iter_mut().find(|(each, _)| *each == id) {
             Some((_, existing)) => *existing = config,
             None => configs.overrides.push((id, config)),
         }
+    }
+}
+
+/// A [`RejectionConfig`] whose provider is known only by its [`TypeId`].
+trait ErasedConfig: Any + Send + Sync {
+    #[cfg(feature = "openapi")]
+    fn rejection_spec(&self) -> RejectionSpec;
+}
+
+impl<P: RejectionProvider> ErasedConfig for RejectionConfig<P> {
+    #[cfg(feature = "openapi")]
+    fn rejection_spec(&self) -> RejectionSpec {
+        RejectionConfig::rejection_spec(self)
     }
 }
 
@@ -209,7 +222,7 @@ impl<P: RejectionProvider> ExtractorConfig for RejectionConfig<P> {
 #[derive(Default)]
 pub struct ExtractorConfigs {
     /// One `RejectionConfig<P>` per configured provider, keyed by `TypeId::of::<P>()`.
-    overrides: Vec<(TypeId, Box<dyn Any + Send + Sync>)>,
+    overrides: Vec<(TypeId, Box<dyn ErasedConfig>)>,
 }
 
 /// The configurations of a request that carries none: every provider uses its defaults.
@@ -228,7 +241,7 @@ impl ExtractorConfigs {
         self.overrides
             .iter()
             .find(|(each, _)| *each == id)
-            .and_then(|(_, config)| config.downcast_ref())
+            .and_then(|(_, config)| (&**config as &dyn Any).downcast_ref())
     }
 
     /// Render `rejection` with `P`'s configured error handler, or `P`'s default.
@@ -249,35 +262,77 @@ impl ExtractorConfigs {
         router.layer(axum::Extension(Arc::new(self)))
     }
 
-    /// The statuses and body schema to document for `kind`'s rejections.
+    /// Add the rejection contract of every provider `kind` stands for to `specs`.
+    ///
+    /// A provider is resolved by its type: the application's override when it set one, else the
+    /// provider's default statuses with an [`ErrorBody`].
     #[cfg(feature = "openapi")]
-    pub(crate) fn rejection_spec(&self, kind: crate::ExtractorKind) -> RejectionSpec {
-        match kind {
-            crate::ExtractorKind::Json => self.provider_spec::<JsonProvider>(),
-            crate::ExtractorKind::Form => self.provider_spec::<FormProvider>(),
-            crate::ExtractorKind::Query => self.provider_spec::<QueryProvider>(),
-            crate::ExtractorKind::Path => self.provider_spec::<PathProvider>(),
-            crate::ExtractorKind::Multipart => self.provider_spec::<MultipartProvider>(),
-            crate::ExtractorKind::TypedHeader => self.provider_spec::<TypedHeaderProvider>(),
-            crate::ExtractorKind::Header => self.provider_spec::<HeaderProvider>(),
-            crate::ExtractorKind::Cookie => self.provider_spec::<CookieProvider>(),
-            crate::ExtractorKind::Valid => self.provider_spec::<ValidProvider>(),
-            // `ExtractorKind` is non-exhaustive: a provider added in a later release documents no
-            // rejection until it is wired here. An empty status list adds no response.
-            _ => RejectionSpec {
-                statuses: Vec::new(),
+    pub(crate) fn rejection_specs(&self, kind: &crate::ExtractorKind, specs: &mut Vec<RejectionSpec>) {
+        use crate::ExtractorKind;
+
+        let key = match kind {
+            ExtractorKind::Provider(key) => *key,
+            ExtractorKind::All(list) => {
+                for each in list.kinds() {
+                    self.rejection_specs(each, specs);
+                }
+                return;
+            }
+            // The built-in extractors, and providers written before keys existed, name the built-in
+            // providers by their unit variants.
+            ExtractorKind::Json => provider_key::<JsonProvider>(),
+            ExtractorKind::Form => provider_key::<FormProvider>(),
+            ExtractorKind::Query => provider_key::<QueryProvider>(),
+            ExtractorKind::Path => provider_key::<PathProvider>(),
+            ExtractorKind::Multipart => provider_key::<MultipartProvider>(),
+            ExtractorKind::TypedHeader => provider_key::<TypedHeaderProvider>(),
+            ExtractorKind::Header => provider_key::<HeaderProvider>(),
+            ExtractorKind::Cookie => provider_key::<CookieProvider>(),
+            ExtractorKind::Valid => provider_key::<ValidProvider>(),
+            // `ExtractorKind` is non-exhaustive: a kind added in a later release documents no
+            // rejection until it is wired here.
+            _ => return,
+        };
+        specs.push(match self.overrides.iter().find(|(id, _)| *id == key.id()) {
+            Some((_, config)) => config.rejection_spec(),
+            None => RejectionSpec {
+                statuses: key.default_statuses().to_vec(),
                 body_schema: schema_of::<ErrorBody>(),
             },
-        }
+        });
     }
+}
 
-    #[cfg(feature = "openapi")]
-    fn provider_spec<P: RejectionProvider>(&self) -> RejectionSpec {
-        match self.get::<P>() {
-            Some(config) => config.rejection_spec(),
-            None => RejectionConfig::<P>::default().rejection_spec(),
-        }
+/// The documentation key of provider `P`.
+#[cfg(feature = "openapi")]
+const fn provider_key<P: RejectionProvider>() -> gotcha_core::ProviderKey {
+    fn statuses<P: RejectionProvider>() -> &'static [(StatusCode, &'static str)] {
+        P::STATUSES
     }
+    gotcha_core::ProviderKey::from_parts(TypeId::of::<P>, std::any::type_name::<P>, statuses::<P>)
+}
+
+/// The [`ExtractorKind`](crate::ExtractorKind) that documents provider `P`'s rejections.
+///
+/// An extractor reports it from
+/// [`ParameterProvider::extractor_kinds`](crate::ParameterProvider::extractor_kinds), and each
+/// operation that takes the extractor documents the statuses and body of `P`'s configuration:
+///
+/// ```
+/// use gotcha::extract::{kind, JsonProvider};
+/// use gotcha::{ExtractorKind, ParameterProvider};
+///
+/// struct JsonLike;
+///
+/// impl ParameterProvider for JsonLike {
+///     fn extractor_kinds() -> &'static [ExtractorKind] {
+///         const { &[kind::<JsonProvider>()] }
+///     }
+/// }
+/// ```
+#[cfg(feature = "openapi")]
+pub const fn kind<P: RejectionProvider>() -> crate::ExtractorKind {
+    crate::ExtractorKind::Provider(provider_key::<P>())
 }
 
 /// A request's extractor configurations, held by a body extractor while another extractor
