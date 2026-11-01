@@ -38,7 +38,7 @@
 //! [`crate::GotchaApp::openapi_info`], or [`crate::cargo_info!`]; `.openapi(..)` transforms still
 //! run afterwards and can override it.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use axum::http::Method;
 use convert_case::{Case, Casing};
@@ -47,7 +47,6 @@ use oas::{
     Components, Info, MediaType, OpenAPIV3, Operation, Parameter, PathItem, Referenceable, RequestBody, Response, Responses, Schema, SchemaValue,
     SecurityRequirement, Tag,
 };
-use regex::Regex;
 
 mod endpoints;
 pub use endpoints::OpenApiEndpoints;
@@ -55,14 +54,6 @@ pub mod schematic;
 /// A binary payload, such as a file field in a `multipart/form-data` form.
 pub use schematic::Binary;
 pub(crate) mod transforms;
-
-/// Match a `{name}` path parameter.
-///
-/// Since axum 0.8 routes are written the way OpenAPI writes them — `/users/{id}` — so this no
-/// longer rewrites anything. It stays as the single place that knows the syntax: [`crate::openapi`]
-/// uses it to normalise a path, and `ParameterProvider` uses the same shape to pull out parameter
-/// names. Before 0.8 axum used `:id`, and every path had to be translated here.
-pub(crate) static PATH_VARIABLE_PATTERN: &str = r"\{([^}]+)\}";
 
 /// What one handler argument contributes: either operation parameters or the request body.
 pub type ParamType = Either<Vec<Parameter>, RequestBody>;
@@ -74,22 +65,6 @@ pub type ParamConstructor = fn(String) -> ParamType;
 /// Reports the Gotcha extractor providers a handler argument uses, so document assembly can add
 /// their rejection responses. Axum's originals and custom implementations report none.
 pub type ExtractorConstructor = fn() -> &'static [crate::ExtractorKind];
-
-/// Normalise a route path into the form OpenAPI uses for path templating.
-///
-/// Since axum 0.8 the two agree — a route is registered as `/users/{id}` and documented as
-/// `/users/{id}` — so this is the identity. It is kept because the framework still owns the
-/// question "what does a documented path look like", and because axum 0.7 needed a real
-/// translation here (`:id` -> `{id}`).
-pub fn replace_path_variable(path: String) -> String {
-    path
-}
-
-/// The parameter names a route path captures, in order: `/users/{id}/books/{isbn}` -> `id`, `isbn`.
-pub fn path_variable_names(path: &str) -> Vec<String> {
-    let regex = Regex::new(PATH_VARIABLE_PATTERN).expect("path variable pattern is valid");
-    regex.captures_iter(path).map(|caps| caps[1].to_string()).collect()
-}
 
 /// Generate the parameters an extractor contributes, dropping any request body it would infer.
 ///
@@ -358,11 +333,80 @@ macro_rules! cargo_info {
     };
 }
 
+/// The order [`PathItem`] writes methods in, which is the order they appear in the document.
+fn document_method_order(method: &Method) -> usize {
+    match method.as_str() {
+        "GET" => 0,
+        "PUT" => 1,
+        "POST" => 2,
+        "DELETE" => 3,
+        "OPTIONS" => 4,
+        "HEAD" => 5,
+        "PATCH" => 6,
+        "TRACE" => 7,
+        _ => usize::MAX,
+    }
+}
+
+/// Give every operation a unique `operationId`.
+///
+/// The default id is the handler's function name, so `users::list` and `books::list` — or one
+/// handler mounted at two paths — would otherwise emit the same id and collide in generated
+/// clients. Operations are visited by path and in the method order the document uses: the first
+/// one keeps its id and each later duplicate gets `_2`, `_3`, ... in that order. Every operation's
+/// original id is reserved, so a generated suffix never renames an id an operation declares
+/// itself. Each rename is logged with both routes.
+fn disambiguate_operation_ids(operables: &[((String, Method), &'static Operable)], operations: &mut [Operation]) {
+    let original_ids: HashSet<&str> = operables.iter().map(|(_, operable)| operable.id).collect();
+    let mut claimed: HashMap<String, (String, Method)> = HashMap::new();
+    let mut order: Vec<usize> = (0..operables.len()).collect();
+    order.sort_by(|&left, &right| {
+        let ((left_path, left_method), _) = &operables[left];
+        let ((right_path, right_method), _) = &operables[right];
+        (left_path, document_method_order(left_method)).cmp(&(right_path, document_method_order(right_method)))
+    });
+    for index in order {
+        let ((path, method), _) = &operables[index];
+        let operation = &mut operations[index];
+        let Some(id) = operation.operation_id.clone() else {
+            continue;
+        };
+        if let std::collections::hash_map::Entry::Vacant(entry) = claimed.entry(id.clone()) {
+            entry.insert((path.clone(), method.clone()));
+            continue;
+        }
+        let mut suffix = 2;
+        let unique = loop {
+            let candidate = format!("{id}_{suffix}");
+            suffix += 1;
+            if !original_ids.contains(candidate.as_str()) && !claimed.contains_key(&candidate) {
+                break candidate;
+            }
+        };
+        let (first_path, first_method) = claimed.get(&id).expect("a duplicate has a first operation");
+        tracing::warn!(
+            operation_id = id.as_str(),
+            first_route = %format!("{} {}", first_method.as_str(), first_path),
+            duplicate_route = %format!("{} {}", method.as_str(), path),
+            renamed_to = unique.as_str(),
+            "duplicate OpenAPI operationId; renamed the later operation"
+        );
+        operation.operation_id = Some(unique.clone());
+        claimed.insert(unique, (path.clone(), method.clone()));
+    }
+}
+
 /// Assemble the spec from the routes' [`Operable`] descriptors.
 ///
 /// Every operation is generated inside a single [`registry::collect`](gotcha_core::registry::collect)
 /// scope, so each named schema is emitted once under `components/schemas` and referenced by `$ref`
 /// at its use sites (which is also what lets recursive types produce a finite spec).
+///
+/// Operation ids are made unique. A handler defaults to its function name, so two modules' `list`
+/// functions — or one handler mounted at two paths — would otherwise share an id. Operations are
+/// visited by path and in the method order the document uses (GET, PUT, POST, ...): the first
+/// keeps its id and each later duplicate gets `_2`, `_3`, ... in that order. Explicit
+/// `#[api(id = "...")]` ids follow the same rule.
 pub fn generate_openapi(operables: HashMap<(String, Method), &'static Operable>) -> OpenAPIV3 {
     let configs = crate::extract::ExtractorConfigs::default();
     generate_openapi_with_configs_and_info(operables, &configs, true, default_info())
@@ -370,24 +414,22 @@ pub fn generate_openapi(operables: HashMap<(String, Method), &'static Operable>)
 
 /// Like [`generate_openapi`], with the application's extractor configurations and opt-out.
 ///
-/// Configured error bodies are registered inside the collection scope, and every operation
-/// documents the rejection responses of the Gotcha providers its arguments use.
+/// Every operation documents the rejection responses of the Gotcha providers its arguments use.
+/// A configured error body is built inside the collection scope only when one of those responses
+/// references it, so overrides that no documented operation reaches leave no component behind.
 #[doc(hidden)]
 pub fn generate_openapi_with_configs_and_info(
     operables: HashMap<(String, Method), &'static Operable>, configs: &crate::extract::ExtractorConfigs, document_extractor_errors: bool, info: Info,
 ) -> OpenAPIV3 {
     let mut operables: Vec<_> = operables.into_iter().collect();
     operables.sort_by(|((path_a, method_a), _), ((path_b, method_b), _)| (path_a, method_a.as_str()).cmp(&(path_b, method_b.as_str())));
-    let (operations, schemas) = gotcha_core::registry::collect(|| {
-        // Custom rejection bodies are not attached to operations, but their components must exist.
-        for schema in &configs.schemas() {
-            let _ = schema();
-        }
+    let (mut operations, schemas) = gotcha_core::registry::collect(|| {
         operables
             .iter()
             .map(|((path, _), operable)| operable.generate_with_configs(path.clone(), configs, document_extractor_errors))
             .collect::<Vec<_>>()
     });
+    disambiguate_operation_ids(&operables, &mut operations);
 
     let components = (!schemas.is_empty()).then(|| Components {
         schemas: Some(schemas.into_iter().map(|(name, schema)| (name, schema.into())).collect()),
@@ -414,7 +456,6 @@ pub fn generate_openapi_with_configs_and_info(
     };
     let mut document_tags: Vec<Tag> = vec![];
     for (((path, method), _), operation) in operables.into_iter().zip(operations) {
-        let path = replace_path_variable(path);
         // Declare every operation tag at the document level, once, in first-seen order. The
         // operations were sorted by path and method above, so the document order is stable.
         if let Some(operation_tags) = &operation.tags {
@@ -455,26 +496,4 @@ pub fn generate_openapi_with_configs_and_info(
     // empty one.
     spec.tags = (!document_tags.is_empty()).then_some(document_tags);
     spec
-}
-
-#[cfg(all(test, feature = "openapi"))]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn documented_paths_match_the_registered_route() {
-        // axum 0.8 and OpenAPI write path parameters the same way, so a route is documented
-        // exactly as it was registered.
-        for path in ["/users", "/users/{id}", "/users/{id}/{name}", "/users/{userId}", "/items/{id2}/{ID}"] {
-            assert_eq!(replace_path_variable(path.to_string()), path);
-        }
-    }
-
-    #[test]
-    fn path_variables_are_extracted_in_order() {
-        assert_eq!(path_variable_names("/users/{id}/books/{isbn}"), ["id", "isbn"]);
-        // Names are not restricted to lowercase.
-        assert_eq!(path_variable_names("/items/{id2}/{ID}"), ["id2", "ID"]);
-        assert!(path_variable_names("/users").is_empty());
-    }
 }

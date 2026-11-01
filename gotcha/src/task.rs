@@ -45,7 +45,7 @@ use std::pin::Pin;
 use std::str::FromStr;
 use std::time::Duration;
 
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use cron::Schedule;
 use futures_util::FutureExt;
 use tokio::task::JoinSet;
@@ -70,8 +70,19 @@ where
     T2: Clone + Send + Sync + 'static,
 {
     /// Create a registration-only scheduler. This does not require a running Tokio runtime.
+    ///
+    /// The scheduler uses a child of the context's shutdown token: cancelling the context token
+    /// stops the tasks, while [`RunningTasks::shutdown`] only cancels the child, so shutting a
+    /// standalone scheduler down neither stops the application nor another scheduler sharing the
+    /// context. Tasks receive a context whose [`GotchaContext::shutdown`] is that child token.
     pub fn new(context: GotchaContext<T1, T2>) -> Self {
-        Self::with_shutdown(context, CancellationToken::new())
+        let shutdown = context.shutdown().child_token();
+        let context = GotchaContext {
+            config: context.config,
+            state: context.state,
+            shutdown: shutdown.clone(),
+        };
+        Self::with_shutdown(context, shutdown)
     }
 
     pub(crate) fn with_shutdown(context: GotchaContext<T1, T2>, shutdown: CancellationToken) -> Self {
@@ -82,7 +93,10 @@ where
         }
     }
 
-    /// Register a cron task. Invalid expressions are logged and not registered.
+    /// Register a cron task. Invalid expressions are logged and not registered. Each trigger is
+    /// computed from the current time and the last trigger that fired, so an execution that
+    /// overruns a trigger skips it instead of running again immediately, and a wall-clock step
+    /// back cannot fire the same trigger twice.
     pub fn cron<F, FF>(&mut self, name: impl AsRef<str>, expression: String, task: F)
     where
         F: Fn(GotchaContext<T1, T2>) -> FF + Send + 'static,
@@ -102,6 +116,8 @@ where
 
     /// Register a task with an immediate first execution, then repeat at the given interval.
     /// A zero interval is logged and not registered. Executions of the same task never overlap.
+    /// A slow execution runs the already-due tick once when it finishes and then resumes at the
+    /// next period boundary; the ticks it missed are not replayed.
     pub fn interval<F, FF>(&mut self, name: impl AsRef<str>, interval: Duration, task: F)
     where
         F: Fn(GotchaContext<T1, T2>) -> FF + Send + 'static,
@@ -158,6 +174,9 @@ impl RunningTasks {
     }
 
     /// Stop new executions and wait up to `timeout` for current executions to complete.
+    /// Also cancels the scheduler's shutdown token, which is a child of the context token for
+    /// schedulers built with [`TaskScheduler::new`], releasing executions that wait on it without
+    /// cancelling that token or other schedulers sharing it.
     /// At the deadline, abort unfinished tasks and wait for their futures to be dropped.
     /// Cancelling this future also aborts the tasks. Cancellation requires tasks to yield;
     /// blocking work and application-created detached tasks cannot be forcibly stopped here.
@@ -197,6 +216,15 @@ where
     }
 }
 
+/// The first trigger after `now` and after the trigger that already fired. Recomputing it every
+/// loop iteration keeps a slow execution from replaying triggers that elapsed while it ran, and
+/// anchoring to `last` keeps a wall-clock step back (or timer/wall-clock drift) from firing the
+/// same trigger twice.
+fn next_cron_trigger(schedule: &Schedule, now: DateTime<Utc>, last: Option<DateTime<Utc>>) -> Option<DateTime<Utc>> {
+    let reference = last.map_or(now, |last| now.max(last));
+    schedule.after(&reference).next()
+}
+
 async fn run_cron<T1, T2, F, FF>(context: GotchaContext<T1, T2>, schedule: Schedule, name: String, mut task: F, shutdown: CancellationToken)
 where
     T1: Clone + Send + Sync + 'static,
@@ -205,14 +233,20 @@ where
     FF: Future<Output = ()> + Send + 'static,
 {
     tracing::info!("starting cron task: {name}");
-    for next_trigger_time in schedule.upcoming(Utc) {
-        let wait = (next_trigger_time - Utc::now()).to_std().unwrap_or(Duration::ZERO);
+    let mut last = None;
+    loop {
+        let now = Utc::now();
+        let Some(next_trigger_time) = next_cron_trigger(&schedule, now, last) else {
+            break;
+        };
+        let wait = (next_trigger_time - now).to_std().unwrap_or(Duration::ZERO);
         tokio::select! {
             biased;
             _ = shutdown.cancelled() => break,
             _ = tokio::time::sleep(wait) => {}
         }
         run_supervised(&name, context.clone(), &mut task).await;
+        last = Some(next_trigger_time);
     }
 }
 
@@ -225,6 +259,8 @@ where
 {
     tracing::info!("starting interval task: {name}");
     let mut interval = tokio::time::interval(interval);
+    // A slow execution must not be followed by one execution per tick it missed.
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
         tokio::select! {
             biased;
@@ -236,7 +272,9 @@ where
 }
 
 /// Low-level cron driver retained for compatibility. The caller owns this future;
-/// prefer [`TaskScheduler`] for managed shutdown and waiting.
+/// prefer [`TaskScheduler`] for managed shutdown and waiting. Triggers follow
+/// [`TaskScheduler::cron`]: they are recomputed from the current time and missed triggers are
+/// skipped.
 pub async fn cron_proc_macro_wrapper<T1, T2, F, FF>(context: GotchaContext<T1, T2>, schedule: Schedule, name: String, task: F)
 where
     T1: Clone + Send + Sync + 'static,
@@ -248,7 +286,8 @@ where
 }
 
 /// Low-level interval driver retained for compatibility. The caller owns this future;
-/// prefer [`TaskScheduler`] for managed shutdown and waiting.
+/// prefer [`TaskScheduler`] for managed shutdown and waiting. Ticks follow
+/// [`TaskScheduler::interval`]: missed ticks are skipped.
 pub async fn interval_proc_macro_wrapper<T1, T2, F, FF>(context: GotchaContext<T1, T2>, interval: Duration, name: String, task: F)
 where
     T1: Clone + Send + Sync + 'static,

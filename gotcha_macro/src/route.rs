@@ -1,12 +1,41 @@
+use std::str::FromStr;
+
 use proc_macro::TokenStream;
+use proc_macro2::{Group, Span, TokenStream as TokenStream2, TokenTree};
 use quote::quote;
 use syn::spanned::Spanned;
 use syn::{parse_macro_input, AttributeArgs, FnArg, ItemFn, ReturnType};
 
 use darling::util::Flag;
 
-use crate::utils::AttributesExt;
+use crate::utils::{gotcha_crate_path, AttributesExt};
 use crate::FromMeta;
+
+/// Parse a Rust type from a string literal.
+///
+/// Every token is re-spanned to `lit.span().resolved_at(Span::call_site())`: diagnostics still
+/// point at the string, while the generated tokens resolve at the macro call site, so user-crate
+/// lints (for example `unused_qualifications`) do not fire on macro output.
+fn parse_type(lit: &syn::LitStr) -> darling::Result<syn::Type> {
+    let span = lit.span().resolved_at(Span::call_site());
+    let tokens = TokenStream2::from_str(&lit.value()).map_err(|error| darling::Error::from(syn::Error::new(span, error)))?;
+    syn::parse2::<syn::Type>(respan(tokens, span)).map_err(|error| darling::Error::from(syn::Error::new(span, error)))
+}
+
+/// Replace the span of every token in `stream`, including nested groups, with `span`.
+fn respan(stream: TokenStream2, span: Span) -> TokenStream2 {
+    stream
+        .into_iter()
+        .map(|mut token| {
+            if let TokenTree::Group(group) = &mut token {
+                let inner = respan(group.stream(), span);
+                *group = Group::new(group.delimiter(), inner);
+            }
+            token.set_span(span);
+            token
+        })
+        .collect()
+}
 
 #[derive(Debug, FromMeta)]
 pub struct RouteMeta {
@@ -93,7 +122,8 @@ fn validate_request_bodies(declarations: &[RequestBodyMeta]) -> darling::Result<
 struct RequestBodyMeta {
     /// Span of the whole entry, used for errors that depend on the other entries.
     span: proc_macro2::Span,
-    body: String,
+    /// Kept as the literal so a malformed type is reported at the string, not the attribute.
+    body: syn::LitStr,
     /// Defaults to `application/json`, matching a body declaration in `response(...)`.
     content_type: String,
     description: Option<String>,
@@ -103,7 +133,7 @@ struct RequestBodyMeta {
 
 #[derive(Debug, FromMeta)]
 struct RequestBodyFields {
-    body: String,
+    body: syn::LitStr,
     content_type: Option<String>,
     description: Option<String>,
     required: Option<bool>,
@@ -115,7 +145,7 @@ impl FromMeta for RequestBodyMeta {
             return Err(darling::Error::custom("expected request_body(body = \"Type\")").with_span(item));
         };
         let fields = RequestBodyFields::from_list(&meta.nested.iter().cloned().collect::<Vec<_>>()).map_err(|error| error.with_span(meta))?;
-        syn::parse_str::<syn::Type>(&fields.body).map_err(|error| darling::Error::custom(error).with_span(meta))?;
+        parse_type(&fields.body)?;
         Ok(Self {
             span: meta.span(),
             body: fields.body,
@@ -127,29 +157,29 @@ impl FromMeta for RequestBodyMeta {
 }
 
 impl RequestBodyMeta {
-    fn tokens(&self) -> proc_macro2::TokenStream {
-        let body: syn::Type = syn::parse_str(&self.body).expect("validated body type");
+    fn tokens(&self, gotcha: &proc_macro2::TokenStream) -> proc_macro2::TokenStream {
+        let body: syn::Type = parse_type(&self.body).expect("validated body type");
         let content_type = &self.content_type;
         let required = self.required;
         let description = match &self.description {
             Some(description) => quote!(Some(#description)),
             None => quote!(None),
         };
-        quote!(::gotcha::request::request_body::<#body>(#content_type, #description, #required))
+        quote!(#gotcha::request::request_body::<#body>(#content_type, #description, #required))
     }
 
     /// A constructor that builds the whole declared body, or `None` when nothing is declared.
     ///
     /// It is appended after the extractor constructors, so it replaces any body they infer.
-    fn constructor(declarations: &[RequestBodyMeta]) -> Option<proc_macro2::TokenStream> {
-        let mut entries = declarations.iter().map(RequestBodyMeta::tokens);
+    fn constructor(declarations: &[RequestBodyMeta], gotcha: &proc_macro2::TokenStream) -> Option<proc_macro2::TokenStream> {
+        let mut entries = declarations.iter().map(|declaration| declaration.tokens(gotcha));
         let first = entries.next()?;
         let rest = entries;
         Some(quote! {
             |_url: ::std::string::String| {
                 let mut body = #first;
-                #(::gotcha::request::merge_request_bodies(&mut body, #rest);)*
-                ::gotcha::Either::Right(body)
+                #(#gotcha::request::merge_request_bodies(&mut body, #rest);)*
+                #gotcha::Either::Right(body)
             }
         })
     }
@@ -174,9 +204,10 @@ impl FromMeta for ErrorDeclarations {
 #[derive(Debug, FromMeta)]
 struct ResponseMeta {
     status: u16,
-    body: Option<String>,
+    /// Kept as the literal so a malformed type is reported at the string, not the attribute.
+    body: Option<syn::LitStr>,
     /// OpenAPI 3.2 `itemSchema` for sequential media types such as `text/event-stream`.
-    item: Option<String>,
+    item: Option<syn::LitStr>,
     content_type: Option<String>,
     description: Option<String>,
 }
@@ -200,10 +231,10 @@ impl FromMeta for ResponseDeclarations {
                 return Err(darling::Error::custom("duplicate response status").with_span(meta));
             }
             if let Some(body) = &response.body {
-                syn::parse_str::<syn::Type>(body).map_err(|e| darling::Error::custom(e).with_span(meta))?;
+                parse_type(body)?;
             }
             if let Some(item_type) = &response.item {
-                syn::parse_str::<syn::Type>(item_type).map_err(|e| darling::Error::custom(e).with_span(meta))?;
+                parse_type(item_type)?;
                 if response.content_type.is_none() {
                     return Err(darling::Error::custom("item requires an explicit content_type").with_span(meta));
                 }
@@ -222,27 +253,27 @@ impl FromMeta for ResponseDeclarations {
 }
 
 impl ResponseMeta {
-    fn tokens(&self) -> proc_macro2::TokenStream {
+    fn tokens(&self, gotcha: &proc_macro2::TokenStream) -> proc_macro2::TokenStream {
         let status = self.status;
         let description = self.description.clone().unwrap_or_else(|| format!("HTTP {status}"));
         match (&self.body, &self.item) {
             (Some(body), Some(item)) => {
-                let body: syn::Type = syn::parse_str(body).expect("validated body type");
-                let item: syn::Type = syn::parse_str(item).expect("validated item type");
+                let body: syn::Type = parse_type(body).expect("validated body type");
+                let item: syn::Type = parse_type(item).expect("validated item type");
                 let media_type = self.content_type.as_deref().expect("item validation requires content_type");
-                quote!(::gotcha::response::response_with_item::<#body, #item>(#status, #media_type, #description))
+                quote!(#gotcha::response::response_with_item::<#body, #item>(#status, #media_type, #description))
             }
             (Some(body), None) => {
-                let body: syn::Type = syn::parse_str(body).expect("validated body type");
+                let body: syn::Type = parse_type(body).expect("validated body type");
                 let media_type = self.content_type.as_deref().unwrap_or("application/json");
-                quote!(::gotcha::response::response::<#body>(#status, #media_type, #description))
+                quote!(#gotcha::response::response::<#body>(#status, #media_type, #description))
             }
             (None, Some(item)) => {
-                let item: syn::Type = syn::parse_str(item).expect("validated item type");
+                let item: syn::Type = parse_type(item).expect("validated item type");
                 let media_type = self.content_type.as_deref().expect("item validation requires content_type");
-                quote!(::gotcha::response::item_response::<#item>(#status, #media_type, #description))
+                quote!(#gotcha::response::item_response::<#item>(#status, #media_type, #description))
             }
-            (None, None) => quote!(::gotcha::response::empty_response(#status, #description)),
+            (None, None) => quote!(#gotcha::response::empty_response(#status, #description)),
         }
     }
 }
@@ -268,6 +299,7 @@ fn unknown_parameter_attribute(tokens: &impl quote::ToTokens) -> syn::Error {
 
 pub(crate) fn request_handler(args: TokenStream, input_stream: TokenStream) -> TokenStream {
     let attr_args = parse_macro_input!(args as AttributeArgs);
+    let gotcha = gotcha_crate_path();
 
     let (request_bodies, attr_args) = match split_request_bodies(attr_args) {
         Ok(v) => v,
@@ -289,10 +321,15 @@ pub(crate) fn request_handler(args: TokenStream, input_stream: TokenStream) -> T
         return TokenStream::from(e.write_errors());
     }
     let skip_response = meta.skip_response.is_present();
-    let declared_request_body = RequestBodyMeta::constructor(&request_bodies);
-    let extra_responses: Vec<_> = meta.responses.unwrap_or_default().0.iter().map(ResponseMeta::tokens).collect();
+    let declared_request_body = RequestBodyMeta::constructor(&request_bodies, &gotcha);
+    let extra_responses: Vec<_> = meta.responses.unwrap_or_default().0.iter().map(|response| response.tokens(&gotcha)).collect();
     let explicit_errors = meta.errors.is_some();
-    let error_responses: Vec<_> = meta.errors.into_iter().flat_map(|errors| errors.0).map(|response| response.tokens()).collect();
+    let error_responses: Vec<_> = meta
+        .errors
+        .into_iter()
+        .flat_map(|errors| errors.0)
+        .map(|response| response.tokens(&gotcha))
+        .collect();
     let drop_default = meta.drop_default.is_present();
     let group = if let Some(group_name) = meta.group {
         quote! { Some(#group_name) }
@@ -347,11 +384,11 @@ pub(crate) fn request_handler(args: TokenStream, input_stream: TokenStream) -> T
             // The declared body replaces whatever a body extractor would infer, without
             // registering the replaced type's schema. The extractor still runs, so its rejection
             // responses are still documented.
-            params_token.push(quote! { ::gotcha::openapi::parameters_only::<#ty> });
+            params_token.push(quote! { #gotcha::openapi::parameters_only::<#ty> });
         } else {
-            params_token.push(quote! { <#ty as ::gotcha::ParameterProvider>::generate });
+            params_token.push(quote! { <#ty as #gotcha::ParameterProvider>::generate });
         }
-        extractor_tokens.push(quote! { <#ty as ::gotcha::ParameterProvider>::extractor_kinds });
+        extractor_tokens.push(quote! { <#ty as #gotcha::ParameterProvider>::extractor_kinds });
     }
     let ret_type = match &input.sig.output {
         // A handler without an explicit return type returns `()`.
@@ -361,14 +398,14 @@ pub(crate) fn request_handler(args: TokenStream, input_stream: TokenStream) -> T
     let ret_responses = if skip_response {
         // The return type is deliberately never mentioned: opaque types such as
         // `Sse<impl Stream<...>>` cannot be used in a trait path.
-        quote!(::gotcha::oas::Responses {
+        quote!(#gotcha::oas::Responses {
             default: None,
             data: ::std::collections::BTreeMap::new()
         })
     } else if explicit_errors {
-        quote!(<#ret_type as ::gotcha::response::ResultResponse>::success_responses())
+        quote!(<#ret_type as #gotcha::response::ResultResponse>::success_responses())
     } else {
-        quote!(<#ret_type as ::gotcha::Responsible>::response())
+        quote!(<#ret_type as #gotcha::Responsible>::response())
     };
 
     input.sig.inputs.iter_mut().for_each(|param| {
@@ -382,8 +419,8 @@ pub(crate) fn request_handler(args: TokenStream, input_stream: TokenStream) -> T
 
         #input
 
-        ::gotcha::inventory::submit! {
-            ::gotcha::Operable {
+        #gotcha::inventory::submit! {
+            #gotcha::Operable {
                 type_name: concat!(module_path!(), "::", #fn_ident_string),
                 id: #operation_id,
                 group: #group,
@@ -396,7 +433,7 @@ pub(crate) fn request_handler(args: TokenStream, input_stream: TokenStream) -> T
                 responses: || {
                     let mut responses = #ret_responses;
                     // Declared Err alternatives join the inferred Ok contract, including shared statuses.
-                    #(::gotcha::response::merge_responses(&mut responses, #error_responses);)*
+                    #(#gotcha::response::merge_responses(&mut responses, #error_responses);)*
                     // Explicit declarations replace inference for their status only.
                     #(responses.data.extend((#extra_responses).data);)*
                     if #drop_default { responses.default = None; }
@@ -577,7 +614,7 @@ mod tests {
             item = "Event"
         )))))
         .unwrap();
-        assert_eq!(meta.responses.unwrap().0[0].item.as_deref(), Some("Event"));
+        assert_eq!(meta.responses.unwrap().0[0].item.as_ref().map(syn::LitStr::value).as_deref(), Some("Event"));
 
         for invalid in [
             syn::parse_quote!(api(responses(response(status = 200, item = "Event")))),

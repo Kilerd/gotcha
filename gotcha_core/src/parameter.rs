@@ -250,7 +250,14 @@ impl<T: Schematic> ParameterProvider for Form<T> {
 
 impl<T: Schematic> ParameterProvider for Query<T> {
     fn generate(_url: String) -> Either<Vec<Parameter>, RequestBody> {
-        let fields = T::fields();
+        // A non-required `Query<T>` (for example `Query<Option<S>>`) has no parameters when the
+        // value is absent, so every field it documents is optional.
+        let mut fields = T::fields();
+        if !T::required() {
+            for (_, schema) in &mut fields {
+                schema.required = false;
+            }
+        }
         if fields.is_empty() {
             let mut ret = vec![];
 

@@ -31,9 +31,9 @@ pub use config::{ConfigErrorPolicy, ConfigWrapper, ServerConfig};
 pub use either::Either;
 pub use routing::{delete, get, head, on, options, patch, post, put, trace, MethodRouter};
 
-pub use once_cell::sync::Lazy;
 pub use router::GotchaRouter;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
+use std::sync::Arc;
 use tracing::level_filters::LevelFilter;
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::{fmt, EnvFilter};
@@ -161,7 +161,6 @@ pub use task::{RunningTasks, TaskScheduler};
 #[cfg_attr(docsrs, doc(cfg(feature = "static_files")))]
 pub use tower_http::services::{ServeDir, ServeFile};
 
-#[derive(Clone)]
 /// The axum state the framework injects: the loaded configuration plus the application state.
 ///
 /// Handlers rarely name this directly — `#[state]` and `#[config]` make `State<AppState>` and
@@ -173,13 +172,30 @@ pub use tower_http::services::{ServeDir, ServeFile};
 /// when shutdown starts, before HTTP connections begin draining. Long-lived handlers (WebSockets,
 /// server-sent events, other streaming responses) can select on [`Self::shutdown`] to stop at the
 /// same moment the listener stops accepting. Use [`Self::new`] to build a context directly for
-/// tests or manual router assembly; that token is never cancelled by the framework.
+/// tests or manual router assembly; that token is never cancelled by the framework. A standalone
+/// [`TaskScheduler::new`] derives a child token from it, so shutting that scheduler down does not
+/// cancel this token or other schedulers built from the same context.
 pub struct GotchaContext<State, Config> {
-    /// The loaded configuration.
-    pub config: ConfigWrapper<Config>,
+    /// The loaded configuration, shared by every clone of the context.
+    ///
+    /// axum clones the state passed through `with_state` for every request, so storing the
+    /// configuration behind an `Arc` keeps request handling from deep-cloning it. Field access
+    /// (`context.config.field`) still works through `Arc`'s `Deref`.
+    pub config: Arc<ConfigWrapper<Config>>,
     /// The application state.
     pub state: State,
     pub(crate) shutdown: CancellationToken,
+}
+
+// The configuration is shared, so cloning a context does not require `Config: Clone`.
+impl<State: Clone, Config> Clone for GotchaContext<State, Config> {
+    fn clone(&self) -> Self {
+        Self {
+            config: self.config.clone(),
+            state: self.state.clone(),
+            shutdown: self.shutdown.clone(),
+        }
+    }
 }
 
 impl<State, Config> GotchaContext<State, Config> {
@@ -188,7 +204,7 @@ impl<State, Config> GotchaContext<State, Config> {
     /// [`Gotcha::run`], or [`Gotcha::bind`] receive the server's token instead.
     pub fn new(state: State, config: ConfigWrapper<Config>) -> Self {
         Self {
-            config,
+            config: Arc::new(config),
             state,
             shutdown: CancellationToken::new(),
         }
@@ -210,7 +226,7 @@ where
     Config: Clone,
 {
     fn from_ref(context: &GotchaContext<State, Config>) -> Self {
-        context.config.clone()
+        (*context.config).clone()
     }
 }
 
@@ -221,14 +237,6 @@ impl<State, Config> FromRef<GotchaContext<State, Config>> for crate::config::Ser
         context.config.server.clone()
     }
 }
-
-/// Compatibility bundle of the original configuration bounds.
-///
-/// Existing generic code can keep using this trait. Runtime containers, extractors, messages,
-/// and tasks do not require it; loading, serialization, and default construction impose their
-/// individual bounds only where needed.
-pub trait GotchaConfig: Clone + Send + Sync + 'static + Serialize + for<'de> Deserialize<'de> + Default {}
-impl<T> GotchaConfig for T where T: Clone + Send + Sync + 'static + Serialize + for<'de> Deserialize<'de> + Default {}
 
 /// The trait API: implement it to describe an application, then call `run()`.
 ///
@@ -274,6 +282,10 @@ pub trait GotchaApp: Sized + Send + Sync {
     /// stops accepting. Then HTTP connections drain, scheduled executions stop starting, and
     /// [`Self::on_shutdown`] runs after both have finished. See [`Self::bind`] for serving a
     /// pre-bound listener.
+    ///
+    /// The future is polled on the serving task, so it must not block the thread: blocking work
+    /// starves the server it is meant to stop. Use an async primitive such as
+    /// [`tokio::sync::Notify`] or a channel.
     fn shutdown_signal(&self) -> impl std::future::Future<Output = ()> + Send {
         crate::startup::shutdown_signal()
     }
@@ -467,10 +479,10 @@ pub trait GotchaApp: Sized + Send + Sync {
     /// routes and documentation are mounted.
     ///
     /// The hook receives the assembled router and a clone of the application's [`GotchaContext`]:
-    /// the configuration is duplicated, and state that is itself shared (behind an `Arc`, say) is
-    /// the same value the routes see. A service that needs application state at construction time
-    /// — a reverse proxy closing over a registry, for example — can therefore be built from
-    /// `context` and mounted with `nest_service` or `fallback_service`.
+    /// the configuration is shared behind an `Arc`, and state that is itself shared (behind an
+    /// `Arc`, say) is the same value the routes see. A service that needs application state at
+    /// construction time — a reverse proxy closing over a registry, for example — can therefore
+    /// be built from `context` and mounted with `nest_service` or `fallback_service`.
     ///
     /// For example, return `router.layer(auth)` to protect every endpoint. This hook runs once
     /// in the default `build_router` implementation and is not called during document export.
@@ -528,8 +540,8 @@ pub trait GotchaApp: Sized + Send + Sync {
     ///
     /// Binding failure happens before state initialization or task registration and runs no
     /// cleanup hooks. Dropping the result without serving releases the port without running
-    /// cleanup. Requires `Self: 'static` because the signal and cleanup driver is moved into its
-    /// own task; use [`Self::run`] for applications that borrow external data.
+    /// cleanup. Requires `Self: 'static` because the bound server erases the application into
+    /// its signal and cleanup driver; use [`Self::run`] for applications that borrow external data.
     fn bind(self) -> impl std::future::Future<Output = GotchaResult<BoundServer>> + Send
     where
         Self: 'static,

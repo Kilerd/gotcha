@@ -316,6 +316,36 @@ fn a_custom_handler_documents_its_body_and_declared_statuses() {
 }
 
 #[test]
+fn a_configured_body_is_registered_only_when_an_operation_references_it() {
+    // The override belongs to `Json`, but the only route takes `Query`. Its rejections document
+    // the default `ErrorBody`; the unused `Problem` must not appear as an orphan component.
+    let app = Gotcha::new()
+        .extractor_config(JsonConfig::default().error_handler(|_| (StatusCode::BAD_REQUEST, Problem { code: 1 })))
+        .post("/query", query_params);
+    let spec = serde_json::to_value(app.into_openapi()).unwrap();
+    assert_eq!(statuses(&spec, "/query"), ["200", "400"]);
+    assert_eq!(error_body_ref(&responses(&spec, "/query")["400"]), "#/components/schemas/ErrorBody");
+    assert!(
+        spec["components"]["schemas"].get("Problem").is_none(),
+        "an unreferenced configured body is not a component"
+    );
+}
+
+#[test]
+fn opting_out_of_extractor_errors_does_not_register_configured_bodies() {
+    let app = Gotcha::new()
+        .document_extractor_errors(false)
+        .extractor_config(JsonConfig::default().error_handler(|_| (StatusCode::BAD_REQUEST, Problem { code: 1 })))
+        .post("/json", json_body);
+    let spec = serde_json::to_value(app.into_openapi()).unwrap();
+    assert_eq!(statuses(&spec, "/json"), ["200"]);
+    assert!(
+        spec["components"]["schemas"].get("Problem").is_none(),
+        "no response references the configured body"
+    );
+}
+
+#[test]
 fn explicit_declarations_win_over_automatic_responses() {
     let errors = one(operable(explicit_error), "/errors");
     assert_eq!(statuses(&errors, "/errors"), ["200", "400", "413", "415", "422"]);

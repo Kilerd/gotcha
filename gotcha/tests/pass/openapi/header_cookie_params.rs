@@ -16,6 +16,19 @@ impl HeaderParam for RequestId {
     }
 }
 
+/// `REQUIRED = false` without a `missing()` fallback: the runtime rejects an absent value, so the
+/// document still marks it required.
+#[derive(Schematic, Serialize, Deserialize)]
+struct Trace(String);
+
+impl HeaderParam for Trace {
+    const NAME: &'static str = "x-trace";
+    const REQUIRED: bool = false;
+    fn parse(raw: &str) -> Result<Self, String> {
+        Ok(Trace(raw.to_string()))
+    }
+}
+
 #[derive(Schematic, Serialize, Deserialize)]
 struct Session(String);
 
@@ -50,6 +63,18 @@ async fn typed_headers(
     format!("{} {:?}", agent.as_str(), host.is_some())
 }
 
+/// `Option<Header<T>>` and `Option<Cookie<T>>` accept an absent parameter as `None` and document
+/// it as optional, even when the parameter type itself is required.
+#[api(id = "optional_params")]
+async fn optional_params(id: Option<Header<RequestId>>, session: Option<Cookie<Session>>) -> String {
+    format!("{} {}", id.is_some(), session.is_some())
+}
+
+#[api(id = "no_fallback")]
+async fn no_fallback(Header(trace): Header<Trace>) -> String {
+    trace.0
+}
+
 fn extract<H, T>(_handler: H) -> &'static Operable
 where
     H: gotcha::axum::handler::Handler<T, ()>,
@@ -81,10 +106,27 @@ fn main() {
     let schema = serde_json::to_value(header.schema.unwrap()).unwrap();
     assert_eq!(schema["type"], "string");
 
-    // The cookie parameter is separate from headers, and `REQUIRED = false` is reflected.
+    // The cookie parameter is separate from headers, and `REQUIRED = false` with a `missing()`
+    // fallback is reflected as optional.
     let cookie = named("session");
     assert!(matches!(cookie._in, gotcha::oas::ParameterIn::Cookie));
     assert_eq!(cookie.required, Some(false));
+
+    // `REQUIRED = false` alone is not optional: the runtime rejects an absent value, so the
+    // document says required.
+    let trace = extract(no_fallback).generate("/no-fallback".to_owned());
+    let trace: Vec<_> = trace
+        .parameters
+        .expect("the header parameter is documented")
+        .into_iter()
+        .filter_map(|p| match p {
+            gotcha::oas::Referenceable::Data(p) => Some(p),
+            _ => None,
+        })
+        .collect();
+    let trace = trace.iter().find(|p| p.name == "x-trace").expect("x-trace documented");
+    assert!(matches!(trace._in, gotcha::oas::ParameterIn::Header));
+    assert_eq!(trace.required, Some(true), "REQUIRED = false without a missing() fallback stays required");
 
     // `HeaderMap` compiles as a handler argument and documents nothing.
     let raw = extract(raw_headers).generate("/raw".to_owned());
@@ -108,4 +150,23 @@ fn main() {
 
     let host = typed_params.iter().find(|p| p.name == "host").expect("host documented");
     assert_eq!(host.required, Some(false), "Option<TypedHeader<..>> is not required");
+
+    // `Option<Header<T>>` / `Option<Cookie<T>>` accept an absent parameter and document it as
+    // optional, even when the parameter type itself declares `REQUIRED = true`.
+    let optional = extract(optional_params).generate("/optional".to_owned());
+    let params_optional: Vec<_> = optional
+        .parameters
+        .expect("optional header and cookie are documented")
+        .into_iter()
+        .filter_map(|p| match p {
+            gotcha::oas::Referenceable::Data(p) => Some(p),
+            _ => None,
+        })
+        .collect();
+    let id = params_optional.iter().find(|p| p.name == "x-request-id").expect("x-request-id documented");
+    assert!(matches!(id._in, gotcha::oas::ParameterIn::Header));
+    assert_eq!(id.required, Some(false), "Option<Header<..>> is not required");
+    let session = params_optional.iter().find(|p| p.name == "session").expect("session documented");
+    assert!(matches!(session._in, gotcha::oas::ParameterIn::Cookie));
+    assert_eq!(session.required, Some(false), "Option<Cookie<..>> is not required");
 }

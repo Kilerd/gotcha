@@ -114,8 +114,10 @@ struct CleanupTask(Option<tokio::task::JoinHandle<()>>);
 
 impl CleanupTask {
     async fn join(mut self) -> Result<(), tokio::task::JoinError> {
-        let handle = self.0.take().expect("cleanup task handle was already taken");
-        handle.await
+        // Keep the handle inside `self` while awaiting, so cancelling this future (for example by
+        // dropping the serving future) drops the `CleanupTask` and aborts the running hook.
+        let handle = self.0.as_mut().expect("cleanup task handle was already taken");
+        std::future::poll_fn(|cx| std::future::Future::poll(std::pin::Pin::new(&mut *handle), cx)).await
     }
 }
 
@@ -296,7 +298,9 @@ impl Gotcha {
         S: Clone + Send + Sync + 'static,
         C: Clone + Send + Sync + 'static,
     {
-        Gotcha::from_sources(StateSource::Provided(context.state), Configuration::Provided(context.config))
+        // The context is consumed: reuse its configuration when nothing else shares it.
+        let config = std::sync::Arc::try_unwrap(context.config).unwrap_or_else(|config| (*config).clone());
+        Gotcha::from_sources(StateSource::Provided(context.state), Configuration::Provided(config))
     }
 }
 
@@ -969,6 +973,10 @@ where
     /// Replace the default Ctrl-C / Unix SIGTERM signal. When this future resolves, the context
     /// shutdown token is cancelled, HTTP stops accepting connections, and scheduled tasks stop
     /// starting new executions.
+    ///
+    /// The future is polled on the serving task, so it must not block the thread: blocking work
+    /// starves the server it is meant to stop. Use an async primitive such as
+    /// [`tokio::sync::Notify`] or a channel.
     pub fn shutdown_signal<F>(mut self, signal: F) -> Self
     where
         F: std::future::Future<Output = ()> + Send + 'static,
@@ -1243,30 +1251,6 @@ where
             register(scheduler);
         }
         Ok(())
-    }
-}
-
-// Convenience methods for empty state and config
-impl Gotcha<EmptyState, EmptyConfig> {
-    /// Quick start method for simple applications
-    ///
-    /// # Example
-    /// ```no_run
-    /// use gotcha::prelude::*;
-    ///
-    /// #[tokio::main]
-    /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    ///     Gotcha::quick_start()
-    ///         .await?
-    ///         .get("/", || async { "Hello World" })
-    ///         .run()
-    ///         .await?;
-    ///     Ok(())
-    /// }
-    /// ```
-    pub async fn quick_start() -> GotchaResult<Self> {
-        tracing_subscriber::fmt::init();
-        Ok(Self::new())
     }
 }
 
@@ -1697,5 +1681,43 @@ mod tests {
         let app = Gotcha::with_config::<EmptyConfig>().with_default_env();
         let config = app.config.resolve().unwrap();
         assert_eq!(config.server.host, "10.0.0.2");
+    }
+
+    #[tokio::test]
+    async fn cancelling_cleanup_join_aborts_the_running_hook() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        struct Dropped(std::sync::Arc<AtomicBool>);
+        impl Drop for Dropped {
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::SeqCst);
+            }
+        }
+
+        let dropped = std::sync::Arc::new(AtomicBool::new(false));
+        let (started, mut starts) = tokio::sync::mpsc::unbounded_channel();
+        let hook = {
+            let dropped = dropped.clone();
+            tokio::spawn(async move {
+                let _guard = Dropped(dropped);
+                started.send(()).unwrap();
+                std::future::pending::<()>().await;
+            })
+        };
+        // The shutdown driver awaits `join` and can itself be cancelled, for example when the
+        // serving future is dropped while a hook is still running.
+        let join = tokio::spawn(async move {
+            let _ = CleanupTask(Some(hook)).join().await;
+        });
+        starts.recv().await.unwrap();
+        join.abort();
+        assert!(join.await.unwrap_err().is_cancelled());
+        tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            while !dropped.load(Ordering::SeqCst) {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("cancelling the join must abort the running hook");
     }
 }

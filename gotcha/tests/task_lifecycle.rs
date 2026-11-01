@@ -157,11 +157,51 @@ async fn within<F: Future>(future: F) -> F::Output {
 }
 
 async fn request(address: SocketAddr) -> String {
+    request_path(address, "/hold").await
+}
+
+async fn request_path(address: SocketAddr, path: &str) -> String {
     let mut stream = tokio::net::TcpStream::connect(address).await.unwrap();
-    stream.write_all(b"GET /hold HTTP/1.0\r\nHost: localhost\r\n\r\n").await.unwrap();
+    stream
+        .write_all(format!("GET {path} HTTP/1.0\r\nHost: localhost\r\n\r\n").as_bytes())
+        .await
+        .unwrap();
     let mut response = String::new();
     stream.read_to_string(&mut response).await.unwrap();
     response
+}
+
+async fn stop_scheduler(State(context): State<GotchaContext<Controls, ()>>) -> &'static str {
+    let mut scheduler = TaskScheduler::new(context);
+    scheduler.interval("detached", Duration::from_millis(1), |_| async {});
+    scheduler.start().shutdown(Duration::from_secs(1)).await;
+    "stopped"
+}
+
+#[tokio::test]
+async fn standalone_scheduler_shutdown_in_a_handler_does_not_stop_the_server() {
+    let (controls, _addresses, _starts, _drops) = controls();
+    let stop = controls.stop.clone();
+    let server = Gotcha::from_context(GotchaContext::new(controls.clone(), config()))
+        .get("/stop-scheduler", stop_scheduler)
+        .get("/ping", || async { "pong" })
+        .shutdown_signal(async move {
+            stop.notified().await;
+        })
+        .bind()
+        .await
+        .unwrap();
+    let address = server.local_addr();
+    let serving = tokio::spawn(server.serve());
+
+    // The handler builds a standalone scheduler from the request's context and shuts it down.
+    assert!(within(request_path(address, "/stop-scheduler")).await.ends_with("stopped"));
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(!serving.is_finished(), "a standalone scheduler shutdown must not stop the server");
+    assert!(within(request_path(address, "/ping")).await.ends_with("pong"));
+
+    controls.stop.notify_one();
+    within(serving).await.unwrap().unwrap();
 }
 
 #[tokio::test]

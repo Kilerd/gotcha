@@ -1,7 +1,6 @@
 use darling::ast::Data;
 use darling::{FromDeriveInput, FromField, FromVariant};
 use proc_macro2::{Delimiter, Group, Span, TokenStream as TokenStream2, TokenTree};
-use proc_macro_crate::{crate_name, FoundCrate};
 use quote::quote;
 use syn::{parse2, DeriveInput};
 
@@ -166,7 +165,7 @@ struct ValidateConstraints {
     /// Whether the corresponding bound came from `exclusive_min` / `exclusive_max`.
     exclusive_minimum: bool,
     exclusive_maximum: bool,
-    /// `length(min/max/equal)` — becomes minLength/maxLength for strings, minItems/maxItems for collections.
+    /// `length(min/max/equal)` — recorded with the keywords of the schema's type at runtime.
     min_length: Option<u64>,
     max_length: Option<u64>,
     format: Option<&'static str>,
@@ -318,31 +317,6 @@ fn lit_to_u64(lit: &syn::Lit) -> Option<u64> {
     }
 }
 
-/// Whether `ty` is a collection (`Vec<_>`), peeling one layer of `Option<_>`. Used to decide
-/// whether `length` maps to minItems/maxItems (collections) or minLength/maxLength (strings).
-fn is_collection(ty: &syn::Type) -> bool {
-    let syn::Type::Path(tp) = ty else {
-        return false;
-    };
-    let Some(seg) = tp.path.segments.last() else {
-        return false;
-    };
-    if seg.ident == "Vec" {
-        return true;
-    }
-    if seg.ident != "Option" {
-        return false;
-    }
-    // Peel one `Option<T>` layer and re-check the inner type.
-    let syn::PathArguments::AngleBracketed(args) = &seg.arguments else {
-        return false;
-    };
-    match args.args.first() {
-        Some(syn::GenericArgument::Type(inner)) => is_collection(inner),
-        _ => false,
-    }
-}
-
 impl ParameterStructFieldOpt {
     /// The type whose `Schematic` describes this field: the `#[schematic(as = "...")]` type when
     /// present, otherwise the declared field type. The original type is then never required to
@@ -385,16 +359,20 @@ impl ParameterStructFieldOpt {
             let key = if validated.exclusive_maximum { "exclusiveMaximum" } else { "maximum" };
             customizations.push(extra(core, key, quote! { #max }));
         }
-        let (len_min, len_max) = if is_collection(self.schema_type()) {
-            ("minItems", "maxItems")
-        } else {
-            ("minLength", "maxLength")
-        };
-        if let Some(min) = validated.min_length {
-            customizations.push(extra(core, len_min, quote! { #min }));
-        }
-        if let Some(max) = validated.max_length {
-            customizations.push(extra(core, len_max, quote! { #max }));
+        // The keyword depends on the schema above, which is only known at runtime: a string
+        // gets min/maxLength, an array min/maxItems and an object min/maxProperties.
+        if validated.min_length.is_some() || validated.max_length.is_some() {
+            let min = match validated.min_length {
+                Some(min) => quote! { Some(#min) },
+                None => quote! { None },
+            };
+            let max = match validated.max_length {
+                Some(max) => quote! { Some(#max) },
+                None => quote! { None },
+            };
+            customizations.push(quote! {
+                #core::registry::apply_length_constraints(&mut field_schema.schema, #min, #max);
+            });
         }
         if let Some(format) = validated.format {
             customizations.push(quote! { field_schema.schema.format = Some(#format.to_string()); });
@@ -433,19 +411,11 @@ pub(crate) struct ParameterEnumVariantOpt {
 // Libraries can stay on core alone; applications can use gotcha's re-export. Cargo
 // dependency aliases are resolved by package name, including workspace dependencies.
 fn core_crate_path() -> Result<TokenStream2, &'static str> {
-    for package in ["gotcha_core", "gotcha"] {
-        if let Ok(found) = crate_name(package) {
-            let name = match found {
-                FoundCrate::Itself => package.to_owned(),
-                FoundCrate::Name(name) => name,
-            };
-            let ident = syn::Ident::new(&name, Span::call_site());
-            return Ok(if package == "gotcha_core" {
-                quote! { ::#ident }
-            } else {
-                quote! { ::#ident::gotcha_core }
-            });
-        }
+    if let Some(core) = crate::utils::crate_path("gotcha_core") {
+        return Ok(core);
+    }
+    if let Some(gotcha) = crate::utils::crate_path("gotcha") {
+        return Ok(quote! { #gotcha::gotcha_core });
     }
     Err("Schematic requires a gotcha_core or gotcha dependency; use #[schematic(crate = \"path::to::gotcha_core\")] for a custom re-export")
 }

@@ -240,7 +240,7 @@ impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
     /// let router: GotchaRouter<()> = GotchaRouter::default()
     ///     .layer(gotcha::axum::Extension(0u32));
     /// ```
-    pub fn layer<L>(self, layer: L) -> Self
+    pub fn layer<L>(mut self, layer: L) -> Self
     where
         L: Layer<Route> + Clone + Send + Sync + 'static,
         L::Service: Service<Request> + Clone + Send + Sync + 'static,
@@ -248,18 +248,8 @@ impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
         <L::Service as Service<Request>>::Error: Into<Infallible> + 'static,
         <L::Service as Service<Request>>::Future: Send + 'static,
     {
-        Self {
-            #[cfg(feature = "openapi")]
-            operations: self.operations,
-            #[cfg(feature = "openapi")]
-            openapi_transforms: self.openapi_transforms,
-            #[cfg(feature = "openapi")]
-            openapi_info: self.openapi_info,
-            extractor_configs: self.extractor_configs,
-            #[cfg(feature = "openapi")]
-            document_extractor_errors: self.document_extractor_errors,
-            router: self.router.layer(layer),
-        }
+        self.router = self.router.layer(layer);
+        self
     }
 
     /// Apply a layer only to business routes already registered on this router.
@@ -280,7 +270,7 @@ impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
     ///     .route_raw("/health", gotcha::axum::routing::get(|| async { "ok" }))
     ///     .route_layer(gotcha::axum::Extension(0u32));
     /// ```
-    pub fn route_layer<L>(self, layer: L) -> Self
+    pub fn route_layer<L>(mut self, layer: L) -> Self
     where
         L: Layer<Route> + Clone + Send + Sync + 'static,
         L::Service: Service<Request> + Clone + Send + Sync + 'static,
@@ -288,38 +278,18 @@ impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
         <L::Service as Service<Request>>::Error: Into<Infallible> + 'static,
         <L::Service as Service<Request>>::Future: Send + 'static,
     {
-        Self {
-            #[cfg(feature = "openapi")]
-            operations: self.operations,
-            #[cfg(feature = "openapi")]
-            openapi_transforms: self.openapi_transforms,
-            #[cfg(feature = "openapi")]
-            openapi_info: self.openapi_info,
-            extractor_configs: self.extractor_configs,
-            #[cfg(feature = "openapi")]
-            document_extractor_errors: self.document_extractor_errors,
-            router: self.router.route_layer(layer),
-        }
+        self.router = self.router.route_layer(layer);
+        self
     }
 
     /// Handle requests that match no route.
-    pub fn fallback<H, T>(self, handler: H) -> Self
+    pub fn fallback<H, T>(mut self, handler: H) -> Self
     where
         H: Handler<T, State>,
         T: 'static,
     {
-        Self {
-            #[cfg(feature = "openapi")]
-            operations: self.operations,
-            #[cfg(feature = "openapi")]
-            openapi_transforms: self.openapi_transforms,
-            #[cfg(feature = "openapi")]
-            openapi_info: self.openapi_info,
-            extractor_configs: self.extractor_configs,
-            #[cfg(feature = "openapi")]
-            document_extractor_errors: self.document_extractor_errors,
-            router: self.router.fallback(handler),
-        }
+        self.router = self.router.fallback(handler);
+        self
     }
 
     /// Handle unmatched requests with a `Service` rather than a handler.
@@ -337,25 +307,15 @@ impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
     ///         Ok::<_, std::convert::Infallible>(Response::new(Body::from("not found")))
     ///     }));
     /// ```
-    pub fn fallback_service<Svc, ResBody>(self, service: Svc) -> Self
+    pub fn fallback_service<Svc, ResBody>(mut self, service: Svc) -> Self
     where
         Svc: Service<Request, Response = axum::http::Response<ResBody>, Error = Infallible> + Clone + Send + Sync + 'static,
         Svc::Future: Send + 'static,
         ResBody: axum::body::HttpBody<Data = axum::body::Bytes> + Send + 'static,
         ResBody::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
     {
-        Self {
-            #[cfg(feature = "openapi")]
-            operations: self.operations,
-            #[cfg(feature = "openapi")]
-            openapi_transforms: self.openapi_transforms,
-            #[cfg(feature = "openapi")]
-            openapi_info: self.openapi_info,
-            extractor_configs: self.extractor_configs,
-            #[cfg(feature = "openapi")]
-            document_extractor_errors: self.document_extractor_errors,
-            router: self.router.fallback_service(service),
-        }
+        self.router = self.router.fallback_service(service);
+        self
     }
 
     /// Mount a tower `Service` at `path`, handling every request below that prefix.
@@ -383,24 +343,14 @@ impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
     ///         Ok::<_, std::convert::Infallible>(Response::new(Body::from("asset")))
     ///     }));
     /// ```
-    pub fn nest_service<T>(self, path: &str, service: T) -> Self
+    pub fn nest_service<T>(mut self, path: &str, service: T) -> Self
     where
         T: Service<Request, Error = Infallible> + Clone + Send + Sync + 'static,
         T::Response: Responder,
         T::Future: Send + 'static,
     {
-        Self {
-            #[cfg(feature = "openapi")]
-            operations: self.operations,
-            #[cfg(feature = "openapi")]
-            openapi_transforms: self.openapi_transforms,
-            #[cfg(feature = "openapi")]
-            openapi_info: self.openapi_info,
-            extractor_configs: self.extractor_configs,
-            #[cfg(feature = "openapi")]
-            document_extractor_errors: self.document_extractor_errors,
-            router: self.router.nest_service(path, service),
-        }
+        self.router = self.router.nest_service(path, service);
+        self
     }
 
     /// Customize the generated OpenAPI document when it is exported or served.

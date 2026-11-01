@@ -7,8 +7,9 @@ This example demonstrates the new simplified Gotcha API that allows you to creat
 - ✨ **Simple route definitions** with closures and inline handlers
 - 🛣️ **Path parameters** with automatic type conversion
 - 📦 **JSON APIs** with automatic serialization/deserialization
-- 📚 **Automatic OpenAPI documentation** (visit `/redoc`)
-- 🌐 **CORS support** enabled with one line
+- 📚 **OpenAPI documentation** for `#[api]` handlers (visit `/scalar`); closure routes are not
+  documented automatically
+- 🌐 **CORS support** with `with_cors()`
 - 🔧 **Health checks** and error handling
 - 🏗️ **Nested routes** and modular organization
 
@@ -20,7 +21,7 @@ cargo run
 
 Then visit:
 - **Main app**: http://localhost:3000
-- **API Documentation**: http://localhost:3000/redoc
+- **API Documentation**: http://localhost:3000/scalar
 - **OpenAPI Spec**: http://localhost:3000/openapi.json
 - **Health Check**: http://localhost:3000/health
 
@@ -40,7 +41,7 @@ impl GotchaApp for App {
     }
 
     async fn state(&self, _config: &ConfigWrapper<Self::Config>) 
-        -> Result<Self::State, Box<dyn std::error::Error>> {
+        -> Result<Self::State, GotchaError> {
         Ok(())
     }
 }
@@ -72,8 +73,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 |--------|------|-------------|
 | GET | `/` | Welcome message |
 | GET | `/health` | Health check with JSON response |
-| GET | `/hello/:name` | Greeting with path parameter |
-| GET | `/users/:id` | Get user by ID (mock data) |
+| GET | `/hello/{name}` | Greeting with path parameter |
+| GET | `/users/{id}` | Get user by ID (mock data) |
 | POST | `/users` | Create new user |
 | GET | `/api/v1/ping` | Simple ping endpoint |
 | GET | `/api/v1/time` | Current timestamp |
@@ -96,7 +97,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ### Path Parameters
 ```rust
-.get("/hello/:name", |Path(name): Path<String>| async move {
+.get("/hello/{name}", |Path(name): Path<String>| async move {
     format!("👋 Hello, {}! Welcome to Gotcha!", name)
 })
 ```
@@ -125,14 +126,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 ### Error Handling
 ```rust
 .get("/error", || async {
-    Err::<String, _>("Something went wrong!")
+    Err::<String, _>((StatusCode::INTERNAL_SERVER_ERROR, "Something went wrong!"))
 })
 ```
 
 ## Features Enabled
 
 This example uses the following Gotcha features:
-- `openapi` - Automatic API documentation
+- `openapi` - OpenAPI documentation for `#[api]` handlers
 - `cors` - Cross-origin resource sharing support
 
 ## Migration from Traditional API

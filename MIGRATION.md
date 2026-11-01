@@ -1,6 +1,10 @@
 # Migration Guide
 
 - [Unreleased: non-exhaustive extractor enums](#unreleased-non-exhaustive-extractor-enums)
+- [Unreleased: shared configuration](#unreleased-shared-configuration)
+- [Unreleased: removed unused public items](#unreleased-removed-unused-public-items)
+- [Unreleased: duplicate operation ids are suffixed](#unreleased-duplicate-operation-ids-are-suffixed)
+- [Unreleased: validation `length` keywords follow the schema type](#unreleased-validation-length-keywords-follow-the-schema-type)
 - [Unreleased: extractor rejection responses in OpenAPI](#unreleased-extractor-rejection-responses-in-openapi)
 - [Unreleased: neutral OpenAPI info defaults](#unreleased-neutral-openapi-info-defaults)
 - [Unreleased: serde-driven field presence](#unreleased-serde-driven-field-presence)
@@ -44,6 +48,105 @@ variant, or a header/cookie rejection variant without a breaking change.
   variants, and `ParamRejection::Missing`/`Invalid`/`NotText` remain usable.
 
 ---
+
+# Unreleased: shared configuration
+
+`GotchaContext::config` is now an `Arc<ConfigWrapper<C>>` rather than a `ConfigWrapper<C>`. axum
+clones the state passed through `with_state` for every request, so the previous representation
+deep-cloned the whole application configuration on each request; a request now clones the `Arc`
+instead. How much this saves grows with the configuration: string fields dominate.
+
+- `GotchaContext::new(state, config)` keeps its signature and wraps the configuration in an `Arc`.
+- Reading is unchanged: `context.config.server.port` and `context.config.field` still work through
+  `Arc`'s `Deref`, `&*context.config` yields `&ConfigWrapper<C>`, and extractors such as
+  `State<ConfigWrapper<C>>`, `State<ServerConfig>`, and the `#[config]` types are unaffected. Deref
+  coercion also keeps `let config: &ConfigWrapper<C> = &context.config;` compiling.
+- Writing through the field no longer compiles (`context.config.app.field = ..` is E0594: the
+  `Arc` only hands out shared access). Use `Arc::make_mut(&mut context.config).app.field = ..`
+  while the configuration implements `Clone`, or `Arc::get_mut(&mut context.config)` while the
+  `Arc` is unique (no `Clone` needed). For a shared, non-`Clone` configuration, rebuild a
+  `ConfigWrapper` from its parts and assign `context.config = Arc::new(config)`.
+- Serializing the field needs a dereference: `serde_json::to_string(&context.config)` and
+  `Json(context.config.clone())` stop compiling because serde's `rc` feature is off by default. Use
+  `serde_json::to_string(&*context.config)` and `Json((*context.config).clone())`.
+- Cloning a context no longer requires `Config: Clone`: the shared configuration is only refcounted.
+- `GotchaContext` is `Send`/`Sync` only when the stored `ConfigWrapper<C>` is `Send + Sync`, because
+  `Arc<T>` requires both; a hand-built context whose configuration was only `Send` is no longer
+  `Send`. Application configurations are normally `Send + Sync`.
+- `Gotcha::from_context` reuses the supplied configuration without cloning when nothing else
+  shares it.
+
+```rust,ignore
+// Before
+fn app_config(context: &GotchaContext<AppState, AppConfig>) -> ConfigWrapper<AppConfig> {
+    context.config.clone()
+}
+
+// After
+fn app_config(context: &GotchaContext<AppState, AppConfig>) -> ConfigWrapper<AppConfig> {
+    (*context.config).clone()
+}
+```
+# Unreleased: removed unused public items
+
+Several public items that nothing in the framework, examples, or documentation used are gone.
+Each had a direct replacement:
+
+| Removed | Replacement |
+| --- | --- |
+| `Gotcha::quick_start()` | `Gotcha::new()`, plus logging setup if you need it |
+| `quick_server!` | `Gotcha::new()` followed by the same route method calls |
+| `handler!` | write the closure directly, for example an `async move` block |
+| `gotcha::Lazy` | `once_cell::sync::Lazy` (or `std::sync::LazyLock`) with a direct dependency |
+| `GotchaConfig` | name the bounds directly: `Clone + Send + Sync + 'static + Serialize + for<'de> Deserialize<'de> + Default` |
+| `gotcha::prelude::Result` | write `Result<T, Box<dyn std::error::Error + Send + Sync>>`; standard `Result` is no longer shadowed |
+| `gotcha::openapi::replace_path_variable` | nothing: axum 0.8 routes already use OpenAPI's `{name}` syntax |
+| `gotcha::openapi::path_variable_names` | `axum::extract::MatchedPath`, or iterate the `{name}` segments yourself |
+
+`Gotcha::quick_start` panicked when called twice because it installed the tracing subscriber
+globally; logging is left to the application. `quick_server!` was documented as starting a server
+but only returned a builder. `prelude::Result` shadowed the standard library's `Result` on glob
+import, so `Result<T>` in a module using the prelude failed to mean `std::result::Result`.
+
+gotcha's direct `regex` dependency is gone with `path_variable_names` (`gotcha_core` still uses
+its own `regex` dependency). `EmptyState` stays: it appears in the builder's default type
+parameters and public signatures, and replacing it with `()` would churn call sites without
+removing a concept.
+
+---
+
+# Unreleased: duplicate operation ids are suffixed
+
+**Two operations can no longer emit the same `operationId`.** The id defaults to the handler's
+function name, so `users::list` and `books::list`, or one handler mounted at two paths, used to
+collide. The first operation now keeps the id and each later duplicate gets `_2`, `_3`, … in the
+order operations appear in the document: by path, and by method as `PathItem` writes it (GET,
+PUT, POST, DELETE, OPTIONS, HEAD, PATCH, TRACE). Explicit `#[api(id = "…")]` ids follow the same
+rule, and an existing id is never renamed by a generated suffix.
+
+Because a suffix depends on the order of the operations, adding a route can rename an existing
+operation in the generated document (and therefore in clients generated from it). Give operations
+an explicit `#[api(id = "…")]` when their ids must stay stable. Documents whose ids were already
+unique are unchanged.
+
+---
+
+# Unreleased: validation `length` keywords follow the schema type
+
+`#[validate(length(min = .., max = ..))]` now documents the keywords of the schema the field
+serializes to, chosen at runtime:
+
+- strings → `minLength`/`maxLength`
+- arrays, sets and deques → `minItems`/`maxItems`
+- maps → `minProperties`/`maxProperties`
+
+String and `Vec<_>` fields keep their existing keywords. Documents change for fields whose Rust
+type is a set, a deque or a map (previously `minLength`/`maxLength`, now items/properties), and
+for types the old source-text check could not see through: `Box<Vec<_>>`, a `Vec` type alias, a
+newtype wrapping a `Vec`, and `[T; N]` (previously `minLength`/`maxLength`; now
+`minItems`/`maxItems`, merged with the array's exact length so the tighter bound wins).
+
+Generated clients that pinned the old keywords on such fields must be regenerated.
 
 # Unreleased: extractor rejection responses in OpenAPI
 
@@ -470,8 +573,11 @@ If you also use support APIs such as the registry, they are available through
 `gotcha::gotcha_core`. The derive prefers a direct core dependency when present, otherwise
 gotcha's re-export, and recognizes Cargo dependency renames for both. A custom facade can set
 `#[schematic(crate = "path::to::gotcha_core")]` explicitly. This does not change schema names
-or generated document content. Renaming support here applies to the Schematic derive; other
-Gotcha macros retain their existing path behavior.
+or generated document content. Cargo dependency renames are recognized by the derive and by the
+`#[api]`, `#[state]` and `#[config]` attribute macros, so a dependency renamed to `web` can use
+`#[derive(web::Schematic)]`, `#[web::api]`, `#[web::state]` and `#[web::config]`. When the
+calling manifest cannot be inspected (a build system without a `Cargo.toml`, or a package that
+re-exports gotcha under the `gotcha` name), the attribute macros fall back to `::gotcha`.
 
 **Validation can use gotcha's validator version directly.** To avoid a separate `validator`
 dependency, select the re-export using the upstream derive's existing crate override:
@@ -548,8 +654,8 @@ Return `router.layer(auth_layer)` from it to cover the complete application. Thi
 documentation is mounted, without requiring an override of `build_router`. An existing custom
 `build_router` still owns its whole assembly and must invoke any desired finalization itself.
 The builder's `.finish_router(|router, context| ..)` is the equivalent hook; it receives a clone
-of the application context (configuration duplicated, state shared behind an `Arc` still the same
-value), and `app_layer` middleware remains outermost around whatever the hook mounts.
+of the application context (configuration shared behind an `Arc`, state shared behind an `Arc`
+still the same value), and `app_layer` middleware remains outermost around whatever the hook mounts.
 Routes added through these native Axum hooks do not contribute OpenAPI metadata.
 
 ## Export without HTTP
@@ -636,8 +742,8 @@ responses: <String as Responsible>::response,
 
 Capturing closures cannot be stored in the new function-pointer fields. Apply configuration-dependent
 changes through the existing `.openapi(move |spec| ...)` transform instead. User transforms still
-support captured state. `ParameterProvider::generate`, `ParamType`, and the public `gotcha::Lazy`
-and `gotcha::Either` re-exports retain their existing interfaces.
+support captured state. `ParameterProvider::generate`, `ParamType`, and the public `gotcha::Either`
+re-export retain their existing interfaces.
 
 Static constructor storage does not cache generated parameters, responses, schemas, or complete
 OpenAPI documents. Constructors still run inside each document's schema collection scope, preserving
@@ -677,6 +783,11 @@ aborts and joins unfinished tasks at the deadline. Dropping the owner or cancell
 future requests immediate abortion; dropping cannot perform an asynchronous join. The same ownership
 includes the current execution, which is no longer a separate detached task.
 
+A standalone scheduler uses a child of the context's shutdown token. Cancelling the context token
+stops the tasks, while `RunningTasks::shutdown` cancels only the child, so executions waiting on
+`context.shutdown()` are released without shutting down the application or another scheduler
+sharing the context. Schedulers created by application startup already use the server's token.
+
 ## Application shutdown
 
 Builder `run` / `listen` / `listen_on` and `GotchaApp::run` now wait for Ctrl-C or Unix SIGTERM by
@@ -706,7 +817,12 @@ by application code (including `Messager::spawn`) remain outside this ownership.
 
 Single-execution panics are logged and the schedule continues, including a panic while constructing
 the execution future. Interval tasks retain their existing immediate first tick and non-overlapping
-executions. Invalid cron expressions and zero intervals are logged and skipped during registration.
+executions. A slow execution no longer causes catch-up runs: an interval execution runs the
+already-due tick once when it finishes and then resumes at the next period boundary
+(tokio's `MissedTickBehavior::Skip`), and cron tasks compute the next trigger from the current
+time, anchored to the last trigger that fired so a wall-clock step back cannot repeat it. The
+low-level `cron_proc_macro_wrapper` and `interval_proc_macro_wrapper` drivers share these rules.
+Invalid cron expressions and zero intervals are logged and skipped during registration.
 
 ---
 
@@ -805,9 +921,6 @@ This method bound applies even when `config()` is overridden; use an explicit co
 configuration cannot be deserialized. Generic callers of these methods must now state that bound
 explicitly. `Serialize` and `Default` are no longer required by trait-based loading.
 
-The existing `GotchaConfig` marker retains its original bounds for compatibility with user generic
-code. Runtime containers and the extraction macros no longer require it.
-
 Explicit configuration still wins over registered sources. See [shared startup](#unreleased-shared-startup)
 for the unified strict loading policy, explicit fallback, and listener address precedence.
 
@@ -825,8 +938,8 @@ instead of serving. `BoundServer::local_addr()` reports the effective address, i
 selected for port `0`, and `BoundServer::serve()` runs the server. `run()`, `listen()`, and
 `listen_on()` keep their signatures and are now thin wrappers over `bind*().serve()`.
 
-`GotchaApp::bind()` requires `Self: 'static` because the signal and cleanup driver runs in its own
-task. Applications that borrow external data can keep using `run()`.
+`GotchaApp::bind()` requires `Self: 'static` because the bound server erases the application into
+its signal and cleanup driver. Applications that borrow external data can keep using `run()`.
 
 Signal handling starts only when serving starts. An unserved `BoundServer` does not install a
 signal handler, so holding one does not swallow Ctrl-C/SIGTERM. Dropping one cancels the context

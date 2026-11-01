@@ -19,9 +19,9 @@ use crate::error::json_response;
 
 /// A body type accepted by an extractor error handler.
 ///
-/// With the `openapi` feature this is every `Serialize + Schematic + Send + Sync + 'static` type,
-/// and configuring a handler registers its schema as an OpenAPI component. Without `openapi`,
-/// only `Serialize + Send + Sync + 'static` is required.
+/// With the `openapi` feature this is every `Serialize + Schematic + Send + Sync + 'static` type;
+/// an operation that documents this provider's rejections references its schema as an OpenAPI
+/// component. Without `openapi`, only `Serialize + Send + Sync + 'static` is required.
 #[cfg(feature = "openapi")]
 pub trait ErrorBodyResponse: Serialize + crate::Schematic + Send + Sync + 'static {
     /// The schema registered for this body type.
@@ -54,11 +54,6 @@ struct ErrorHandler<R> {
     /// The schema of the body this handler sends, stored type-erased with the handler.
     #[cfg(feature = "openapi")]
     schema: fn() -> crate::EnhancedSchema,
-    /// Whether `schema` came from an application override. [`ExtractorConfigs::schemas`]
-    /// registers overridden bodies eagerly; the default body is registered only when an
-    /// operation references it through an automatic rejection response.
-    #[cfg(feature = "openapi")]
-    custom: bool,
 }
 
 impl<R: 'static> ErrorHandler<R> {
@@ -67,8 +62,6 @@ impl<R: 'static> ErrorHandler<R> {
             render: Arc::new(render),
             #[cfg(feature = "openapi")]
             schema: schema_of::<E>(),
-            #[cfg(feature = "openapi")]
-            custom: false,
         }
     }
 
@@ -80,18 +73,11 @@ impl<R: 'static> ErrorHandler<R> {
             }),
             #[cfg(feature = "openapi")]
             schema: schema_of::<E>(),
-            #[cfg(feature = "openapi")]
-            custom: true,
         }
     }
 
     fn render(&self, rejection: &R) -> Response {
         (self.render)(rejection)
-    }
-
-    #[cfg(feature = "openapi")]
-    fn schema(&self) -> Option<fn() -> crate::EnhancedSchema> {
-        self.custom.then_some(self.schema)
     }
 
     /// The schema of the body this handler always sends, including the default `ErrorBody`.
@@ -153,7 +139,8 @@ macro_rules! rejection_config {
             /// The handler receives a reference to the extractor's concrete rejection type, so
             /// the extractor can return the original rejection alongside the rendered response
             /// (see [`Rejected`](crate::Rejected)), and returns the status and body to send.
-            /// With the `openapi` feature, the body type is registered as a component.
+            /// With the `openapi` feature, operations that document this provider's rejections
+            /// reference the body type as a component.
             pub fn error_handler<E>(self, handler: impl Fn(&$rejection) -> (StatusCode, E) + Send + Sync + 'static) -> Self
             where
                 E: ErrorBodyResponse,
@@ -179,11 +166,6 @@ macro_rules! rejection_config {
 
             pub(crate) fn render(&self, rejection: &$rejection) -> Response {
                 self.handler.render(rejection)
-            }
-
-            #[cfg(feature = "openapi")]
-            fn schema(&self) -> Option<fn() -> crate::EnhancedSchema> {
-                self.handler.schema()
             }
 
             #[cfg(feature = "openapi")]
@@ -335,7 +317,8 @@ impl ValidConfig {
     /// returns the status and body to send. Its keys are the serde wire names, already remapped
     /// through [`Schematic::wire_fields`](crate::Schematic::wire_fields) by [`Valid`](crate::Valid).
     /// Use [`flatten_errors`](crate::validation::flatten_errors) to render the same field map the
-    /// default body uses. With the `openapi` feature, the body type is registered as a component.
+    /// default body uses. With the `openapi` feature, operations that document validation failures
+    /// reference the body type as a component.
     pub fn error_handler<E>(self, handler: impl Fn(&validator::ValidationErrors) -> (StatusCode, E) + Send + Sync + 'static) -> Self
     where
         E: ErrorBodyResponse,
@@ -361,11 +344,6 @@ impl ValidConfig {
 
     pub(crate) fn render(&self, rejection: &validator::ValidationErrors) -> Response {
         self.handler.render(rejection)
-    }
-
-    #[cfg(feature = "openapi")]
-    fn schema(&self) -> Option<fn() -> crate::EnhancedSchema> {
-        self.handler.schema()
     }
 
     #[cfg(feature = "openapi")]
@@ -431,24 +409,6 @@ impl ExtractorConfigs {
     /// this last; otherwise its extractors fall back to the defaults.
     pub fn layer(self, router: axum::Router) -> axum::Router {
         router.layer(axum::Extension(Arc::new(self)))
-    }
-
-    #[cfg(feature = "openapi")]
-    pub(crate) fn schemas(&self) -> Vec<fn() -> crate::EnhancedSchema> {
-        [
-            self.json.schema(),
-            self.form.schema(),
-            self.query.schema(),
-            self.path.schema(),
-            self.multipart.schema(),
-            self.typed_header.schema(),
-            self.header.schema(),
-            self.cookie.schema(),
-            self.valid.schema(),
-        ]
-        .into_iter()
-        .flatten()
-        .collect()
     }
 
     /// The statuses and body schema to document for `kind`'s rejections.

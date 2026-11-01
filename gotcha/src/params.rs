@@ -5,6 +5,10 @@
 //! through the [`HeaderParam`] / [`CookieParam`] traits, so the same declaration both extracts the
 //! value and documents it as an OpenAPI `header` / `cookie` parameter.
 //!
+//! Both wrappers also accept `Option<Header<T>>` / `Option<Cookie<T>>` as handler arguments: an
+//! absent parameter then extracts as `None` and is documented as not required, while a present
+//! but unparseable value is still rejected.
+//!
 //! ```ignore
 //! use gotcha::{Header, HeaderParam, Schematic};
 //!
@@ -33,6 +37,14 @@ pub trait HeaderParam: Sized {
     /// The header name, matched case-insensitively (HTTP header names are case-insensitive).
     const NAME: &'static str;
     /// Whether the request is rejected when the header is absent. Defaults to `true`.
+    ///
+    /// Setting this to `false` by itself does not make the parameter optional: the extractor
+    /// still rejects an absent header unless [`missing`](Self::missing) returns a value, and the
+    /// default `missing` returns `None`. The generated document follows the same rule: the
+    /// parameter is documented as required unless `REQUIRED` is `false` *and* `missing()`
+    /// returns a value. To let the handler see an absent header as `None`, take
+    /// `Option<Header<T>>` as the argument instead; that documents the parameter as
+    /// `required: false` and does not consult either item.
     const REQUIRED: bool = true;
     /// Description for the generated OpenAPI parameter. Worth setting when the type is a newtype
     /// wrapper, since those are transparent in the schema and their doc comment does not survive.
@@ -40,6 +52,10 @@ pub trait HeaderParam: Sized {
     /// Parse the raw header value, returning a message describing why it was rejected.
     fn parse(raw: &str) -> Result<Self, String>;
     /// The value used when the header is absent and [`REQUIRED`](Self::REQUIRED) is `false`.
+    ///
+    /// Returning `None` (the default) keeps the rejection, so `REQUIRED = false` alone still
+    /// fails with `400` and the parameter is documented as required. Extract
+    /// `Option<Header<T>>` to accept an absent header as `None`.
     fn missing() -> Option<Self> {
         None
     }
@@ -50,6 +66,14 @@ pub trait CookieParam: Sized {
     /// The cookie name (case-sensitive, unlike header names).
     const NAME: &'static str;
     /// Whether the request is rejected when the cookie is absent. Defaults to `true`.
+    ///
+    /// Setting this to `false` by itself does not make the parameter optional: the extractor
+    /// still rejects an absent cookie unless [`missing`](Self::missing) returns a value, and the
+    /// default `missing` returns `None`. The generated document follows the same rule: the
+    /// parameter is documented as required unless `REQUIRED` is `false` *and* `missing()`
+    /// returns a value. To let the handler see an absent cookie as `None`, take
+    /// `Option<Cookie<T>>` as the argument instead; that documents the parameter as
+    /// `required: false` and does not consult either item.
     const REQUIRED: bool = true;
     /// Description for the generated OpenAPI parameter. Worth setting when the type is a newtype
     /// wrapper, since those are transparent in the schema and their doc comment does not survive.
@@ -57,6 +81,10 @@ pub trait CookieParam: Sized {
     /// Parse the raw cookie value, returning a message describing why it was rejected.
     fn parse(raw: &str) -> Result<Self, String>;
     /// The value used when the cookie is absent and [`REQUIRED`](Self::REQUIRED) is `false`.
+    ///
+    /// Returning `None` (the default) keeps the rejection, so `REQUIRED = false` alone still
+    /// fails with `400` and the parameter is documented as required. Extract
+    /// `Option<Cookie<T>>` to accept an absent cookie as `None`.
     fn missing() -> Option<Self> {
         None
     }
@@ -136,13 +164,19 @@ impl IntoResponse for ParamRejection {
     }
 }
 
+/// Turn a parse failure into the rejection both extractors render, shared by the plain and
+/// optional forms.
+fn parse_value<T>(kind: &'static str, name: &'static str, raw: &str, parse: impl FnOnce(&str) -> Result<T, String>) -> Result<T, ParamRejection> {
+    parse(raw).map_err(|message| ParamRejection::Invalid { kind, name, message })
+}
+
 /// Shared by both extractors: turn an optional raw value into `T`, honouring `REQUIRED`.
 fn resolve<T>(
     kind: &'static str, name: &'static str, required: bool, raw: Option<&str>, parse: impl FnOnce(&str) -> Result<T, String>,
     missing: impl FnOnce() -> Option<T>,
 ) -> Result<T, ParamRejection> {
     match raw {
-        Some(raw) => parse(raw).map_err(|message| ParamRejection::Invalid { kind, name, message }),
+        Some(raw) => parse_value(kind, name, raw, parse),
         None if !required => missing().ok_or(ParamRejection::Missing { kind, name }),
         None => Err(ParamRejection::Missing { kind, name }),
     }
@@ -204,6 +238,66 @@ where
     }
 }
 
+/// `Option<Header<T>>` reports an absent header as `None`. [`HeaderParam::REQUIRED`] and
+/// [`HeaderParam::missing`] shape the plain [`Header<T>`] extractor only; a header that is present
+/// but cannot be parsed is still rejected through the configured [`HeaderConfig`](crate::HeaderConfig).
+impl<S, T> axum::extract::OptionalFromRequestParts<S> for Header<T>
+where
+    T: HeaderParam,
+    S: Send + Sync,
+{
+    type Rejection = crate::Rejected<ParamRejection>;
+
+    async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Option<Self>, Self::Rejection> {
+        let Some(value) = parts.headers.get(T::NAME) else {
+            return Ok(None);
+        };
+        // A header can carry arbitrary bytes; only text can be parsed.
+        let raw = match value.to_str() {
+            Ok(value) => value,
+            Err(_) => {
+                let rejection = ParamRejection::NotText { kind: "header", name: T::NAME };
+                let response = crate::extract::config::configs(&parts.extensions).header.render(&rejection);
+                return Err(crate::Rejected::new(rejection, response));
+            }
+        };
+        parse_value("header", T::NAME, raw, T::parse)
+            .map(|value| Some(Header(value)))
+            .map_err(|rejection| {
+                let response = crate::extract::config::configs(&parts.extensions).header.render(&rejection);
+                crate::Rejected::new(rejection, response)
+            })
+    }
+}
+
+/// `Option<Cookie<T>>` reports an absent cookie as `None`. [`CookieParam::REQUIRED`] and
+/// [`CookieParam::missing`] shape the plain [`Cookie<T>`] extractor only; a cookie that is present
+/// but cannot be parsed is still rejected through the configured [`CookieConfig`](crate::CookieConfig).
+impl<S, T> axum::extract::OptionalFromRequestParts<S> for Cookie<T>
+where
+    T: CookieParam,
+    S: Send + Sync,
+{
+    type Rejection = crate::Rejected<ParamRejection>;
+
+    async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Option<Self>, Self::Rejection> {
+        let raw = parts
+            .headers
+            .get(axum::http::header::COOKIE)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|cookies| cookie_value(cookies, T::NAME));
+        let Some(raw) = raw else {
+            return Ok(None);
+        };
+        parse_value("cookie", T::NAME, raw, T::parse)
+            .map(|value| Some(Cookie(value)))
+            .map_err(|rejection| {
+                let response = crate::extract::config::configs(&parts.extensions).cookie.render(&rejection);
+                crate::Rejected::new(rejection, response)
+            })
+    }
+}
+
 /// Find `name` in a `Cookie` header value (`a=1; b=2`).
 fn cookie_value<'a>(header: &'a str, name: &str) -> Option<&'a str> {
     header.split(';').find_map(|pair| {
@@ -219,6 +313,12 @@ mod openapi {
 
     use super::{Cookie, CookieParam, Header, HeaderParam};
     use crate::{Either, ExtractorKind, ParameterProvider};
+
+    /// Whether an absent parameter is a rejection at runtime, which is what `required` means in
+    /// the document: `REQUIRED` is set, or there is no `missing()` fallback to use instead.
+    fn is_required<T>(required: bool, missing: impl FnOnce() -> Option<T>) -> bool {
+        required || missing().is_none()
+    }
 
     fn parameter<T: Schematic>(name: &'static str, _in: ParameterIn, required: bool, description: Option<&'static str>) -> Either<Vec<Parameter>, RequestBody> {
         let schema = T::generate_schema();
@@ -243,7 +343,7 @@ mod openapi {
 
     impl<T: HeaderParam + Schematic> ParameterProvider for Header<T> {
         fn generate(_url: String) -> Either<Vec<Parameter>, RequestBody> {
-            parameter::<T>(T::NAME, ParameterIn::Header, T::REQUIRED, T::DESCRIPTION)
+            parameter::<T>(T::NAME, ParameterIn::Header, is_required(T::REQUIRED, T::missing), T::DESCRIPTION)
         }
 
         fn extractor_kinds() -> &'static [ExtractorKind] {
@@ -253,7 +353,7 @@ mod openapi {
 
     impl<T: CookieParam + Schematic> ParameterProvider for Cookie<T> {
         fn generate(_url: String) -> Either<Vec<Parameter>, RequestBody> {
-            parameter::<T>(T::NAME, ParameterIn::Cookie, T::REQUIRED, T::DESCRIPTION)
+            parameter::<T>(T::NAME, ParameterIn::Cookie, is_required(T::REQUIRED, T::missing), T::DESCRIPTION)
         }
 
         fn extractor_kinds() -> &'static [ExtractorKind] {
@@ -269,6 +369,7 @@ mod tests {
 
     use super::*;
 
+    #[derive(crate::Schematic)]
     struct RequestId(String);
 
     impl HeaderParam for RequestId {
@@ -281,6 +382,7 @@ mod tests {
         }
     }
 
+    #[derive(crate::Schematic)]
     struct Session(String);
 
     impl CookieParam for Session {
@@ -290,6 +392,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(feature = "openapi", derive(crate::Schematic))]
     struct Tenant(String);
 
     impl HeaderParam for Tenant {
@@ -300,6 +403,45 @@ mod tests {
         }
         fn missing() -> Option<Self> {
             Some(Tenant("default".to_string()))
+        }
+    }
+
+    /// `REQUIRED = false` with the default `missing()`: the runtime still rejects an absent value.
+    #[cfg_attr(feature = "openapi", derive(crate::Schematic))]
+    struct NoFallbackHeader(String);
+
+    impl HeaderParam for NoFallbackHeader {
+        const NAME: &'static str = "x-no-fallback";
+        const REQUIRED: bool = false;
+        fn parse(raw: &str) -> Result<Self, String> {
+            Ok(NoFallbackHeader(raw.to_string()))
+        }
+    }
+
+    /// `REQUIRED = false` with the default `missing()`: the runtime still rejects an absent value.
+    #[cfg_attr(feature = "openapi", derive(crate::Schematic))]
+    struct NoFallbackCookie(String);
+
+    impl CookieParam for NoFallbackCookie {
+        const NAME: &'static str = "no-fallback";
+        const REQUIRED: bool = false;
+        fn parse(raw: &str) -> Result<Self, String> {
+            Ok(NoFallbackCookie(raw.to_string()))
+        }
+    }
+
+    /// `REQUIRED = false` with a fallback: an absent value is accepted.
+    #[cfg_attr(feature = "openapi", derive(crate::Schematic))]
+    struct FallbackCookie(String);
+
+    impl CookieParam for FallbackCookie {
+        const NAME: &'static str = "fallback";
+        const REQUIRED: bool = false;
+        fn parse(raw: &str) -> Result<Self, String> {
+            Ok(FallbackCookie(raw.to_string()))
+        }
+        fn missing() -> Option<Self> {
+            Some(FallbackCookie("default".to_string()))
         }
     }
 
@@ -354,6 +496,158 @@ mod tests {
         let mut parts = parts_with(&[]);
         let Header(tenant) = Header::<Tenant>::from_request_parts(&mut parts, &()).await.unwrap();
         assert_eq!(tenant.0, "default");
+    }
+
+    #[tokio::test]
+    async fn absent_optional_header_is_none_and_ignores_the_missing_fallback() {
+        let mut parts = parts_with(&[]);
+        let extracted = Option::<Header<Tenant>>::from_request_parts(&mut parts, &())
+            .await
+            .expect("an absent optional header is not a rejection");
+        assert!(extracted.is_none(), "Option<Header<T>> reports absence as None, not missing()'s default");
+    }
+
+    #[tokio::test]
+    async fn absent_optional_cookie_is_none() {
+        let mut parts = parts_with(&[]);
+        let extracted = Option::<Cookie<Session>>::from_request_parts(&mut parts, &())
+            .await
+            .expect("an absent optional cookie is not a rejection");
+        assert!(extracted.is_none());
+    }
+
+    #[tokio::test]
+    async fn present_optional_header_and_cookie_are_some() {
+        let mut parts = parts_with(&[("x-request-id", "abc123")]);
+        let Some(Header(id)) = Option::<Header<RequestId>>::from_request_parts(&mut parts, &()).await.unwrap() else {
+            panic!("a present header must extract");
+        };
+        assert_eq!(id.0, "abc123");
+
+        let cookie = format!("a=1; {}=xyz789", Session::NAME);
+        let mut parts = parts_with(&[("cookie", cookie.as_str())]);
+        let Some(Cookie(session)) = Option::<Cookie<Session>>::from_request_parts(&mut parts, &()).await.unwrap() else {
+            panic!("a present cookie must extract");
+        };
+        assert_eq!(session.0, "xyz789");
+    }
+
+    #[tokio::test]
+    async fn invalid_optional_header_uses_the_configured_header_rejection() {
+        let mut parts = parts_with(&[("x-request-id", "")]);
+        parts.extensions.insert(std::sync::Arc::new(crate::ExtractorConfigs::default().set(
+            crate::HeaderConfig::default().error_handler(|_: &ParamRejection| (StatusCode::IM_A_TEAPOT, crate::ErrorBody::new("configured header rejection"))),
+        )));
+
+        let rejected = Option::<Header<RequestId>>::from_request_parts(&mut parts, &())
+            .await
+            .err()
+            .expect("a present but invalid header is still rejected");
+        assert!(matches!(rejected.rejection(), ParamRejection::Invalid { .. }));
+        let response = rejected.into_response();
+        assert_eq!(response.status(), StatusCode::IM_A_TEAPOT);
+        let bytes = to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&bytes).unwrap()["error"],
+            "configured header rejection"
+        );
+    }
+
+    #[tokio::test]
+    async fn invalid_optional_cookie_uses_the_configured_cookie_rejection() {
+        struct FailingCookie;
+
+        impl CookieParam for FailingCookie {
+            const NAME: &'static str = "session";
+            fn parse(_: &str) -> Result<Self, String> {
+                Err("must be a number".to_string())
+            }
+        }
+
+        let cookie = format!("{}=abc", FailingCookie::NAME);
+        let mut parts = parts_with(&[("cookie", cookie.as_str())]);
+        parts.extensions.insert(std::sync::Arc::new(crate::ExtractorConfigs::default().set(
+            crate::CookieConfig::default().error_handler(|_: &ParamRejection| (StatusCode::IM_A_TEAPOT, crate::ErrorBody::new("configured cookie rejection"))),
+        )));
+
+        let rejected = Option::<Cookie<FailingCookie>>::from_request_parts(&mut parts, &())
+            .await
+            .err()
+            .expect("a present but invalid cookie is still rejected");
+        assert!(matches!(rejected.rejection(), ParamRejection::Invalid { .. }));
+        assert_eq!(rejected.into_response().status(), StatusCode::IM_A_TEAPOT);
+    }
+
+    #[tokio::test]
+    async fn required_false_without_a_missing_fallback_still_rejects_an_absent_value() {
+        let mut parts = parts_with(&[]);
+        let rejected = Header::<NoFallbackHeader>::from_request_parts(&mut parts, &())
+            .await
+            .err()
+            .expect("REQUIRED = false alone does not make the parameter optional");
+        assert!(matches!(rejected.rejection(), ParamRejection::Missing { .. }));
+
+        let mut parts = parts_with(&[]);
+        let rejected = Cookie::<NoFallbackCookie>::from_request_parts(&mut parts, &())
+            .await
+            .err()
+            .expect("REQUIRED = false alone does not make the parameter optional");
+        assert!(matches!(rejected.rejection(), ParamRejection::Missing { .. }));
+    }
+
+    #[cfg(feature = "openapi")]
+    #[test]
+    fn required_parameter_documentation_matches_the_runtime_rule() {
+        use crate::{Either, ParameterProvider};
+
+        fn header_required<T: HeaderParam + crate::Schematic>() -> bool {
+            let Either::Left(params) = <Header<T> as ParameterProvider>::generate("/documented".to_owned()) else {
+                panic!("a header parameter is not a request body");
+            };
+            assert_eq!(params.len(), 1);
+            params[0].required.expect("the document always spells out required")
+        }
+
+        fn cookie_required<T: CookieParam + crate::Schematic>() -> bool {
+            let Either::Left(params) = <Cookie<T> as ParameterProvider>::generate("/documented".to_owned()) else {
+                panic!("a cookie parameter is not a request body");
+            };
+            assert_eq!(params.len(), 1);
+            params[0].required.expect("the document always spells out required")
+        }
+
+        assert!(header_required::<RequestId>(), "the default REQUIRED = true is documented");
+        assert!(!header_required::<Tenant>(), "REQUIRED = false with a missing() fallback is optional");
+        assert!(
+            header_required::<NoFallbackHeader>(),
+            "REQUIRED = false with the default missing() is rejected at runtime, so it is documented as required"
+        );
+        assert!(cookie_required::<Session>(), "the default REQUIRED = true is documented");
+        assert!(!cookie_required::<FallbackCookie>(), "REQUIRED = false with a missing() fallback is optional");
+        assert!(
+            cookie_required::<NoFallbackCookie>(),
+            "REQUIRED = false with the default missing() is rejected at runtime, so it is documented as required"
+        );
+    }
+
+    #[cfg(feature = "openapi")]
+    #[test]
+    fn optional_header_and_cookie_document_as_not_required() {
+        use crate::{Either, ParameterProvider};
+
+        let Either::Left(header) = <Option<Header<RequestId>> as ParameterProvider>::generate("/optional".to_owned()) else {
+            panic!("a header parameter is not a request body");
+        };
+        assert_eq!(header.len(), 1);
+        assert_eq!(header[0].name, "x-request-id");
+        assert_eq!(header[0].required, Some(false), "Option<Header<T>> is documented as not required");
+
+        let Either::Left(cookie) = <Option<Cookie<Session>> as ParameterProvider>::generate("/optional".to_owned()) else {
+            panic!("a cookie parameter is not a request body");
+        };
+        assert_eq!(cookie.len(), 1);
+        assert_eq!(cookie[0].name, "session");
+        assert_eq!(cookie[0].required, Some(false), "Option<Cookie<T>> is documented as not required");
     }
 
     #[tokio::test]
