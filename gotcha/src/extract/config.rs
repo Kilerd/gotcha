@@ -49,7 +49,9 @@ impl<T: Serialize + Send + Sync + 'static> ErrorBodyResponse for T {}
 ///
 /// Each built-in extractor has an uninhabited marker type implementing this, such as
 /// [`JsonProvider`]; an application configures it with [`RejectionConfig<P>`](RejectionConfig).
-/// Every item is compiled in every feature set.
+/// Every item is compiled in every feature set. An extractor defined outside Gotcha implements it
+/// to get the same configuration and documentation; see
+/// [Writing an extractor provider](crate#writing-an-extractor-provider).
 pub trait RejectionProvider: 'static {
     /// The rejection the extractor produces, passed to the configured error handler.
     type Rejection: 'static;

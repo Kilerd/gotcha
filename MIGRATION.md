@@ -58,6 +58,11 @@ rejection responses, and the values the built-in extractors report do not change
   application's `JsonConfig`, and likewise for the other built-in providers. The two are still
   different values: Gotcha's own extractors keep reporting the unit variants, so code that matches
   on `extractor_kinds()` is unaffected.
+- New providers, including hand-written `extractor_kinds()`, should be named with
+  `gotcha::extract::kind::<P>()`. The unit variants stay supported. A later major release will
+  switch the built-in extractors to keys. See
+  [Writing an extractor provider](README.md#writing-an-extractor-provider) for an extractor
+  defined outside Gotcha.
 
 ---
 

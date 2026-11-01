@@ -9,6 +9,10 @@
 //! Axum's originals remain available as `gotcha::axum::extract::{Json, Path, Query, Form,
 //! Multipart}` and `gotcha::axum_extra::TypedHeader`.
 //!
+//! An extractor defined outside Gotcha can use the same configuration through a
+//! [`RejectionProvider`], [`RequestConfigs`] or [`reject`], and, with `openapi`, `kind`; see
+//! [Writing an extractor provider](crate#writing-an-extractor-provider).
+//!
 //! ```no_run
 //! use gotcha::{Json, Path, Query};
 //!

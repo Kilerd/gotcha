@@ -24,9 +24,11 @@ use crate::Schematic;
 /// extractors report none: their rejections keep Axum's plain-text response.
 ///
 /// A provider is named by [`Provider`](Self::Provider), built with `gotcha::extract::kind::<P>()`
-/// for any `gotcha::extract::RejectionProvider`. The unit variants name Gotcha's built-in
-/// providers, which report them, and document exactly like their `kind::<P>()`; a unit variant and
-/// the matching `Provider` key are still different values.
+/// for any `gotcha::extract::RejectionProvider`; new providers use it. The unit variants name
+/// Gotcha's built-in providers and stay supported: they resolve to the same configuration as
+/// their `kind::<P>()` and document the same responses. The two are not equal as values
+/// (`ExtractorKind::Json != kind::<JsonProvider>()`), and the built-in extractors report the unit
+/// variants until a later major release switches them to keys.
 ///
 /// This enum is `#[non_exhaustive]`: a later release may add a provider, so a `match` outside this
 /// crate needs a wildcard arm.
