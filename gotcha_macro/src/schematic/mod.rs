@@ -588,12 +588,37 @@ pub(crate) fn named_variant_object(
 }
 
 #[derive(Debug, FromVariant)]
-#[darling(attributes(parameter), forward_attrs(allow, doc, cfg, serde))]
+#[darling(attributes(schematic), forward_attrs(allow, doc, cfg, serde))]
 pub(crate) struct ParameterEnumVariantOpt {
     ident: syn::Ident,
-    #[allow(dead_code)]
     attrs: Vec<syn::Attribute>,
     fields: darling::ast::Fields<ParameterStructFieldOpt>,
+    // Variant-level schema documentation; a doc comment is the description fallback. Only
+    // annotations that are valid on every branch shape (including unit/string branches) are
+    // accepted: an `example`/`default` literal can never be valid for an object-shaped variant.
+    title: Option<String>,
+    description: Option<String>,
+}
+
+impl ParameterEnumVariantOpt {
+    /// Statements that add the variant's `#[schematic(..)]` documentation to `variant_object`.
+    pub(crate) fn variant_customizations(&self, core: &TokenStream2) -> Vec<TokenStream2> {
+        fn extra(core: &TokenStream2, key: &str, value: TokenStream2) -> TokenStream2 {
+            quote! {
+                variant_object.insert(#key.to_string(), #core::serde_json::to_value(#value).unwrap());
+            }
+        }
+
+        let mut customizations = Vec::new();
+        let description = self.description.clone().or_else(|| self.attrs.get_doc());
+        if let Some(description) = description {
+            customizations.push(extra(core, "description", quote! { #description }));
+        }
+        if let Some(title) = &self.title {
+            customizations.push(extra(core, "title", quote! { #title }));
+        }
+        customizations
+    }
 }
 
 // Resolve once per derive, then pass the same path through every schema generator.

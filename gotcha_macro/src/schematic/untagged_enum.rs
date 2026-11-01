@@ -14,6 +14,7 @@ pub(crate) fn handler(
             let variant_rename = parse_serde_rename(&variant.attrs);
             let variant_string = get_serde_name(&variant_ident_str, variant_rename.as_deref(), naming.variants);
             let field_rename_all = parse_serde_rename_all(&variant.attrs).or(naming.fields);
+            let variant_annotations = variant.variant_customizations(core);
 
             match variant.fields.style {
                 darling::ast::Style::Struct => {
@@ -22,6 +23,7 @@ pub(crate) fn handler(
                         {
                             let mut variant_object = #object;
                             variant_object.insert("title".to_string(), #core::serde_json::to_value(#variant_string).expect("cannot convert title to value"));
+                            #( #variant_annotations )*
                             #core::serde_json::to_value(variant_object).expect("cannot convert variant to value")
                         }
                     }

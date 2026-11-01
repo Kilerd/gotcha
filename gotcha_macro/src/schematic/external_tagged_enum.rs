@@ -14,6 +14,7 @@ pub(crate) fn handler(
             let variant_rename = parse_serde_rename(&variant.attrs);
             let varient_string = get_serde_name(&variant_ident_str, variant_rename.as_deref(), naming.variants);
             let field_rename_all = parse_serde_rename_all(&variant.attrs).or(naming.fields);
+            let variant_annotations = variant.variant_customizations(core);
             let style = variant.fields.style;
 
             // A unit variant serializes as the bare string `"V"`, not as `{"V": {}}`.
@@ -23,6 +24,7 @@ pub(crate) fn handler(
                     variant_object.insert("title".to_string(), #core::serde_json::to_value(#varient_string).expect("cannot convert title to value"));
                     variant_object.insert("type".to_string(), #core::serde_json::to_value("string").expect("cannot convert type to value"));
                     variant_object.insert("enum".to_string(), #core::serde_json::to_value(vec![#varient_string.to_string()]).expect("cannot convert values to value"));
+                    #( #variant_annotations )*
                 };
             }
 
@@ -65,6 +67,7 @@ pub(crate) fn handler(
                    variant_object.insert("type".to_string(), #core::serde_json::to_value("object").expect("cannot convert type to value"));
                    variant_object.insert("properties".to_string(), #core::serde_json::to_value(root_properties).expect("cannot convert root properties to value"));
                    variant_object.insert("required".to_string(), #core::serde_json::to_value(root_required_fields).expect("cannot convert root properties required fields to value"));
+                   #( #variant_annotations )*
             }
         })
         .collect();
