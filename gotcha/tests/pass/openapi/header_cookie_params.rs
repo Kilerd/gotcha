@@ -50,6 +50,13 @@ async fn typed_headers(
     format!("{} {:?}", agent.as_str(), host.is_some())
 }
 
+/// `Option<Header<T>>` and `Option<Cookie<T>>` accept an absent parameter as `None` and document
+/// it as optional, even when the parameter type itself is required.
+#[api(id = "optional_params")]
+async fn optional_params(id: Option<Header<RequestId>>, session: Option<Cookie<Session>>) -> String {
+    format!("{} {}", id.is_some(), session.is_some())
+}
+
 fn extract<H, T>(_handler: H) -> &'static Operable
 where
     H: gotcha::axum::handler::Handler<T, ()>,
@@ -108,4 +115,23 @@ fn main() {
 
     let host = typed_params.iter().find(|p| p.name == "host").expect("host documented");
     assert_eq!(host.required, Some(false), "Option<TypedHeader<..>> is not required");
+
+    // `Option<Header<T>>` / `Option<Cookie<T>>` accept an absent parameter and document it as
+    // optional, even when the parameter type itself declares `REQUIRED = true`.
+    let optional = extract(optional_params).generate("/optional".to_owned());
+    let params_optional: Vec<_> = optional
+        .parameters
+        .expect("optional header and cookie are documented")
+        .into_iter()
+        .filter_map(|p| match p {
+            gotcha::oas::Referenceable::Data(p) => Some(p),
+            _ => None,
+        })
+        .collect();
+    let id = params_optional.iter().find(|p| p.name == "x-request-id").expect("x-request-id documented");
+    assert!(matches!(id._in, gotcha::oas::ParameterIn::Header));
+    assert_eq!(id.required, Some(false), "Option<Header<..>> is not required");
+    let session = params_optional.iter().find(|p| p.name == "session").expect("session documented");
+    assert!(matches!(session._in, gotcha::oas::ParameterIn::Cookie));
+    assert_eq!(session.required, Some(false), "Option<Cookie<..>> is not required");
 }
