@@ -222,8 +222,8 @@ pub fn api(args: TokenStream, input_stream: TokenStream) -> TokenStream {
 ///
 /// Validation constraints belong in `#[validate(...)]` (the validator crate), not `#[schematic]`,
 /// so a rule is written once. Where they map cleanly they are also reflected in the schema:
-/// `range` → minimum/maximum, `length` → minLength/maxLength (minItems/maxItems for collections),
-/// `email`/`url` → format.
+/// `range` → minimum/maximum, `length` → minItems/maxItems for arrays, minProperties/maxProperties
+/// for objects, and minLength/maxLength for strings; `email`/`url` → format.
 ///
 /// ```rust,ignore
 /// #[derive(Schematic, Serialize, Deserialize)]
