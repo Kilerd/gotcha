@@ -222,6 +222,11 @@ async fn builder_startup_hooks_run_in_the_trait_order() {
 
 #[tokio::test]
 async fn builder_initialization_errors_stop_startup_and_release_the_listener() {
+    // A child spawned by another test holds the listener open until its exec, so re-binding the
+    // released port needs a process running nothing else.
+    if !in_isolated_child("startup::tests::builder_initialization_errors_stop_startup_and_release_the_listener", &[]) {
+        return;
+    }
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("config.toml");
     std::fs::write(&path, "label = 'ready'\n[server]\nhost = '127.0.0.1'\nport = 0").unwrap();
@@ -310,6 +315,11 @@ async fn configuration_fallback_is_explicit_and_shared_by_both_apis() {
 
 #[tokio::test]
 async fn initialization_errors_release_the_listener_and_stop_later_stages() {
+    // A child spawned by another test holds the listener open until its exec, so re-binding the
+    // released port needs a process running nothing else.
+    if !in_isolated_child("startup::tests::initialization_errors_release_the_listener_and_stop_later_stages", &[]) {
+        return;
+    }
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("config.toml");
     std::fs::write(&path, "label = 'ready'\n[server]\nhost = '127.0.0.1'\nport = 0").unwrap();
