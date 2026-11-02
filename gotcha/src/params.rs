@@ -298,6 +298,7 @@ mod openapi {
     use gotcha_core::Schematic;
 
     use super::{Cookie, CookieParam, Header, HeaderParam};
+    use crate::extract::{kind, CookieProvider, HeaderProvider};
     use crate::{Either, ExtractorKind, ParameterProvider};
 
     /// Whether an absent parameter is a rejection at runtime, which is what `required` means in
@@ -333,7 +334,7 @@ mod openapi {
         }
 
         fn extractor_kinds() -> &'static [ExtractorKind] {
-            &[ExtractorKind::Header]
+            const { &[kind::<HeaderProvider>()] }
         }
     }
 
@@ -343,7 +344,7 @@ mod openapi {
         }
 
         fn extractor_kinds() -> &'static [ExtractorKind] {
-            &[ExtractorKind::Cookie]
+            const { &[kind::<CookieProvider>()] }
         }
     }
 }

@@ -1,5 +1,6 @@
 # Migration Guide
 
+- [Unreleased: built-in extractors report provider keys](#unreleased-built-in-extractors-report-provider-keys)
 - [Unreleased: additive configuration sources](#unreleased-additive-configuration-sources)
 - [Unreleased: Message and Messager moved out of gotcha](#unreleased-message-and-messager-moved-out-of-gotcha)
 - [Unreleased: deny_unknown_fields closes schemas](#unreleased-deny_unknown_fields-closes-schemas)
@@ -45,6 +46,27 @@
 - [Unreleased: default configuration sources](#unreleased-default-configuration-sources)
 - [0.3 → 0.4](#03--04) — **every application must edit its route paths and configuration file**
 - [0.2 → 0.3: API simplification](#02--03-api-simplification)
+
+---
+
+# Unreleased: built-in extractors report provider keys
+
+**`ExtractorKind` loses its unit variants (`Json`, `Form`, `Query`, `Path`, `Multipart`,
+`TypedHeader`, `Header`, `Cookie`, `Valid`).** Gotcha's own extractors now report the same
+`ExtractorKind::Provider` keys a third-party provider uses, so there is one way to name a provider.
+Documents and rejection responses do not change. `ExtractorKind` is not in a published release
+yet, so this only affects code written against an unreleased revision.
+
+- Replace each unit variant with the key of its provider: `ExtractorKind::Json` becomes
+  `gotcha::extract::kind::<JsonProvider>()`, and likewise `FormProvider`, `QueryProvider`,
+  `PathProvider`, `MultipartProvider`, `TypedHeaderProvider`, `HeaderProvider`, `CookieProvider`,
+  and `ValidProvider`. `kind` is a `const fn`, so a hand-written `extractor_kinds()` returns
+  `const { &[kind::<JsonProvider>()] }`.
+- Code comparing `extractor_kinds()` with a unit variant compares with the key instead:
+  `<Json<T> as ParameterProvider>::extractor_kinds() == [kind::<JsonProvider>()]`.
+- Kinds now order and hash by the provider's type, an order that can change between builds, and
+  their `Debug` output names the provider type (`Provider(gotcha::extract::config::JsonProvider)`)
+  instead of `Json`. Code that sorts kinds or prints them sees the difference; documents do not.
 
 ---
 
@@ -529,22 +551,21 @@ not cover.
 # Unreleased: extractor provider keys
 
 Rejection configurations and their documentation are keyed by the provider's type, so an extractor
-defined outside Gotcha can be configured and documented like the built-in ones. Documents,
-rejection responses, and the values the built-in extractors report do not change.
+defined outside Gotcha can be configured and documented like the built-in ones. Documents and
+rejection responses do not change.
 
 - `ExtractorKind` gains `Provider(ProviderKey)`, built by `gotcha::extract::kind::<P>()` for any
   `gotcha::extract::RejectionProvider`, and `All(KindList)`, built by `ExtractorKind::all(..)`,
   which stands for every kind another extractor reports. The enum was already
   `#[non_exhaustive]`, so `match` is unaffected, but it now has variants that carry data:
-  **casting it with `as` (`ExtractorKind::Json as u8`) no longer compiles.** `ExtractorKind` is
-  not in a published release yet.
-- `kind::<JsonProvider>()` documents exactly like `ExtractorKind::Json`, including the
-  application's `JsonConfig`, and likewise for the other built-in providers. The two are still
-  different values: Gotcha's own extractors keep reporting the unit variants, so code that matches
-  on `extractor_kinds()` is unaffected.
-- New providers, including hand-written `extractor_kinds()`, should be named with
-  `gotcha::extract::kind::<P>()`. The unit variants stay supported. A later major release will
-  switch the built-in extractors to keys. See
+  **casting it with `as` no longer compiles.** `ExtractorKind` is not in a published release
+  yet.
+- `kind::<JsonProvider>()` documents exactly like the built-in `Json` extractor, including the
+  application's `JsonConfig`, and likewise for the other built-in providers. The built-in
+  extractors later switched to these keys; see
+  [built-in extractors report provider keys](#unreleased-built-in-extractors-report-provider-keys).
+- Providers, including hand-written `extractor_kinds()`, are named with
+  `gotcha::extract::kind::<P>()`. See
   [Writing an extractor provider](README.md#writing-an-extractor-provider) for an extractor
   defined outside Gotcha.
 
@@ -681,13 +702,15 @@ upgrading.
 
 **`gotcha::ExtractorKind` (with the `openapi` feature), `gotcha_core::ExtractorKind` (with
 `axum`), `gotcha::validation::ValidRejection`, and `gotcha::ParamRejection` are now
-`#[non_exhaustive]`,** so a later release can add an extractor provider, a validation-failure
+`#[non_exhaustive]`,** so a later release can add an `ExtractorKind` variant, a validation-failure
 variant, or a header/cookie rejection variant without a breaking change.
 
 - A `match` on any of these types outside the crate that defines it needs a wildcard arm
   (`_ => ..`); a `matches!(..)` with a single variant keeps compiling.
-- Constructing the existing variants is unchanged: `ExtractorKind::Json`, the `ValidRejection`
-  variants, and `ParamRejection::Missing`/`Invalid`/`NotText` remain usable.
+- Constructing the existing variants is unchanged: the `ValidRejection` variants and
+  `ParamRejection::Missing`/`Invalid`/`NotText` remain usable. `ExtractorKind`'s unit variants
+  were later removed; see
+  [built-in extractors report provider keys](#unreleased-built-in-extractors-report-provider-keys).
 
 ---
 

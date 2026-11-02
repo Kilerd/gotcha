@@ -1137,10 +1137,8 @@ impl<T: gotcha::Schematic> gotcha::ParameterProvider for NonEmpty<T> {
 
 The built-in providers are `gotcha::extract::{JsonProvider, FormProvider, QueryProvider,
 PathProvider, MultipartProvider, TypedHeaderProvider, HeaderProvider, CookieProvider,
-ValidProvider}`. New providers are named with `kind::<P>()`. The unit variants such as
-`ExtractorKind::Json` stay supported and document the same responses as `kind::<JsonProvider>()`,
-but the two are not equal as values: `ExtractorKind::Json != kind::<JsonProvider>()`. Gotcha's
-own extractors return the unit variants until a later major release switches them to keys.
+ValidProvider}`. Every provider, built-in or not, is named with `kind::<P>()`: `Json<T>` reports
+`kind::<JsonProvider>()`.
 
 ### Prometheus Metrics
 

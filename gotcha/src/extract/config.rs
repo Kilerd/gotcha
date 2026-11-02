@@ -280,17 +280,6 @@ impl ExtractorConfigs {
                 }
                 return;
             }
-            // The built-in extractors, and providers written before keys existed, name the built-in
-            // providers by their unit variants.
-            ExtractorKind::Json => provider_key::<JsonProvider>(),
-            ExtractorKind::Form => provider_key::<FormProvider>(),
-            ExtractorKind::Query => provider_key::<QueryProvider>(),
-            ExtractorKind::Path => provider_key::<PathProvider>(),
-            ExtractorKind::Multipart => provider_key::<MultipartProvider>(),
-            ExtractorKind::TypedHeader => provider_key::<TypedHeaderProvider>(),
-            ExtractorKind::Header => provider_key::<HeaderProvider>(),
-            ExtractorKind::Cookie => provider_key::<CookieProvider>(),
-            ExtractorKind::Valid => provider_key::<ValidProvider>(),
             // `ExtractorKind` is non-exhaustive: a kind added in a later release documents no
             // rejection until it is wired here.
             _ => return,
