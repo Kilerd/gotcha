@@ -11,7 +11,8 @@ migration guide](MIGRATION.md#04--05).
 ### Highlights
 
 - **OpenAPI 3.2, served on request.** Documents are now OpenAPI 3.2.0, and the `openapi` feature no
-  longer mounts endpoints by itself: call `.with_openapi()` for `/openapi.json` and `/scalar`.
+  longer mounts endpoints by itself: call `.with_openapi()` (or return endpoints from
+  `GotchaApp::openapi_endpoints`) for `/openapi.json` and `/scalar`.
   ([#115](https://github.com/Kilerd/gotcha/pull/115),
   [#120](https://github.com/Kilerd/gotcha/pull/120))
 - **One startup and shutdown path.** Builder `run()` now honours `config.server`, configuration
@@ -128,7 +129,8 @@ regenerate clients built from them.
 **OpenAPI and `#[api]`**
 
 - The `openapi` feature no longer serves documentation. Add `.with_openapi()` for `/openapi.json`
-  and `/scalar`, or `.openapi_endpoints(..)` for custom paths.
+  and `/scalar`, or `.openapi_endpoints(..)` for custom paths; a `GotchaApp` returns
+  `Some(OpenApiEndpoints::default())` from `openapi_endpoints`.
   [Guide](MIGRATION.md#04--05-explicit-openapi-endpoints)
   ([#115](https://github.com/Kilerd/gotcha/pull/115))
 - Documents are OpenAPI 3.2.0 on `oas` 0.3: tooling must support 3.2, custom `oas` code changes, and
@@ -153,6 +155,10 @@ regenerate clients built from them.
   boxed closures. `#[api]` users are unaffected.
   [Guide](MIGRATION.md#04--05-static-openapi-descriptors)
   ([#113](https://github.com/Kilerd/gotcha/pull/113))
+- Repeated `.openapi(..)` calls append instead of replacing, and `nest` and `merge` keep child
+  callbacks, so callbacks that used to be discarded now run and can change the document.
+  [Guide](MIGRATION.md#04--05-openapi-transform-composition)
+  ([#104](https://github.com/Kilerd/gotcha/pull/104))
 
 **`Schematic` derive**
 
@@ -186,6 +192,11 @@ regenerate clients built from them.
   [Guide](MIGRATION.md#04--05-data-type-schematic-impls-are-features)
   ([#170](https://github.com/Kilerd/gotcha/pull/170))
 
+**Toolchain**
+
+- All three crates declare `rust-version = "1.89"`, which the default features need through `uuid`,
+  and CI checks them with Rust 1.89. [Guide](MIGRATION.md#04--05-rust-189-is-required)
+
 ### Added
 
 - Builder startup hooks from the trait: `from_state_fn`, `load_config`, `logger`,
@@ -195,7 +206,8 @@ regenerate clients built from them.
 - `Gotcha::from_state` and `from_context` for state and configuration that are already initialized.
   ([#110](https://github.com/Kilerd/gotcha/pull/110))
 - `bind`, `bind_on` and `BoundServer`, plus `.shutdown_signal`, `.http_shutdown_timeout`,
-  `.on_shutdown` and `context.shutdown()`. ([#136](https://github.com/Kilerd/gotcha/pull/136),
+  `.on_shutdown` and `context.shutdown()`. ([#112](https://github.com/Kilerd/gotcha/pull/112),
+  [#136](https://github.com/Kilerd/gotcha/pull/136),
   [#163](https://github.com/Kilerd/gotcha/pull/163),
   [#171](https://github.com/Kilerd/gotcha/pull/171),
   [#172](https://github.com/Kilerd/gotcha/pull/172))
@@ -259,17 +271,11 @@ regenerate clients built from them.
 
 ### Changed
 
-- All three crates declare `rust-version = "1.89"`, which the default features need through `uuid`,
-  and CI checks them with Rust 1.89. [Guide](MIGRATION.md#04--05-the-macro-crate-needs-rust-188)
 - `gotcha_macro` moves to syn 2 and darling 0.23 and drops syn 1 and the unmaintained
   `proc-macro-error` (RUSTSEC-2024-0370).
-  [Guide](MIGRATION.md#04--05-the-macro-crate-needs-rust-188)
+  [Guide](MIGRATION.md#04--05-rust-189-is-required)
   ([#189](https://github.com/Kilerd/gotcha/pull/189),
   [#190](https://github.com/Kilerd/gotcha/pull/190))
-- Repeated `.openapi(..)` calls append instead of replacing, and `nest` and `merge` keep child
-  callbacks, so previously discarded callbacks now run.
-  [Guide](MIGRATION.md#04--05-openapi-transform-composition)
-  ([#104](https://github.com/Kilerd/gotcha/pull/104))
 - A slow scheduled execution no longer causes back-to-back catch-up runs, for interval and cron
   tasks alike. [Guide](MIGRATION.md#04--05-owned-scheduled-tasks)
   ([#164](https://github.com/Kilerd/gotcha/pull/164))

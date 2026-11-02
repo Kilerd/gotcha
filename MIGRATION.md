@@ -10,7 +10,7 @@
   - [extractor provider keys](#04--05-extractor-provider-keys)
   - [skipped and untagged variants](#04--05-skipped-and-untagged-variants)
   - [names serde writes and reads differently](#04--05-names-serde-writes-and-reads-differently)
-  - [the macro crate needs Rust 1.88](#04--05-the-macro-crate-needs-rust-188)
+  - [Rust 1.89 is required](#04--05-rust-189-is-required)
   - [untagged enums use anyOf](#04--05-untagged-enums-use-anyof)
   - [variant-level schematic attributes](#04--05-variant-level-schematic-attributes)
   - [derive documents serde's wire shapes](#04--05-derive-documents-serdes-wire-shapes)
@@ -58,9 +58,9 @@ since 0.4.1, so changes to it need no action when coming from a published releas
 
 Most applications need to act on these:
 
-- **Every application:** [bound servers and shutdown
-  lifecycle](#04--05-bound-servers-and-shutdown-lifecycle): Ctrl-C and SIGTERM now start a drain
-  bounded at 30 seconds, and `GotchaContext` struct literals stop compiling.
+- **Every application:** [Rust 1.89 is required](#04--05-rust-189-is-required). [Bound servers and
+  shutdown lifecycle](#04--05-bound-servers-and-shutdown-lifecycle): Ctrl-C and SIGTERM now start a
+  drain bounded at 30 seconds, and `GotchaContext` struct literals stop compiling.
 - **Builder applications:** [shared startup](#04--05-shared-startup): `run()` now binds the address
   in `config.server`, and configuration errors stop startup.
 - **Applications using Gotcha's extractors:** [JSON error bodies and
@@ -76,9 +76,19 @@ Most applications need to act on these:
   errors](#04--05-schematic-in-every-build-and-wire-name-validation-errors): the validated type
   needs `Schematic`. [Validation error bodies](#04--05-validation-error-bodies): the `422` body
   changes.
+- **Applications listing the `http1` feature:** [HTTP/1 is always
+  enabled](#04--05-http1-is-always-enabled): the feature is gone, and Cargo fails to resolve a
+  dependency that still names it.
+- **Applications using `Message` or `Messager`:** [Message and Messager moved out of
+  gotcha](#04--05-message-and-messager-moved-out-of-gotcha): copy the module from the guide.
+- **Applications calling `with_env_config`, `with_file_config` or `with_optional_config`:**
+  [additive configuration sources](#04--05-additive-configuration-sources): they now also read
+  `configurations/application.toml`, the profile file and `APP_*` variables, which can silently
+  change settings such as the bound port.
 - **`openapi` applications:** [explicit OpenAPI endpoints](#04--05-explicit-openapi-endpoints):
-  nothing is served until `.with_openapi()`. [OpenAPI 3.2](#04--05-openapi-32), [HTTP response
-  contracts](#04--05-http-response-contracts) and [extractor rejection
+  nothing is served until the builder calls `.with_openapi()` or a `GotchaApp` returns
+  `Some(OpenApiEndpoints::default())` from `openapi_endpoints`. [OpenAPI 3.2](#04--05-openapi-32),
+  [HTTP response contracts](#04--05-http-response-contracts) and [extractor rejection
   responses](#04--05-extractor-rejection-responses-in-openapi) change documents and return types, so
   regenerate clients.
 
@@ -136,9 +146,9 @@ What changes:
   The strict policy stops startup on these errors.
 - **A fallback policy can now drop added files.** `ConfigErrorPolicy` still replaces the whole
   configuration after any loading error, and these errors now count. With an invalid
-  `application.toml`, `.with_optional_config("local.toml")` under `fallback_to_default()` used to
-  load `local.toml`; it now falls back to full defaults (port 3000, empty application settings),
-  with only a warning in the log.
+  `application.toml`, `.with_optional_config("local.toml")` under `fallback_to_default()` does not
+  load `local.toml`: it falls back to full defaults (port 3000, empty application settings), with
+  only a warning in the log.
 - **A non-UTF-8 environment variable now panics in more chains.** Every environment source calls
   `std::env::vars()`, which panics on any variable that is not valid Unicode, whatever its name,
   and a panic bypasses `ConfigErrorPolicy`. Automatic loading already did this. A chain with no
@@ -653,14 +663,12 @@ writes nor reads.
 
 ---
 
-# 0.4 → 0.5: the macro crate needs Rust 1.88
+# 0.4 → 0.5: Rust 1.89 is required
 
-`gotcha_macro` now depends on darling 0.23, which declares `rust-version = "1.88"`, so a
-dependency tree with only `gotcha_core` or `gotcha_macro` needs Rust 1.88 (previously 1.85).
-`gotcha` already resolved darling 0.23 through `validator`, so its requirement is unchanged.
-
-All three crates now declare `rust-version = "1.89"`, which the default features need through
-`uuid`, and CI checks them with Rust 1.89. Cargo names that version when an older compiler is used.
+`gotcha`, `gotcha_core`, and `gotcha_macro` declare `rust-version = "1.89"`, and CI checks
+them with Rust 1.89. With an older compiler, Cargo refuses to build them and names the required
+version. The default features need 1.89 through `uuid`; `gotcha_macro` on its own needs at
+least 1.88, because it now depends on darling 0.23.
 
 ---
 
@@ -1706,7 +1714,7 @@ compatible `tokio-util` dependency.
 
 ## Bounded HTTP draining
 
-HTTP draining was previously unbounded. `http_shutdown_timeout` now defaults to 30 seconds
+HTTP draining is bounded: `http_shutdown_timeout` defaults to 30 seconds
 (builder `.http_shutdown_timeout(duration)` or trait `http_shutdown_timeout(&self)`). Upgraded
 connections (WebSockets) are no longer tracked by axum's graceful shutdown after the upgrade, so
 the drain also waits for those tracked streams. At the deadline, every tracked socket is shut down
