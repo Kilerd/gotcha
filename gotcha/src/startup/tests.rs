@@ -1,4 +1,5 @@
 use super::*;
+use crate::config::tests::in_isolated_child;
 use crate::config::ConfigBuilder;
 use crate::{Gotcha, GotchaRouter, State};
 use std::path::Path;
@@ -153,6 +154,10 @@ async fn assert_http(prepared: PreparedServer, label: &str) {
 
 #[tokio::test]
 async fn both_apis_serve_the_loaded_config_and_actual_bound_address() {
+    // The builder's sources include the `APP` environment, which would override the file's port.
+    if !in_isolated_child("startup::tests::both_apis_serve_the_loaded_config_and_actual_bound_address", &[]) {
+        return;
+    }
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("config.toml");
     std::fs::write(&path, "label = 'loaded'\n[server]\nhost = '127.0.0.1'\nport = 0").unwrap();
@@ -217,6 +222,11 @@ async fn builder_startup_hooks_run_in_the_trait_order() {
 
 #[tokio::test]
 async fn builder_initialization_errors_stop_startup_and_release_the_listener() {
+    // A child spawned by another test holds the listener open until its exec, so re-binding the
+    // released port needs a process running nothing else.
+    if !in_isolated_child("startup::tests::builder_initialization_errors_stop_startup_and_release_the_listener", &[]) {
+        return;
+    }
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("config.toml");
     std::fs::write(&path, "label = 'ready'\n[server]\nhost = '127.0.0.1'\nport = 0").unwrap();
@@ -257,6 +267,10 @@ async fn custom_config_loader_errors_follow_the_error_policy() {
 
 #[tokio::test]
 async fn run_uses_configured_address_and_does_not_initialize_after_bind_failure() {
+    // The builder's sources include the `APP` environment, which would override the file's port.
+    if !in_isolated_child("startup::tests::run_uses_configured_address_and_does_not_initialize_after_bind_failure", &[]) {
+        return;
+    }
     let occupied = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = occupied.local_addr().unwrap();
     let dir = tempfile::tempdir().unwrap();
@@ -301,6 +315,11 @@ async fn configuration_fallback_is_explicit_and_shared_by_both_apis() {
 
 #[tokio::test]
 async fn initialization_errors_release_the_listener_and_stop_later_stages() {
+    // A child spawned by another test holds the listener open until its exec, so re-binding the
+    // released port needs a process running nothing else.
+    if !in_isolated_child("startup::tests::initialization_errors_release_the_listener_and_stop_later_stages", &[]) {
+        return;
+    }
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("config.toml");
     std::fs::write(&path, "label = 'ready'\n[server]\nhost = '127.0.0.1'\nport = 0").unwrap();

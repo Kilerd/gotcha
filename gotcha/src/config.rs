@@ -107,8 +107,39 @@ impl Default for ServerConfig {
     }
 }
 
+/// The conventional base file of the standard sources.
+const APPLICATION_FILE: &str = "configurations/application.toml";
+
+/// The environment prefix of the standard sources.
+const APPLICATION_ENV_PREFIX: &str = "APP";
+
+/// The profile selected by `GOTCHA_ACTIVE_PROFILE`, the only place that reads the variable.
+fn active_profile() -> Option<String> {
+    std::env::var("GOTCHA_ACTIVE_PROFILE").ok()
+}
+
+/// The conventional file of a profile.
+fn profile_file(profile: &str) -> PathBuf {
+    PathBuf::from(format!("configurations/application_{profile}.toml"))
+}
+
+/// Whether two paths name the same file, as far as that can be told without touching the file
+/// system. Making them absolute settles `.` components and repeated separators; `..` components
+/// and symlinks stay unresolved, so paths that differ by those count as different files.
+fn same_file(left: &Path, right: &Path) -> bool {
+    match (std::path::absolute(left), std::path::absolute(right)) {
+        (Ok(left), Ok(right)) => left == right,
+        // An empty path, or a working directory that cannot be read.
+        _ => left == right,
+    }
+}
+
 /// One configuration source, read when [`ConfigBuilder::build`] is called.
-#[derive(Clone, Debug)]
+///
+/// This enum is `#[non_exhaustive]`: a later release may add a variant, so a `match` outside this
+/// crate needs a wildcard arm.
+#[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
 pub enum ConfigSource {
     /// A TOML configuration file.
     File {
@@ -117,6 +148,10 @@ pub enum ConfigSource {
         /// Whether a missing file is an error. Other read or parse errors always fail.
         required: bool,
     },
+    /// The optional `configurations/application_{profile}.toml` of the profile named by
+    /// `GOTCHA_ACTIVE_PROFILE`. The variable is read when this source loads, not when it is
+    /// registered; when it is unset, this source contributes nothing.
+    ActiveProfile,
     /// Environment variables with the given prefix.
     Env {
         /// Prefix understood by mofa's environment source, such as `APP`.
@@ -137,6 +172,14 @@ impl Source for ConfigSource {
         match self {
             Self::Env { prefix } => EnvironmentSource::new(prefix).load(),
             Self::Defaults { value } => Ok(value.clone()),
+            Self::ActiveProfile => match active_profile() {
+                Some(profile) => Self::File {
+                    path: profile_file(&profile),
+                    required: false,
+                }
+                .load(),
+                None => Ok(mofa::toml::Value::Table(Default::default())),
+            },
             Self::File { path, required } => match FileSource::new(path.clone()).load() {
                 Ok(value) => Ok(value),
                 Err(error)
@@ -208,6 +251,14 @@ impl ConfigBuilder {
         self
     }
 
+    /// Add the optional file of the profile named by `GOTCHA_ACTIVE_PROFILE`, overriding matching
+    /// values from earlier sources. The variable is read by [`Self::build`]; when it is unset or
+    /// the file is missing, this source contributes nothing.
+    pub fn active_profile_file(mut self) -> Self {
+        self.state.sources.push(ConfigSource::ActiveProfile);
+        self
+    }
+
     /// Enable variable substitution
     pub fn enable_vars(mut self) -> Self {
         self.state.enable_vars = true;
@@ -258,12 +309,142 @@ impl ConfigBuilder {
         self.state.sources.insert(index, ConfigSource::Defaults { value });
     }
 
-    /// Create a builder with the framework's typed server defaults beneath every other source.
+    /// The automatic configuration sources, the one definition behind [`Gotcha::new`](crate::Gotcha::new),
+    /// the builder's `with_*` methods, the default [`GotchaApp::config`](crate::GotchaApp::config),
+    /// and [`Config::load_default`]. From lowest to highest precedence:
     ///
-    /// Framework-managed loading starts here, so files and environment variables always have
-    /// typed `server.host` and `server.port` values to override and coerce against. A manually
-    /// assembled loader, such as a custom [`GotchaApp::config`](crate::GotchaApp::config)
-    /// implementation, should also start here: without a typed base, mofa cannot coerce
+    /// 1. the framework's typed server defaults,
+    /// 2. `configurations/application.toml`, if it exists,
+    /// 3. the file of the profile named by `GOTCHA_ACTIVE_PROFILE`, if set and the file exists,
+    /// 4. environment variables with the `APP` prefix.
+    ///
+    /// `${VAR}` and path substitution is enabled. As with every source, nothing is read until
+    /// [`Self::build`], including the profile variable.
+    ///
+    /// **A source added to the result applies in insertion order, above all of these.**
+    /// `ConfigBuilder::standard().file_optional("first.toml")` lets `first.toml` override the `APP`
+    /// environment, while [`Gotcha::with_optional_config`](crate::Gotcha::with_optional_config)
+    /// keeps the same file below it.
+    ///
+    /// ```rust,no_run
+    /// use gotcha::config::{ConfigBuilder, ConfigWrapper};
+    ///
+    /// let config: ConfigWrapper<gotcha::EmptyConfig> = ConfigBuilder::standard()
+    ///     .build()
+    ///     .expect("configuration loads");
+    /// ```
+    pub fn standard() -> Self {
+        Self::new().standard_sources()
+    }
+
+    /// Add the [standard sources](Self::standard) this builder does not have yet and enable
+    /// variable substitution. This is how a
+    /// [`Gotcha::build_config`](crate::Gotcha::build_config) closure opts into them.
+    ///
+    /// The framework defaults go beneath everything else; the others are appended in order. A
+    /// source already listed keeps its place, whether or not a file was registered as required, so
+    /// `.env("APP").standard_sources()` leaves `configurations/application.toml` and the profile
+    /// file **above** `APP`. Call this first to get the standard order.
+    ///
+    /// Because a builder applies sources in insertion order, a file added **after** this call
+    /// overrides the `APP` environment, unlike with
+    /// [`Gotcha::with_file_config`](crate::Gotcha::with_file_config).
+    ///
+    /// ```rust,no_run
+    /// # fn demo() -> gotcha::GotchaResult<()> {
+    /// use gotcha::Gotcha;
+    /// use serde::Serialize;
+    ///
+    /// #[derive(Serialize)]
+    /// struct Defaults {
+    ///     name: String,
+    /// }
+    ///
+    /// let app = Gotcha::new().build_config(|builder| {
+    ///     builder
+    ///         .defaults(Defaults { name: "my-app".into() })
+    ///         .expect("defaults serialize")
+    ///         .standard_sources()
+    /// })?;
+    /// # Ok(()) }
+    /// ```
+    pub fn standard_sources(mut self) -> Self {
+        let framework = ConfigSource::Defaults {
+            value: framework_default_values(),
+        };
+        if !self.state.sources.contains(&framework) {
+            self.state.sources.insert(0, framework);
+        }
+        if self.listed_file(Path::new(APPLICATION_FILE)).is_none() {
+            self = self.file_optional(APPLICATION_FILE);
+        }
+        for source in [
+            ConfigSource::ActiveProfile,
+            ConfigSource::Env {
+                prefix: APPLICATION_ENV_PREFIX.into(),
+            },
+        ] {
+            if !self.state.sources.contains(&source) {
+                self.state.sources.push(source);
+            }
+        }
+        self.enable_vars()
+    }
+
+    /// The `required` flag of the file source for `path`, if one is listed. See [`same_file`].
+    fn listed_file(&mut self, path: &Path) -> Option<&mut bool> {
+        self.state.sources.iter_mut().find_map(|source| match source {
+            ConfigSource::File { path: listed, required } if same_file(listed, path) => Some(required),
+            _ => None,
+        })
+    }
+
+    /// Add a file the way the builder's `with_*` methods do.
+    ///
+    /// This and [`Self::add_env`] are where their precedence lives. mofa merges sources in list
+    /// order with later values winning, so the list is kept as defaults, then files, then
+    /// environment, each in call order: a new file goes above every other file and below every
+    /// environment source, whenever it is added. A file already listed (see [`same_file`]) keeps
+    /// its place, so it is not read twice, and stays required once any registration requires it.
+    pub(crate) fn add_file(mut self, path: &Path, required: bool) -> Self {
+        if let Some(listed_required) = self.listed_file(path) {
+            *listed_required |= required;
+            return self;
+        }
+        let index = self
+            .state
+            .sources
+            .iter()
+            .position(|source| matches!(source, ConfigSource::Env { .. }))
+            .unwrap_or(self.state.sources.len());
+        self.state.sources.insert(
+            index,
+            ConfigSource::File {
+                path: path.to_path_buf(),
+                required,
+            },
+        );
+        self
+    }
+
+    /// Add an environment prefix above every other source, the way the builder's `with_*` methods
+    /// do. See [`Self::add_file`]. A prefix already listed keeps its place.
+    pub(crate) fn add_env(self, prefix: &str) -> Self {
+        let source = ConfigSource::Env { prefix: prefix.to_string() };
+        if self.state.sources.contains(&source) {
+            self
+        } else {
+            self.env(prefix)
+        }
+    }
+
+    /// Create a builder with the framework's typed server defaults beneath every other source,
+    /// and nothing else. Use [`Self::standard`] for the complete automatic sources.
+    ///
+    /// Files and environment variables then have typed `server.host` and `server.port` values to
+    /// override and coerce against. A manually assembled loader, such as a custom
+    /// [`GotchaApp::config`](crate::GotchaApp::config) implementation that does not want the
+    /// standard sources, should start here: without a typed base, mofa cannot coerce
     /// `APP_SERVER__PORT` to a port number when no file supplies `server.port`.
     ///
     /// ```rust,no_run
@@ -341,19 +522,15 @@ impl Config {
         ConfigBuilder::new()
     }
 
-    /// Load `configurations/application.toml` and the `APP` environment prefix, with variable
-    /// substitution, above the framework's typed server defaults.
+    /// Load the [standard sources](ConfigBuilder::standard), including the profile file named by
+    /// `GOTCHA_ACTIVE_PROFILE`.
     ///
     /// Returns the loading error instead of falling back to `T::default()`. For an explicit
     /// fallback, choose it at the call site or use
     /// [`ConfigErrorPolicy::fallback_to_default`](crate::ConfigErrorPolicy::fallback_to_default)
     /// in startup.
     pub fn load_default<T: for<'de> Deserialize<'de>>() -> ConfigResult<T> {
-        ConfigBuilder::framework_defaults()
-            .file_optional("configurations/application.toml")
-            .env("APP")
-            .enable_vars()
-            .build()
+        ConfigBuilder::standard().build()
     }
 }
 
@@ -367,18 +544,20 @@ impl GotchaConfigLoader {
     /// panicking on failure.
     ///
     /// The framework's typed server defaults sit beneath these sources, so environment-only
-    /// configuration such as `APP_SERVER__PORT` is coerced to the field's type.
+    /// configuration such as `APP_SERVER__PORT` is coerced to the field's type. Unlike
+    /// [`ConfigBuilder::standard`], the caller names the profile and `GOTCHA_ACTIVE_PROFILE` is
+    /// not read.
     pub fn load<T: for<'de> Deserialize<'de>>(profile: Option<String>) -> ConfigResult<T> {
-        let mut builder = ConfigBuilder::framework_defaults().file_optional("configurations/application.toml");
+        let mut builder = ConfigBuilder::framework_defaults().file_optional(APPLICATION_FILE);
         if let Some(profile) = profile {
-            builder = builder.file_optional(format!("configurations/application_{profile}.toml"));
+            builder = builder.file_optional(profile_file(&profile));
         }
-        builder.env("APP").enable_vars().build()
+        builder.env(APPLICATION_ENV_PREFIX).enable_vars().build()
     }
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     #[test]
@@ -404,9 +583,10 @@ mod tests {
     }
 
     /// Run `name` in a child process whose working directory is an empty temporary directory
-    /// and whose `APP_*` environment is removed. Returns `true` in the child. This keeps
-    /// default file paths and environment sources isolated from tests running in parallel.
-    fn in_isolated_child(name: &str, variables: &[(&str, &str)]) -> bool {
+    /// and whose `APP_*` environment and active profile are removed. Returns `true` in the child.
+    /// This keeps default file paths and environment sources isolated from tests running in
+    /// parallel.
+    pub(crate) fn in_isolated_child(name: &str, variables: &[(&str, &str)]) -> bool {
         const CHILD: &str = "GOTCHA_CONFIG_TESTS_CHILD";
         if std::env::var_os(CHILD).is_some() {
             return true;
@@ -421,13 +601,15 @@ mod tests {
             .args(["--exact", name, "--nocapture"])
             .current_dir(dir.path())
             .env(CHILD, "1")
+            .env_remove("GOTCHA_ACTIVE_PROFILE")
             .envs(variables.iter().copied())
             .output()
             .unwrap();
+        // An unknown name exits successfully with no test run, which would silently disable it.
+        let stdout = String::from_utf8_lossy(&output.stdout);
         assert!(
-            output.status.success(),
-            "child failed:\n{}\n{}",
-            String::from_utf8_lossy(&output.stdout),
+            output.status.success() && stdout.contains("test result: ok. 1 passed"),
+            "child failed or did not run {name}:\n{stdout}\n{}",
             String::from_utf8_lossy(&output.stderr)
         );
         false
@@ -561,6 +743,146 @@ mod tests {
             Config::load_default::<ConfigWrapper<TestConfig>>().is_err(),
             "a loading error must not become T::default()"
         );
+    }
+
+    #[test]
+    fn the_active_profile_is_read_when_loading() {
+        if !in_isolated_child("config::tests::the_active_profile_is_read_when_loading", &[("GOTCHA_ACTIVE_PROFILE", "review")]) {
+            return;
+        }
+
+        // The description names the variable, not a file resolved at registration.
+        let builder = ConfigBuilder::standard();
+        let state = builder.state();
+        assert!(state.sources.contains(&ConfigSource::ActiveProfile));
+        assert!(!state
+            .sources
+            .iter()
+            .any(|source| matches!(source, ConfigSource::File { path, .. } if path == &profile_file("review"))));
+
+        // A missing profile file is not an error, and is checked again on every build.
+        let config: ConfigWrapper<TestConfig> = builder.clone().build().expect("a missing profile file is optional");
+        assert_eq!(config.name, "");
+
+        std::fs::create_dir_all("configurations").unwrap();
+        std::fs::write("configurations/application.toml", "name = \"base\"\nvalue = 1\n").unwrap();
+        std::fs::write("configurations/application_review.toml", "name = \"review\"\n").unwrap();
+        for builder in [builder.clone(), ConfigBuilder::from_state(state)] {
+            let config: ConfigWrapper<TestConfig> = builder.build().expect("loads");
+            assert_eq!(config.name, "review", "the profile file overrides application.toml");
+            assert_eq!(config.value, 1, "application.toml still fills the rest");
+        }
+
+        std::fs::write("configurations/application_review.toml", "name = [").unwrap();
+        assert!(builder.build::<ConfigWrapper<TestConfig>>().is_err(), "only a missing profile file is ignored");
+    }
+
+    #[test]
+    fn no_profile_file_is_read_without_an_active_profile() {
+        if !in_isolated_child("config::tests::no_profile_file_is_read_without_an_active_profile", &[]) {
+            return;
+        }
+        std::fs::create_dir_all("configurations").unwrap();
+        std::fs::write("configurations/application.toml", "name = \"base\"\n").unwrap();
+        std::fs::write("configurations/application_review.toml", "name = \"review\"\n").unwrap();
+
+        let config: ConfigWrapper<TestConfig> = ConfigBuilder::standard().build().expect("loads");
+        assert_eq!(config.name, "base");
+    }
+
+    /// The legacy loader takes its profile from the caller, so the variable does not apply.
+    #[test]
+    fn legacy_loader_uses_the_profile_it_is_given() {
+        if !in_isolated_child(
+            "config::tests::legacy_loader_uses_the_profile_it_is_given",
+            &[("GOTCHA_ACTIVE_PROFILE", "review")],
+        ) {
+            return;
+        }
+        std::fs::create_dir_all("configurations").unwrap();
+        std::fs::write("configurations/application.toml", "name = \"base\"\n").unwrap();
+        std::fs::write("configurations/application_review.toml", "name = \"review\"\n").unwrap();
+        std::fs::write("configurations/application_other.toml", "name = \"other\"\n").unwrap();
+
+        let config: ConfigWrapper<TestConfig> = GotchaConfigLoader::load(None).expect("loads");
+        assert_eq!(config.name, "base");
+        let config: ConfigWrapper<TestConfig> = GotchaConfigLoader::load(Some("other".into())).expect("loads");
+        assert_eq!(config.name, "other");
+    }
+
+    #[test]
+    fn standard_sources_add_only_what_is_missing() {
+        let standard = ConfigBuilder::standard().state();
+        assert!(standard.enable_vars);
+        assert_eq!(
+            standard.sources,
+            [
+                ConfigSource::Defaults {
+                    value: framework_default_values(),
+                },
+                ConfigSource::File {
+                    path: "configurations/application.toml".into(),
+                    required: false,
+                },
+                ConfigSource::ActiveProfile,
+                ConfigSource::Env { prefix: "APP".into() },
+            ]
+        );
+
+        assert_eq!(ConfigBuilder::standard().standard_sources().state().sources, standard.sources);
+        assert_eq!(ConfigBuilder::framework_defaults().standard_sources().state().sources, standard.sources);
+
+        let framework = standard.sources[0].clone();
+        let file = |path: &str, required| ConfigSource::File { path: path.into(), required };
+        let profile = ConfigSource::ActiveProfile;
+        let app_env = ConfigSource::Env { prefix: "APP".into() };
+
+        // Whatever is listed keeps its place, and what is missing goes after it.
+        assert_eq!(
+            ConfigBuilder::new().env("APP").standard_sources().state().sources,
+            [
+                framework.clone(),
+                app_env.clone(),
+                file("configurations/application.toml", false),
+                profile.clone(),
+            ]
+        );
+
+        // A listed file counts whether or not it is required, however its path is written.
+        assert_eq!(
+            ConfigBuilder::new()
+                .file("configurations/application.toml")
+                .file("local.toml")
+                .standard_sources()
+                .state()
+                .sources,
+            [
+                framework.clone(),
+                file("configurations/application.toml", true),
+                file("local.toml", true),
+                profile.clone(),
+                app_env.clone(),
+            ]
+        );
+        assert_eq!(
+            ConfigBuilder::new()
+                .file_optional("./configurations/application.toml")
+                .standard_sources()
+                .state()
+                .sources,
+            [framework, file("./configurations/application.toml", false), profile, app_env]
+        );
+
+        // Application defaults stay above the framework's, wherever those get inserted.
+        let sources = ConfigBuilder::new()
+            .defaults(toml::Table::from_iter([("name".to_string(), toml::Value::from("default"))]))
+            .unwrap()
+            .standard_sources()
+            .state()
+            .sources;
+        assert_eq!(sources[0], standard.sources[0]);
+        assert!(matches!(&sources[1], ConfigSource::Defaults { value } if value.get("name").is_some()));
+        assert_eq!(sources[2..], standard.sources[1..]);
     }
 
     #[test]

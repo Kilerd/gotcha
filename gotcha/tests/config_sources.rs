@@ -120,6 +120,30 @@ fn public_source_descriptions_can_be_constructed_directly() {
 
 #[tokio::test]
 async fn explicit_source_errors_reach_the_server_startup_caller() {
+    // The builder's sources include the `APP` environment, so an ambient value could fail loading
+    // in the cases below that expect to reach the bind step.
+    const CHILD: &str = "GOTCHA_CONFIG_ERRORS_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+        for (key, _) in std::env::vars_os().filter(|(key, _)| key.to_string_lossy().starts_with("APP_")) {
+            command.env_remove(key);
+        }
+        let output = command
+            .args(["--exact", "explicit_source_errors_reach_the_server_startup_caller", "--nocapture"])
+            .env(CHILD, "1")
+            .env_remove("GOTCHA_ACTIVE_PROFILE")
+            .output()
+            .unwrap();
+        // An unknown name exits successfully with no test run, which would silently disable it.
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            output.status.success() && stdout.contains("test result: ok. 1 passed"),
+            "child failed or did not run:\n{stdout}\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    }
+
     let dir = tempfile::tempdir().unwrap();
     let missing = dir.path().join("missing.toml");
     let malformed = dir.path().join("malformed.toml");

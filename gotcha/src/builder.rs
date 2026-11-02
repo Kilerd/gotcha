@@ -30,7 +30,7 @@ use serde::{Deserialize, Serialize};
 use tower_layer::Layer;
 use tower_service::Service;
 
-use crate::config::{ConfigBuilder, ConfigErrorPolicy, ConfigWrapper, GotchaConfigLoader};
+use crate::config::{ConfigBuilder, ConfigErrorPolicy, ConfigWrapper};
 use crate::error::{GotchaError, GotchaResult};
 use crate::router::{GotchaRouter, Responder};
 use crate::routing::MethodRouter;
@@ -77,8 +77,8 @@ type ConfigLoader<C> = Box<dyn FnOnce() -> BoxFuture<'static, GotchaResult<Confi
 enum Configuration<C> {
     Provided(ConfigWrapper<C>),
     Deferred {
-        sources: Option<ConfigBuilder>,
-        load: fn(Option<&ConfigBuilder>) -> GotchaResult<ConfigWrapper<C>>,
+        sources: ConfigBuilder,
+        load: fn(&ConfigBuilder) -> GotchaResult<ConfigWrapper<C>>,
     },
     // Taken when it runs, like `StateSource::Initialize`.
     Custom(Option<ConfigLoader<C>>),
@@ -90,15 +90,15 @@ impl<C> Configuration<C> {
         C: DeserializeOwned,
     {
         Self::Deferred {
-            sources: None,
+            sources: ConfigBuilder::standard(),
             load: load_config::<C>,
         }
     }
 
-    fn update_sources(&mut self, update: impl FnOnce(Option<ConfigBuilder>) -> ConfigBuilder) {
+    fn update_sources(&mut self, update: impl FnOnce(ConfigBuilder) -> ConfigBuilder) {
         // Explicit configuration always wins, regardless of when sources are registered.
         if let Self::Deferred { sources, .. } = self {
-            *sources = Some(update(sources.take()));
+            *sources = update(std::mem::take(sources));
         }
     }
 
@@ -108,17 +108,14 @@ impl<C> Configuration<C> {
     {
         match self {
             Self::Provided(config) => Ok(config.clone()),
-            Self::Deferred { sources, load } => load(sources.as_ref()),
+            Self::Deferred { sources, load } => load(sources),
             Self::Custom(load) => load.take().expect("configuration was already loaded")().await,
         }
     }
 }
 
-fn load_config<C: DeserializeOwned>(sources: Option<&ConfigBuilder>) -> GotchaResult<ConfigWrapper<C>> {
-    if let Some(builder) = sources {
-        return Ok(builder.clone().build()?);
-    }
-    Ok(GotchaConfigLoader::load::<ConfigWrapper<C>>(std::env::var("GOTCHA_ACTIVE_PROFILE").ok())?)
+fn load_config<C: DeserializeOwned>(sources: &ConfigBuilder) -> GotchaResult<ConfigWrapper<C>> {
+    Ok(sources.clone().build()?)
 }
 
 /// Cleanup registered with [`Gotcha::on_shutdown`]. Owns a context clone so the returned future
@@ -154,6 +151,31 @@ pub struct EmptyConfig {}
 pub struct EmptyState {}
 
 /// Builder for creating Gotcha applications with a fluent API
+///
+/// # Configuration sources
+///
+/// At startup an application loads the [standard sources](ConfigBuilder::standard), unless
+/// [`Self::config`], [`Self::build_config`], [`Self::load_config`], or [`Gotcha::from_context`]
+/// supplied its configuration instead. [`Self::with_file_config`], [`Self::with_optional_config`],
+/// and [`Self::with_env_config`] add to them. Whatever order they are called in, the precedence
+/// from lowest to highest is:
+///
+/// 1. the framework's typed server defaults,
+/// 2. `configurations/application.toml`, if it exists,
+/// 3. the file of the profile named by `GOTCHA_ACTIVE_PROFILE`, if set and the file exists,
+/// 4. files added with [`Self::with_file_config`] and [`Self::with_optional_config`], in call order,
+/// 5. the `APP` environment prefix,
+/// 6. prefixes added with [`Self::with_env_config`], in call order.
+///
+/// The environment therefore overrides files even when a file is added after it. A path or prefix
+/// that is already listed keeps its place and is not read twice. Paths are compared without touching
+/// the file system: `config.toml`, `./config.toml`, and its absolute path are one file, while paths
+/// that differ by `..` or a symlink count as separate files.
+///
+/// Values may reference environment variables with `${VAR}` and other configuration paths with
+/// `${app.database.name}`. A variable or path that is not set resolves to an empty string;
+/// substitution does not fail the load. An environment-only `APP_SERVER__PORT` is coerced without a
+/// configuration file. For a different set or order of sources, use [`Self::build_config`].
 pub struct Gotcha<S = EmptyState, C = EmptyConfig>
 where
     S: Clone + Send + Sync + 'static,
@@ -268,7 +290,7 @@ impl Gotcha {
     /// }
     ///
     /// let app = Gotcha::with_config::<AppConfig>()
-    ///     .with_env_config("APP")
+    ///     .with_env_config("MYAPP")
     ///     .get("/", |config: State<ConfigWrapper<AppConfig>>| async move {
     ///         "Hello with custom config"
     ///     });
@@ -309,10 +331,9 @@ impl Gotcha {
     /// the listener before routes are assembled or tasks registered.
     ///
     /// The state does not need `Default`. The configuration must implement `Deserialize`, as for
-    /// [`GotchaApp::run`](crate::GotchaApp::run), even when [`Self::load_config`], [`Self::config`],
-    /// or the configuration source methods replace automatic loading later: the builder starts with
-    /// automatic loading. [`Self::into_router`] takes an initialized context instead and does not
-    /// run the initializer.
+    /// [`GotchaApp::run`](crate::GotchaApp::run), even when [`Self::load_config`] or [`Self::config`]
+    /// replace automatic loading later: the builder starts with automatic loading.
+    /// [`Self::into_router`] takes an initialized context instead and does not run the initializer.
     ///
     /// ```no_run
     /// use gotcha::prelude::*;
@@ -412,9 +433,10 @@ where
     /// The loader replaces automatic loading and every configuration source. Source methods such
     /// as [`Self::with_env_config`] do not replace it, whether they are called before or after it.
     /// [`Self::config`], [`Self::build_config`], and `load_config` replace each other: the last
-    /// call wins. Start from
+    /// call wins. Start from [`ConfigBuilder::standard`](crate::config::ConfigBuilder::standard) to
+    /// load what automatic loading does, or from
     /// [`ConfigBuilder::framework_defaults`](crate::config::ConfigBuilder::framework_defaults) to
-    /// keep the typed server defaults that automatic loading has.
+    /// keep only its typed server defaults.
     ///
     /// ```no_run
     /// use gotcha::config::ConfigBuilder;
@@ -447,20 +469,27 @@ where
         self
     }
 
-    /// Build configuration using a custom configuration builder function
+    /// Build the configuration now, from exactly the sources the closure registers.
     ///
-    /// This replaces any existing configuration sources with the result of the builder function.
-    /// Use the individual methods (with_env_config, with_file_config, etc.) for cumulative configuration.
-    /// The builder function starts above the framework's typed server defaults, so it can add
-    /// application defaults with [`ConfigBuilder::defaults`](crate::config::ConfigBuilder::defaults)
-    /// and still let files and environment variables override them.
+    /// The closure starts from [`ConfigBuilder::framework_defaults`] and nothing else:
+    /// `configurations/application.toml`, the profile file, the `APP` environment, and `${VAR}`
+    /// substitution are **not** read unless it adds them. Call
+    /// [`ConfigBuilder::standard_sources`] to opt into all of them. Sources apply in the order
+    /// the closure registers them, later ones overriding earlier ones, so the precedence of the
+    /// `with_*` methods does not apply here.
+    ///
+    /// The result replaces any sources added with the `with_*` methods, and later `with_*` calls
+    /// are ignored, as with [`Self::config`].
     ///
     /// # Example
     /// ```no_run
     /// # fn demo() -> gotcha::GotchaResult<()> {
     /// use gotcha::prelude::*;
     ///
-    /// let _app = Gotcha::new().build_config(|builder| builder.file_optional("config.toml").env("APP"))?;
+    /// // Only this file and this prefix, above the framework's server defaults.
+    /// let _app = Gotcha::new().build_config(|builder| builder.file_optional("config.toml").env("MYAPP"))?;
+    /// // The standard sources, then a file that overrides even the environment.
+    /// let _app = Gotcha::new().build_config(|builder| builder.standard_sources().file_optional("override.toml"))?;
     /// # Ok(()) }
     /// ```
     pub fn build_config<F>(mut self, builder_fn: F) -> GotchaResult<Self>
@@ -475,51 +504,37 @@ where
         Ok(self)
     }
 
-    /// Add default configuration sources (files + environment variables)
-    ///
-    /// This adds to any existing configuration sources rather than replacing them.
-    /// Equivalent to calling `.with_default_files().with_default_env()`
-    /// Errors from these explicitly selected sources are returned when the server starts.
-    /// The framework's typed server defaults always sit beneath these sources, so an
-    /// environment-only `APP_SERVER__PORT` is coerced without a configuration file.
-    /// `${VAR}` and path variables in these sources are resolved, as in automatic loading.
-    ///
-    /// # Example
-    /// ```no_run
-    /// use gotcha::prelude::*;
-    ///
-    /// let app = Gotcha::new()
-    ///     .with_default_config();
-    /// ```
+    /// Does nothing: the standard sources are already loaded. See
+    /// [configuration sources](Gotcha#configuration-sources).
+    #[deprecated(note = "does nothing, because the standard sources are always loaded; delete the call, or use `build_config` for a different set of sources")]
     pub fn with_default_config(self) -> Self {
-        self.with_default_files().with_default_env()
-    }
-
-    /// Add environment variable configuration source
-    ///
-    /// This adds to any existing configuration sources rather than replacing them.
-    /// Multiple calls will add multiple environment prefixes.
-    /// Later sources override earlier values; loading errors are returned at server startup.
-    ///
-    /// # Example
-    /// ```no_run
-    /// use gotcha::prelude::*;
-    ///
-    /// let app = Gotcha::new()
-    ///     .with_env_config("APP")
-    ///     .with_env_config("GOTCHA"); // Both prefixes will be used
-    /// ```
-    pub fn with_env_config<P: AsRef<str>>(mut self, prefix: P) -> Self {
-        self.config
-            .update_sources(|builder| builder.unwrap_or_else(ConfigBuilder::framework_defaults).enable_vars().env(prefix.as_ref()));
         self
     }
 
-    /// Add a required configuration file source
+    /// Add an environment variable prefix above every file and the `APP` prefix
     ///
-    /// This adds to any existing configuration sources rather than replacing them.
-    /// Multiple calls will add multiple file sources.
-    /// Later sources override earlier values. A missing, unreadable, or invalid file fails startup.
+    /// Multiple calls add multiple prefixes, and later prefixes override earlier ones. See
+    /// [configuration sources](Gotcha#configuration-sources) for the complete precedence. Loading
+    /// errors are returned at server startup.
+    ///
+    /// # Example
+    /// ```no_run
+    /// use gotcha::prelude::*;
+    ///
+    /// let app = Gotcha::new()
+    ///     .with_env_config("MYAPP")
+    ///     .with_env_config("GOTCHA"); // Added to `APP`; `GOTCHA` wins over `MYAPP`
+    /// ```
+    pub fn with_env_config<P: AsRef<str>>(mut self, prefix: P) -> Self {
+        self.config.update_sources(|builder| builder.add_env(prefix.as_ref()));
+        self
+    }
+
+    /// Add a required configuration file above the conventional files and below the environment
+    ///
+    /// Multiple calls add multiple files, and later files override earlier ones. See
+    /// [configuration sources](Gotcha#configuration-sources) for the complete precedence. A missing,
+    /// unreadable, or invalid file fails startup.
     ///
     /// # Example
     /// ```no_run
@@ -527,19 +542,17 @@ where
     ///
     /// let app = Gotcha::new()
     ///     .with_file_config("config.toml")
-    ///     .with_file_config("local.toml"); // Both files will be loaded
+    ///     .with_file_config("local.toml"); // Both are added to the automatic sources
     /// ```
     pub fn with_file_config<P: AsRef<std::path::Path>>(mut self, path: P) -> Self {
-        self.config
-            .update_sources(|builder| builder.unwrap_or_else(ConfigBuilder::framework_defaults).enable_vars().file(path));
+        self.config.update_sources(|builder| builder.add_file(path.as_ref(), true));
         self
     }
 
-    /// Add an optional configuration file source (won't fail if file doesn't exist)
+    /// Add an optional configuration file (won't fail if file doesn't exist)
     ///
-    /// This adds to any existing configuration sources rather than replacing them.
-    /// Multiple calls will add multiple optional file sources.
-    /// Only missing files are ignored; unreadable or invalid files fail startup.
+    /// Takes the same place as [`Self::with_file_config`]. Only missing files are ignored;
+    /// unreadable or invalid files fail startup.
     ///
     /// # Example
     /// ```no_run
@@ -547,77 +560,37 @@ where
     ///
     /// let app = Gotcha::new()
     ///     .with_optional_config("config.toml")
-    ///     .with_optional_config("local.toml"); // Both files will be loaded if they exist
+    ///     .with_optional_config("local.toml"); // Both will be loaded if they exist
     /// ```
     pub fn with_optional_config<P: AsRef<std::path::Path>>(mut self, path: P) -> Self {
-        self.config
-            .update_sources(|builder| builder.unwrap_or_else(ConfigBuilder::framework_defaults).enable_vars().file_optional(path));
+        self.config.update_sources(|builder| builder.add_file(path.as_ref(), false));
         self
     }
 
-    /// Add default configuration files (configurations/application.toml and profile-specific files)
-    ///
-    /// This adds to any existing configuration sources rather than replacing them.
-    /// Missing default files are optional; existing files that cannot be loaded fail startup.
-    /// Variable substitution is enabled for these sources, as for automatic loading.
-    ///
-    /// # Example
-    /// ```no_run
-    /// use gotcha::prelude::*;
-    ///
-    /// let app = Gotcha::new()
-    ///     .with_default_files();
-    /// ```
-    pub fn with_default_files(mut self) -> Self {
-        self.config.update_sources(|builder| {
-            let mut builder = builder
-                .unwrap_or_else(ConfigBuilder::framework_defaults)
-                .enable_vars()
-                .file_optional("configurations/application.toml");
-            if let Ok(profile) = std::env::var("GOTCHA_ACTIVE_PROFILE") {
-                builder = builder.file_optional(format!("configurations/application_{}.toml", profile));
-            }
-            builder
-        });
+    /// Does nothing: the conventional files are already loaded, along with the `APP` environment.
+    /// See [configuration sources](Gotcha#configuration-sources).
+    #[deprecated(
+        note = "does nothing, and no longer limits loading to the conventional files: the `APP` environment is read too; delete the call, or use `build_config` to load only these files"
+    )]
+    pub fn with_default_files(self) -> Self {
         self
     }
 
-    /// Add default environment variable prefix ("APP")
-    ///
-    /// This adds to any existing configuration sources rather than replacing them.
-    /// Variable substitution is enabled for these sources, as for automatic loading.
-    ///
-    /// # Example
-    /// ```no_run
-    /// use gotcha::prelude::*;
-    ///
-    /// let app = Gotcha::new()
-    ///     .with_default_env();
-    /// ```
-    pub fn with_default_env(mut self) -> Self {
-        self.config
-            .update_sources(|builder| builder.unwrap_or_else(ConfigBuilder::framework_defaults).enable_vars().env("APP"));
+    /// Does nothing: the `APP` environment is already loaded, along with the conventional files.
+    /// See [configuration sources](Gotcha#configuration-sources).
+    #[deprecated(
+        note = "does nothing, and no longer limits loading to the `APP` environment: the conventional files are read too; delete the call, or use `build_config` to load only this prefix"
+    )]
+    pub fn with_default_env(self) -> Self {
         self
     }
 
-    /// Enable variable substitution
-    ///
-    /// Values may reference environment variables with `${VAR}` and other configuration paths
-    /// with `${app.database.name}`. A variable or path that is not set resolves to an empty
-    /// string; substitution does not fail the load. This affects all configuration sources
-    /// added to the builder.
-    ///
-    /// # Example
-    /// ```no_run
-    /// use gotcha::prelude::*;
-    ///
-    /// let app = Gotcha::new()
-    ///     .with_optional_config("config.toml")
-    ///     .enable_variable_substitution();
-    /// ```
-    pub fn enable_variable_substitution(mut self) -> Self {
-        self.config
-            .update_sources(|builder| builder.unwrap_or_else(ConfigBuilder::framework_defaults).enable_vars());
+    /// Does nothing: variable substitution is already enabled, for all of the standard sources.
+    /// See [configuration sources](Gotcha#configuration-sources).
+    #[deprecated(
+        note = "does nothing, because substitution is always enabled and the standard sources are always loaded; delete the call, or use `build_config` to choose the sources"
+    )]
+    pub fn enable_variable_substitution(self) -> Self {
         self
     }
 
@@ -1578,6 +1551,9 @@ where
 }
 
 #[cfg(test)]
+mod source_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::ServerConfig;
@@ -2046,6 +2022,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(deprecated)]
     async fn configuration_sources_preserve_order_and_explicit_error_policy() {
         const CHILD: &str = "GOTCHA_CONFIG_BUILDER_CHILD";
         if std::env::var_os(CHILD).is_none() {
@@ -2084,13 +2061,13 @@ mod tests {
         let app = || Gotcha::with_config::<TestConfig>();
         for (builder, expected) in [
             (app().with_default_config(), "default-env"),
-            (app().with_default_env().with_default_files(), "profile"),
+            (app().with_default_env().with_default_files(), "default-env"),
             (
                 app()
                     .with_file_config("configurations/application.toml")
                     .with_env_config("GOTCHABUILDER")
                     .with_optional_config("override.toml"),
-                "override",
+                "custom-env",
             ),
             (
                 app()
@@ -2113,6 +2090,7 @@ mod tests {
     /// `with_default_config` starts from the framework's typed server defaults, so an
     /// environment-only `APP_SERVER__PORT` coerces even without a configuration file.
     #[tokio::test]
+    #[allow(deprecated)]
     async fn default_sources_install_typed_server_defaults() {
         const CHILD: &str = "GOTCHA_BUILDER_ENV_ONLY_CHILD";
         if std::env::var_os(CHILD).is_none() {
@@ -2169,6 +2147,7 @@ mod tests {
 
     /// Default files resolve environment and path variables through `with_default_config()`.
     #[tokio::test]
+    #[allow(deprecated)]
     async fn default_sources_resolve_variables() {
         const CHILD: &str = "GOTCHA_BUILDER_DEFAULT_VARS_CHILD";
         if std::env::var_os(CHILD).is_none() {
@@ -2214,11 +2193,12 @@ mod tests {
 
         let config = Gotcha::with_config::<EmptyConfig>().with_default_files().config.resolve().await.unwrap().server;
         assert_eq!(config.host, "10.0.0.1", "with_default_files resolves variables in the default files");
-        assert_eq!(config.port, 18080, "file values win over framework defaults");
+        assert_eq!(config.port, 9000, "with_default_files keeps the automatic `APP` environment");
     }
 
     /// `with_default_env` resolves `${VAR}` in environment values.
     #[tokio::test]
+    #[allow(deprecated)]
     async fn default_environment_source_resolves_variables() {
         const CHILD: &str = "GOTCHA_BUILDER_DEFAULT_ENV_CHILD";
         if std::env::var_os(CHILD).is_none() {
