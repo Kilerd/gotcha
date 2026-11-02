@@ -1227,9 +1227,9 @@ Configuration supports:
   typed fields (numbers, booleans) parse the value rather than rejecting it.
 
 An application loads the standard sources, `ConfigBuilder::standard()`, unless `.config(value)`,
-`build_config`, or `Gotcha::from_context` already supplied its configuration. The builder's
-`with_file_config`, `with_optional_config`, and `with_env_config` add to them. Whatever order those
-methods are called in, the precedence from lowest to highest is:
+`build_config`, `load_config`, or `Gotcha::from_context` supplied its configuration instead. The
+builder's `with_file_config`, `with_optional_config`, and `with_env_config` add to them. Whatever
+order those methods are called in, the precedence from lowest to highest is:
 
 1. the framework's typed `[server]` defaults
 2. `configurations/application.toml`, if it exists

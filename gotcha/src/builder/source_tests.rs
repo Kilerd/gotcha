@@ -56,8 +56,13 @@ fn app() -> App {
 fn sources(app: &App) -> Vec<ConfigSource> {
     match &app.config {
         Configuration::Deferred { sources, .. } => sources.state().sources,
-        Configuration::Provided(_) => panic!("sources were replaced by a provided configuration"),
+        Configuration::Provided(_) | Configuration::Custom(_) => panic!("sources were replaced by a provided configuration or a loader"),
     }
+}
+
+/// Load `app`'s configuration the way startup does.
+async fn load(mut app: App) -> GotchaResult<ConfigWrapper<Layers>> {
+    app.config.resolve().await
 }
 
 fn file(path: &str, required: bool) -> ConfigSource {
@@ -102,9 +107,9 @@ impl GotchaApp for DefaultConfigApp {
     }
 }
 
-#[test]
+#[tokio::test]
 #[allow(deprecated)]
-fn added_sources_take_their_layer_whatever_the_call_order() {
+async fn added_sources_take_their_layer_whatever_the_call_order() {
     if !in_isolated_child("builder::source_tests::added_sources_take_their_layer_whatever_the_call_order", LAYERED_ENV) {
         return;
     }
@@ -159,12 +164,12 @@ fn added_sources_take_their_layer_whatever_the_call_order() {
         ),
     ] {
         assert_eq!(sources(&app), expected, "{case}");
-        assert_winners(case, app.config.resolve().unwrap(), ALL_ADDED);
+        assert_winners(case, load(app).await.unwrap(), ALL_ADDED);
     }
 }
 
-#[test]
-fn call_order_only_decides_within_a_layer() {
+#[tokio::test]
+async fn call_order_only_decides_within_a_layer() {
     if !in_isolated_child("builder::source_tests::call_order_only_decides_within_a_layer", LAYERED_ENV) {
         return;
     }
@@ -177,14 +182,14 @@ fn call_order_only_decides_within_a_layer() {
         .with_optional_config("first.toml");
     assert_winners(
         "later files and prefixes win among their own kind",
-        app.config.resolve().unwrap(),
+        load(app).await.unwrap(),
         ["application", "profile", "first", "first", "app-env", "x-env", "x-env"],
     );
 }
 
 /// A single call used to replace the automatic sources with the framework defaults alone.
-#[test]
-fn a_single_added_source_keeps_the_automatic_sources() {
+#[tokio::test]
+async fn a_single_added_source_keeps_the_automatic_sources() {
     if !in_isolated_child("builder::source_tests::a_single_added_source_keeps_the_automatic_sources", LAYERED_ENV) {
         return;
     }
@@ -208,7 +213,7 @@ fn a_single_added_source_keeps_the_automatic_sources() {
         ),
         ("with_optional_config, missing", app().with_optional_config("missing.toml"), STANDARD),
     ] {
-        assert_winners(case, app.config.resolve().unwrap(), winners);
+        assert_winners(case, load(app).await.unwrap(), winners);
     }
 }
 
@@ -232,9 +237,9 @@ async fn a_single_added_source_binds_the_configured_port() {
     assert!(matches!(&error, GotchaError::Bind { addr, .. } if *addr == address.to_string()), "{error}");
 }
 
-#[test]
+#[tokio::test]
 #[allow(deprecated)]
-fn default_helpers_and_substitution_are_the_standard_sources() {
+async fn default_helpers_and_substitution_are_the_standard_sources() {
     if !in_isolated_child("builder::source_tests::default_helpers_and_substitution_are_the_standard_sources", LAYERED_ENV) {
         return;
     }
@@ -252,7 +257,7 @@ fn default_helpers_and_substitution_are_the_standard_sources() {
         ("enable_variable_substitution", app().enable_variable_substitution()),
     ] {
         assert_eq!(sources(&app), standard.sources, "{case}");
-        assert_winners(case, app.config.resolve().unwrap(), STANDARD);
+        assert_winners(case, load(app).await.unwrap(), STANDARD);
     }
 }
 
@@ -263,14 +268,14 @@ async fn every_default_path_loads_the_same_sources() {
     }
     write_layered_files();
 
-    assert_winners("builder", app().config.resolve().unwrap(), STANDARD);
+    assert_winners("builder", load(app()).await.unwrap(), STANDARD);
     assert_winners("trait", DefaultConfigApp.config().await.unwrap(), STANDARD);
     assert_winners("load_default", Config::load_default().unwrap(), STANDARD);
     assert_winners("standard", ConfigBuilder::standard().build().unwrap(), STANDARD);
 }
 
-#[test]
-fn repeated_sources_are_read_once_and_keep_their_place() {
+#[tokio::test]
+async fn repeated_sources_are_read_once_and_keep_their_place() {
     if !in_isolated_child("builder::source_tests::repeated_sources_are_read_once_and_keep_their_place", LAYERED_ENV) {
         return;
     }
@@ -285,7 +290,7 @@ fn repeated_sources_are_read_once_and_keep_their_place() {
         .with_file_config("first.toml")
         .with_env_config("GOTCHAX");
     assert_eq!(sources(&repeated), expected);
-    assert_winners("repeated", repeated.config.resolve().unwrap(), ALL_ADDED);
+    assert_winners("repeated", load(repeated).await.unwrap(), ALL_ADDED);
 
     // Naming a standard source keeps it in its layer: `APP` stays below added prefixes, and
     // application.toml stays below the profile file.
@@ -296,14 +301,14 @@ fn repeated_sources_are_read_once_and_keep_their_place() {
     assert_eq!(sources(&named), standard_with(vec![], vec![env("GOTCHAX")]));
     assert_winners(
         "standard sources named again",
-        named.config.resolve().unwrap(),
+        load(named).await.unwrap(),
         ["application", "profile", "profile", "profile", "app-env", "x-env", "x-env"],
     );
 }
 
 /// With a profile active, another spelling of the base file must not lift it above the profile.
-#[test]
-fn another_spelling_of_a_listed_path_keeps_its_place() {
+#[tokio::test]
+async fn another_spelling_of_a_listed_path_keeps_its_place() {
     if !in_isolated_child("builder::source_tests::another_spelling_of_a_listed_path_keeps_its_place", LAYERED_ENV) {
         return;
     }
@@ -318,7 +323,7 @@ fn another_spelling_of_a_listed_path_keeps_its_place() {
         ("absolute", app().with_optional_config(&absolute)),
     ] {
         assert_eq!(sources(&app), standard, "{case}");
-        assert_winners(case, app.config.resolve().unwrap(), STANDARD);
+        assert_winners(case, load(app).await.unwrap(), STANDARD);
     }
 
     // The same goes for added files, and the first spelling stays in the list.
@@ -331,7 +336,7 @@ fn another_spelling_of_a_listed_path_keeps_its_place() {
     assert_eq!(sources(&separate), standard_with(vec![file(parent, false)], vec![]));
     assert_winners(
         "a path through `..` is an added file",
-        separate.config.resolve().unwrap(),
+        load(separate).await.unwrap(),
         ["application", "application", "application", "application", "app-env", "app-env", "app-env"],
     );
 }
@@ -355,11 +360,11 @@ async fn environment_only_server_port_works_on_every_path() {
         ("enable_variable_substitution", app().enable_variable_substitution()),
         ("with_optional_config", app().with_optional_config("missing.toml")),
     ] {
-        let config = app.config.resolve().unwrap();
+        let config = load(app).await.unwrap();
         assert_eq!(config.server.port, 9000, "{case}");
         assert_eq!(config.server.host, ServerConfig::default().host, "{case}");
     }
-    let config = app().with_env_config("GOTCHAX").config.resolve().unwrap();
+    let config = load(app().with_env_config("GOTCHAX")).await.unwrap();
     assert_eq!((config.server.host.as_str(), config.server.port), ("0.0.0.0", 9000));
 
     let config = DefaultConfigApp.config().await.unwrap();
@@ -368,14 +373,14 @@ async fn environment_only_server_port_works_on_every_path() {
     assert_eq!(config.server.port, 9000, "load_default");
 }
 
-#[test]
+#[tokio::test]
 #[allow(deprecated)]
-fn missing_required_files_still_fail_under_the_strict_policy() {
+async fn missing_required_files_still_fail_under_the_strict_policy() {
     if !in_isolated_child("builder::source_tests::missing_required_files_still_fail_under_the_strict_policy", &[]) {
         return;
     }
 
-    for (case, app) in [
+    for (case, mut app) in [
         ("alone", app().with_file_config("missing.toml")),
         ("after an environment source", app().with_env_config("GOTCHAX").with_file_config("missing.toml")),
         ("after with_default_config", app().with_default_config().with_file_config("missing.toml")),
@@ -392,19 +397,21 @@ fn missing_required_files_still_fail_under_the_strict_policy() {
             app().with_file_config("configurations/application.toml"),
         ),
     ] {
-        let error = app.config.resolve().err().unwrap_or_else(|| panic!("{case}: expected an error"));
+        let error = app.config.resolve().await.err().unwrap_or_else(|| panic!("{case}: expected an error"));
         assert!(error.to_string().contains("required configuration file"), "{case}: {error}");
 
         // Startup applies the policy to this error exactly as before.
-        let resolved = || app.config.resolve();
-        assert!(ConfigErrorPolicy::<Layers>::Strict.apply(resolved()).is_err(), "{case}");
-        assert!(ConfigErrorPolicy::<Layers>::fallback_to_default().apply(resolved()).is_ok(), "{case}");
+        assert!(ConfigErrorPolicy::<Layers>::Strict.apply(app.config.resolve().await).is_err(), "{case}");
+        assert!(
+            ConfigErrorPolicy::<Layers>::fallback_to_default().apply(app.config.resolve().await).is_ok(),
+            "{case}"
+        );
     }
 }
 
-#[test]
+#[tokio::test]
 #[allow(deprecated)]
-fn invalid_conventional_files_fail_every_chain_that_includes_them() {
+async fn invalid_conventional_files_fail_every_chain_that_includes_them() {
     if !in_isolated_child(
         "builder::source_tests::invalid_conventional_files_fail_every_chain_that_includes_them",
         &[("GOTCHA_ACTIVE_PROFILE", "review")],
@@ -420,15 +427,15 @@ fn invalid_conventional_files_fail_every_chain_that_includes_them() {
             app().with_optional_config("missing.toml"),
             app().enable_variable_substitution(),
         ] {
-            assert!(matches!(app.config.resolve(), Err(GotchaError::Config(_))), "{path}");
+            assert!(matches!(load(app).await, Err(GotchaError::Config(_))), "{path}");
         }
         std::fs::remove_file(path).unwrap();
     }
 }
 
 /// Two valid files can conflict, and now the automatic sources take part in that.
-#[test]
-fn a_key_with_different_types_in_two_layers_fails_loading() {
+#[tokio::test]
+async fn a_key_with_different_types_in_two_layers_fails_loading() {
     if !in_isolated_child("builder::source_tests::a_key_with_different_types_in_two_layers_fails_loading", &[]) {
         return;
     }
@@ -436,13 +443,13 @@ fn a_key_with_different_types_in_two_layers_fails_loading() {
     std::fs::write("configurations/application.toml", "[db]\nurl = 'base'\n").unwrap();
     std::fs::write("local.toml", "db = 'local'\n").unwrap();
 
-    let error = app().with_optional_config("local.toml").config.resolve().err().expect("the layers conflict");
+    let error = load(app().with_optional_config("local.toml")).await.err().expect("the layers conflict");
     assert!(error.to_string().contains("merge fail, path=$.db"), "{error}");
 }
 
 /// A fallback replaces the whole configuration, including the sources that did load.
-#[test]
-fn a_fallback_after_an_automatic_source_fails_drops_added_files() {
+#[tokio::test]
+async fn a_fallback_after_an_automatic_source_fails_drops_added_files() {
     if !in_isolated_child("builder::source_tests::a_fallback_after_an_automatic_source_fails_drops_added_files", &[]) {
         return;
     }
@@ -450,14 +457,20 @@ fn a_fallback_after_an_automatic_source_fails_drops_added_files() {
     std::fs::write("configurations/application.toml", "value = [").unwrap();
     std::fs::write("local.toml", "a = 'local'\n[server]\nport = 18080\n").unwrap();
 
-    let app = app().with_optional_config("local.toml");
-    let config = ConfigErrorPolicy::<Layers>::fallback_to_default().apply(app.config.resolve()).unwrap();
+    let chain = app().with_optional_config("local.toml");
+    let config = ConfigErrorPolicy::<Layers>::fallback_to_default().apply(load(chain).await).unwrap();
     assert_eq!(config.app, Layers::new());
     assert_eq!(config.server.port, ServerConfig::default().port);
+
+    // The recipe for the old chain lists only its own sources, so it keeps the added file.
+    let recipe = app().load_config(|| async { Ok(ConfigBuilder::framework_defaults().file_optional("local.toml").enable_vars().build()?) });
+    let config = load(recipe).await.unwrap();
+    assert_eq!(config.app["a"], "local");
+    assert_eq!(config.server.port, 18080);
 }
 
-#[test]
-fn build_config_starts_from_the_framework_defaults_and_keeps_insertion_order() {
+#[tokio::test]
+async fn build_config_starts_from_the_framework_defaults_and_keeps_insertion_order() {
     if !in_isolated_child(
         "builder::source_tests::build_config_starts_from_the_framework_defaults_and_keeps_insertion_order",
         LAYERED_ENV,
@@ -466,40 +479,46 @@ fn build_config_starts_from_the_framework_defaults_and_keeps_insertion_order() {
     }
     write_layered_files();
 
-    let built = |configure: fn(ConfigBuilder) -> ConfigBuilder| app().build_config(configure).unwrap().config.resolve().unwrap();
+    async fn built(configure: fn(ConfigBuilder) -> ConfigBuilder) -> ConfigWrapper<Layers> {
+        load(app().build_config(configure).unwrap()).await.unwrap()
+    }
 
     // Nothing but the framework defaults, even with files and the `APP` environment present.
-    let config = built(|builder| builder);
+    let config = built(|builder| builder).await;
     assert_eq!(config.app, Layers::new());
     assert_eq!(config.server.port, ServerConfig::default().port);
 
     // No substitution until the closure asks for it.
-    let config = built(|builder| builder.file("configurations/application.toml"));
+    let config = built(|builder| builder.file("configurations/application.toml")).await;
     assert_eq!(config.app["reference"], "${GOTCHA_SOURCE_TOKEN}/${g}");
     assert_eq!(config.app["g"], "application", "no profile file and no `APP` environment");
 
     // A later source wins, whatever its kind.
-    let config = built(|builder| builder.env("GOTCHAX").file("first.toml"));
+    let config = built(|builder| builder.env("GOTCHAX").file("first.toml")).await;
     assert_eq!(config.app["g"], "first");
 
-    assert_winners("standard_sources", built(|builder| builder.standard_sources()), STANDARD);
+    assert_winners("standard_sources", built(|builder| builder.standard_sources()).await, STANDARD);
     assert_winners(
         "a file after standard_sources overrides the environment",
-        built(|builder| builder.standard_sources().file("first.toml")),
+        built(|builder| builder.standard_sources().file("first.toml")).await,
         ["application", "profile", "first", "first", "first", "first", "first"],
     );
 
     // Sources already listed keep their place, so these files land above `APP`.
     let files_win = ["application", "profile", "profile", "profile", "profile", "profile", "profile"];
-    assert_winners("env, then standard_sources", built(|builder| builder.env("APP").standard_sources()), files_win);
+    assert_winners(
+        "env, then standard_sources",
+        built(|builder| builder.env("APP").standard_sources()).await,
+        files_win,
+    );
 
     // The recipes for the old `with_default_files()` and `with_default_env()`.
     assert_winners(
         "conventional files only",
-        built(|builder| builder.file_optional("configurations/application.toml").active_profile_file().enable_vars()),
+        built(|builder| builder.file_optional("configurations/application.toml").active_profile_file().enable_vars()).await,
         files_win,
     );
-    let config = built(|builder| builder.env("APP").enable_vars());
+    let config = built(|builder| builder.env("APP").enable_vars()).await;
     assert_eq!(
         config.app,
         Layers::from_iter(["e", "f", "g"].map(|key| (key.to_string(), "app-env".to_string())))
@@ -520,7 +539,8 @@ fn build_config_starts_from_the_framework_defaults_and_keeps_insertion_order() {
             })
             .expect("defaults serialize")
             .standard_sources()
-    });
+    })
+    .await;
     assert_eq!(config.app["only_default"], "default");
     assert_eq!(config.app["a"], "application");
     assert_eq!(config.server.port, 18080);

@@ -141,17 +141,25 @@ let app = Gotcha::new().build_config(|builder| builder.enable_vars())?;
 `with_default_config()` alone already loaded the standard sources, so deleting it changes nothing.
 The old `Config::load_default()` is `GotchaConfigLoader::load(None)`.
 
-An old `with_*` chain under a fallback policy has no direct recipe, because `build_config` bypasses
-the policy. The closest is to load the same sources with `ConfigBuilder`, choose the fallback at the
-call site, and pass the result to `.config(value)`.
+To keep an old `with_*` chain under a fallback policy, list its sources in `load_config` instead,
+because `build_config` bypasses the policy. A loader runs at startup, as the chain did, and its
+errors go through `ConfigErrorPolicy`:
 
-In a `build_config` closure, or a custom `GotchaApp::config()`, `standard_sources()` adds the
-standard sources to a builder and `ConfigBuilder::standard()` starts from them. A `build_config`
-closure that only called `.defaults(..)` was ignoring every file and environment variable; add
-`.standard_sources()` to read them. **A `ConfigBuilder` applies sources in the order they are
-added**, unlike the `with_*` methods: `ConfigBuilder::standard().file_optional("first.toml")` lets
-`first.toml` override the `APP` environment, while `with_optional_config("first.toml")` keeps it
-below. Likewise `.env("APP").standard_sources()` leaves the conventional files above `APP`.
+```rust,ignore
+// Before: Gotcha::new().with_optional_config("local.toml").config_error_policy(policy)
+let app = Gotcha::new()
+    .load_config(|| async { Ok(ConfigBuilder::framework_defaults().file_optional("local.toml").enable_vars().build()?) })
+    .config_error_policy(policy);
+```
+
+In a `build_config` closure, a `load_config` loader, or a custom `GotchaApp::config()`,
+`standard_sources()` adds the standard sources to a builder and `ConfigBuilder::standard()` starts
+from them. A `build_config` closure that only called `.defaults(..)` was ignoring every file and
+environment variable; add `.standard_sources()` to read them. **A `ConfigBuilder` applies sources in
+the order they are added**, unlike the `with_*` methods:
+`ConfigBuilder::standard().file_optional("first.toml")` lets `first.toml` override the `APP`
+environment, while `with_optional_config("first.toml")` keeps it below. Likewise
+`.env("APP").standard_sources()` leaves the conventional files above `APP`.
 
 ---
 

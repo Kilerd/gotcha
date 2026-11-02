@@ -155,10 +155,10 @@ pub struct EmptyState {}
 /// # Configuration sources
 ///
 /// At startup an application loads the [standard sources](ConfigBuilder::standard), unless
-/// [`Self::config`], [`Self::build_config`], or [`Gotcha::from_context`] already supplied its
-/// configuration. [`Self::with_file_config`], [`Self::with_optional_config`], and
-/// [`Self::with_env_config`] add to them. Whatever order they are called in, the precedence from
-/// lowest to highest is:
+/// [`Self::config`], [`Self::build_config`], [`Self::load_config`], or [`Gotcha::from_context`]
+/// supplied its configuration instead. [`Self::with_file_config`], [`Self::with_optional_config`],
+/// and [`Self::with_env_config`] add to them. Whatever order they are called in, the precedence
+/// from lowest to highest is:
 ///
 /// 1. the framework's typed server defaults,
 /// 2. `configurations/application.toml`, if it exists,
@@ -331,10 +331,9 @@ impl Gotcha {
     /// the listener before routes are assembled or tasks registered.
     ///
     /// The state does not need `Default`. The configuration must implement `Deserialize`, as for
-    /// [`GotchaApp::run`](crate::GotchaApp::run), even when [`Self::load_config`], [`Self::config`],
-    /// or the configuration source methods replace automatic loading later: the builder starts with
-    /// automatic loading. [`Self::into_router`] takes an initialized context instead and does not
-    /// run the initializer.
+    /// [`GotchaApp::run`](crate::GotchaApp::run), even when [`Self::load_config`] or [`Self::config`]
+    /// replace automatic loading later: the builder starts with automatic loading.
+    /// [`Self::into_router`] takes an initialized context instead and does not run the initializer.
     ///
     /// ```no_run
     /// use gotcha::prelude::*;
@@ -434,9 +433,10 @@ where
     /// The loader replaces automatic loading and every configuration source. Source methods such
     /// as [`Self::with_env_config`] do not replace it, whether they are called before or after it.
     /// [`Self::config`], [`Self::build_config`], and `load_config` replace each other: the last
-    /// call wins. Start from
+    /// call wins. Start from [`ConfigBuilder::standard`](crate::config::ConfigBuilder::standard) to
+    /// load what automatic loading does, or from
     /// [`ConfigBuilder::framework_defaults`](crate::config::ConfigBuilder::framework_defaults) to
-    /// keep the typed server defaults that automatic loading has.
+    /// keep only its typed server defaults.
     ///
     /// ```no_run
     /// use gotcha::config::ConfigBuilder;
