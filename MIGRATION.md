@@ -1,5 +1,6 @@
 # Migration Guide
 
+- [Unreleased: from and into proxies document the type](#unreleased-from-and-into-proxies-document-the-type)
 - [Unreleased: moving from GotchaApp to the builder](#unreleased-moving-from-gotchaapp-to-the-builder)
 - [Unreleased: extractor provider keys](#unreleased-extractor-provider-keys)
 - [Unreleased: skipped and untagged variants](#unreleased-skipped-and-untagged-variants)
@@ -42,6 +43,45 @@
 - [Unreleased: default configuration sources](#unreleased-default-configuration-sources)
 - [0.3 → 0.4](#03--04) — **every application must edit its route paths and configuration file**
 - [0.2 → 0.3: API simplification](#02--03-api-simplification)
+
+---
+
+# Unreleased: from and into proxies document the type
+
+A type that converts through one proxy in both directions, `#[serde(from = "P", into = "P")]` or
+`#[serde(try_from = "P", into = "P")]`, is now documented as `P`, because that is what is on the
+wire. It used to document its own fields. Its component stays, under its own name and with its own
+documentation, and holds `P`'s schema.
+
+**The proxy must implement `Schematic`**, or the derive no longer compiles. Derive it on the proxy,
+or implement it by hand. A generic proxy such as `into = "Raw<T>"` needs a matching bound on the
+type's own parameters. A proxy from another crate, such as `(u8, u8)`, cannot get an implementation
+because of the orphan rule: implement `Schematic` for the type itself and drop the derive.
+
+```rust
+#[derive(Schematic, Serialize, Deserialize, Clone)] // `Schematic` is new here
+struct RawColor {
+    hex: String,
+}
+
+#[derive(Schematic, Serialize, Deserialize, Clone)]
+#[serde(from = "RawColor", into = "RawColor")]
+struct Color {
+    red: u8,
+    green: u8,
+    blue: u8,
+}
+```
+
+- Any other conversion is unchanged and needs no bound: a one-sided `from`, `try_from` or `into`, and
+  a `from` or `try_from` naming another type than `into`. The type's own fields stay. One schema
+  cannot describe both directions there, and the fields may be what a direction uses. The two names
+  are compared as written, so `from = "Raw"` and `into = "self::Raw"` count as different types.
+- `Valid` errors are unchanged: they keep reporting the fields of the converted value.
+- A field of a proxy that serde writes and reads under different names documents one of them. If the
+  type's own field used the other name, that direction is no longer documented.
+
+Regenerate clients built from such a type.
 
 ---
 

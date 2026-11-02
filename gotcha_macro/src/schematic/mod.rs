@@ -729,8 +729,21 @@ pub(crate) fn handler(input: TokenStream2) -> syn::Result<TokenStream2> {
 
     let (generics, generics_single, where_clause) = param_opts.generics.split_for_impl();
 
-    let impl_stream = match param_opts.data {
-        Data::Enum(mut enum_variants) => {
+    let impl_stream = match (param_opts.data, &serde.proxy) {
+        // Both directions convert through one proxy, so it is what is on the wire and its `Schematic`
+        // documents the type. The wire table stays the type's own.
+        (data, Some(proxy)) => {
+            let wire_fields = match data {
+                Data::Enum(_) => quote! {},
+                Data::Struct(fields) => match fields.style {
+                    darling::ast::Style::Struct => named_struct::wire_fields_impl(&core, &fields.fields, true),
+                    _ if fields.fields.len() == 1 => newtype_struct::wire_fields_impl(&core, &fields.fields[0]),
+                    _ => quote! {},
+                },
+            };
+            newtype_struct::proxy_handler(&core, proxy, &schema_name, doc, wire_fields)
+        }
+        (Data::Enum(mut enum_variants), None) => {
             // A variant serde neither writes nor reads is not on the wire. One skipped in a
             // single direction stays: a branch the other direction never uses invalidates
             // nothing, while dropping it would hide a shape that direction does use.
@@ -755,7 +768,7 @@ pub(crate) fn handler(input: TokenStream2) -> syn::Result<TokenStream2> {
                 Tagging::Untagged => untagged_enum::handler(&core, schema_name.clone(), doc, enum_variants)?,
             }
         }
-        Data::Struct(fields) => {
+        (Data::Struct(fields), None) => {
             let is_tuple = matches!(fields.style, darling::ast::Style::Tuple);
             let field_count = fields.fields.len();
             // `#[serde(transparent)]` serializes its single non-skipped field; extra

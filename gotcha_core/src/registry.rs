@@ -15,6 +15,8 @@ use crate::{EnhancedSchema, Schematic};
 
 thread_local! {
     static ACTIVE: RefCell<Option<Registry>> = const { RefCell::new(None) };
+    /// The calls [`unless_reentered`] is running.
+    static RUNNING: RefCell<BTreeSet<(&'static str, &'static str)>> = const { RefCell::new(BTreeSet::new()) };
     /// Whether [`probing`] is looking into a value.
     static PROBING: Cell<bool> = const { Cell::new(false) };
 }
@@ -157,6 +159,26 @@ fn resolve_json(value: &mut Value, names: &BTreeMap<String, String>, schema: boo
         }
         _ => {}
     }
+}
+
+/// Run `call`, or return the default when the same `method` of `T` is reached again from inside it.
+///
+/// A type documented as a proxy can be contained in that proxy, and most of its methods do not pass
+/// through what ends the recursion of a component. The first call already says what is on the wire.
+#[doc(hidden)]
+pub fn unless_reentered<T: ?Sized, R: Default>(method: &'static str, call: impl FnOnce() -> R) -> R {
+    struct Finish((&'static str, &'static str));
+    impl Drop for Finish {
+        fn drop(&mut self) {
+            RUNNING.with(|running| running.borrow_mut().remove(&self.0));
+        }
+    }
+    let key = (std::any::type_name::<T>(), method);
+    if !RUNNING.with(|running| running.borrow_mut().insert(key)) {
+        return R::default();
+    }
+    let _finish = Finish(key);
+    call()
 }
 
 fn reference(name: &str) -> String {

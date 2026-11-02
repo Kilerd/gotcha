@@ -201,6 +201,11 @@ pub fn api(args: TokenStream, input_stream: TokenStream) -> TokenStream {
 /// without the tag, and its branches with `anyOf` and no `discriminator`, because serde takes the
 /// first match and the untagged branch has no tag.
 ///
+/// With `from` or `try_from` and `into` naming the same type `P`, the type is documented as the
+/// proxy `P`, which must implement `Schematic`: its component holds `P`'s schema. Any other
+/// conversion leaves the type's own fields and adds no bound, because one schema cannot describe
+/// both directions there.
+///
 /// ## Field attributes
 ///
 /// Individual fields can be annotated with `#[schematic(...)]` to enrich the
