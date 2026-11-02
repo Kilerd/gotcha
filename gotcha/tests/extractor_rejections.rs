@@ -10,7 +10,9 @@ use std::collections::HashMap;
 use gotcha::axum::body::{to_bytes, Body as AxumBody};
 use gotcha::axum::extract::{Form as AxumForm, FromRequest, FromRequestParts, Json as AxumJson, Path as AxumPath, Query as AxumQuery};
 use gotcha::axum::http::{HeaderMap, Method, Request, StatusCode};
-use gotcha::extract::{kind, CookieProvider, HeaderProvider, JsonProvider, ValidProvider};
+use gotcha::extract::{
+    kind, CookieProvider, FormProvider, HeaderProvider, JsonProvider, MultipartProvider, PathProvider, QueryProvider, TypedHeaderProvider, ValidProvider,
+};
 use gotcha::{
     api, ConfigWrapper, Cookie, CookieParam, EmptyConfig, ExtractorKind, Form, Gotcha, GotchaApp, GotchaContext, GotchaResult, GotchaRouter, Header,
     HeaderParam, Json, JsonConfig, Multipart, OpenApiEndpoints, Operable, ParameterProvider, Path, Query, QueryConfig, Responsible, Schematic, State,
@@ -439,38 +441,31 @@ async fn keyed_json(_body: KeyedJson) -> String {
     String::new()
 }
 
-/// A hand-written provider naming the built-in provider by its unit variant.
-fn json_variant() -> &'static [ExtractorKind] {
-    &[ExtractorKind::Json]
-}
-
 /// A wrapper that reports every kind of the extractor it wraps.
 fn all_of_json() -> &'static [ExtractorKind] {
     const { &[ExtractorKind::all(<Json<Payload> as ParameterProvider>::extractor_kinds)] }
 }
 
 #[test]
-fn built_in_providers_keep_reporting_their_kind_variants() {
-    assert_eq!(<Json<Payload> as ParameterProvider>::extractor_kinds(), [ExtractorKind::Json]);
-    assert_eq!(<Form<Payload> as ParameterProvider>::extractor_kinds(), [ExtractorKind::Form]);
-    assert_eq!(<Query<Filter> as ParameterProvider>::extractor_kinds(), [ExtractorKind::Query]);
-    assert_eq!(<Path<u32> as ParameterProvider>::extractor_kinds(), [ExtractorKind::Path]);
-    assert_eq!(<Multipart as ParameterProvider>::extractor_kinds(), [ExtractorKind::Multipart]);
+fn built_in_providers_report_their_keys() {
+    assert_eq!(<Json<Payload> as ParameterProvider>::extractor_kinds(), [kind::<JsonProvider>()]);
+    assert_eq!(<Form<Payload> as ParameterProvider>::extractor_kinds(), [kind::<FormProvider>()]);
+    assert_eq!(<Query<Filter> as ParameterProvider>::extractor_kinds(), [kind::<QueryProvider>()]);
+    assert_eq!(<Path<u32> as ParameterProvider>::extractor_kinds(), [kind::<PathProvider>()]);
+    assert_eq!(<Multipart as ParameterProvider>::extractor_kinds(), [kind::<MultipartProvider>()]);
     assert_eq!(
         <TypedHeader<gotcha::headers::UserAgent> as ParameterProvider>::extractor_kinds(),
-        [ExtractorKind::TypedHeader]
+        [kind::<TypedHeaderProvider>()]
     );
-    assert_eq!(<Header<RequestId> as ParameterProvider>::extractor_kinds(), [ExtractorKind::Header]);
-    assert_eq!(<Cookie<Session> as ParameterProvider>::extractor_kinds(), [ExtractorKind::Cookie]);
+    assert_eq!(<Header<RequestId> as ParameterProvider>::extractor_kinds(), [kind::<HeaderProvider>()]);
+    assert_eq!(<Cookie<Session> as ParameterProvider>::extractor_kinds(), [kind::<CookieProvider>()]);
     assert_eq!(
         <Valid<Json<Checked>> as ParameterProvider>::extractor_kinds(),
-        [ExtractorKind::Valid, ExtractorKind::Json]
+        [kind::<ValidProvider>(), kind::<JsonProvider>()]
     );
-    assert_eq!(<Valid<AxumJson<Checked>> as ParameterProvider>::extractor_kinds(), [ExtractorKind::Valid]);
-    assert_eq!(<Option<Json<Payload>> as ParameterProvider>::extractor_kinds(), [ExtractorKind::Json]);
+    assert_eq!(<Valid<AxumJson<Checked>> as ParameterProvider>::extractor_kinds(), [kind::<ValidProvider>()]);
+    assert_eq!(<Option<Json<Payload>> as ParameterProvider>::extractor_kinds(), [kind::<JsonProvider>()]);
 
-    // A key documents like its variant but is a different value.
-    assert_ne!(kind::<JsonProvider>(), ExtractorKind::Json);
     assert_eq!(kind::<JsonProvider>(), kind::<JsonProvider>());
     // Header and cookie parameters share a rejection type but are separate providers.
     assert_ne!(kind::<HeaderProvider>(), kind::<CookieProvider>());
@@ -506,7 +501,7 @@ async fn keyed_header_and_cookie(KeyedHeader(_id): KeyedHeader, Cookie(_session)
 }
 
 #[test]
-fn a_key_and_its_unit_variant_on_one_operation_document_one_provider() {
+fn a_provider_reported_twice_on_one_operation_documents_once() {
     static BOTH: Operable = Operable {
         type_name: "extractor_rejections::both",
         id: "json_body",
@@ -529,7 +524,7 @@ fn a_key_and_its_unit_variant_on_one_operation_document_one_provider() {
 }
 
 #[test]
-fn a_header_key_and_a_cookie_variant_stay_two_providers() {
+fn header_and_cookie_keys_stay_two_providers() {
     let defaults = serde_json::to_value(Gotcha::new().post("/params", keyed_header_and_cookie).into_openapi()).unwrap();
     assert_eq!(statuses(&defaults, "/params"), ["200", "400"]);
     let bad_request = &responses(&defaults, "/params")["400"];
@@ -553,7 +548,7 @@ fn a_header_key_and_a_cookie_variant_stay_two_providers() {
 }
 
 #[test]
-fn hand_built_operables_document_keys_variants_and_lists_like_the_built_in_provider() {
+fn hand_built_operables_document_keys_and_lists_like_the_built_in_provider() {
     static KEYED: Operable = Operable {
         type_name: "extractor_rejections::keyed",
         id: "json_body",
@@ -564,18 +559,6 @@ fn hand_built_operables_document_keys_variants_and_lists_like_the_built_in_provi
         security: None,
         parameters: &[<Json<Payload> as ParameterProvider>::generate],
         extractors: &[<KeyedJson as ParameterProvider>::extractor_kinds],
-        responses: <String as Responsible>::response,
-    };
-    static VARIANT: Operable = Operable {
-        type_name: "extractor_rejections::variant",
-        id: "json_body",
-        group: None,
-        summary: None,
-        description: None,
-        deprecated: false,
-        security: None,
-        parameters: &[<Json<Payload> as ParameterProvider>::generate],
-        extractors: &[json_variant],
         responses: <String as Responsible>::response,
     };
     static WRAPPED: Operable = Operable {
@@ -592,7 +575,7 @@ fn hand_built_operables_document_keys_variants_and_lists_like_the_built_in_provi
     };
     let built_in = one(operable(json_body), "/json");
     assert_eq!(statuses(&built_in, "/json"), ["200", "400", "413", "415", "422"]);
-    for op in [&KEYED, &VARIANT, &WRAPPED] {
+    for op in [&KEYED, &WRAPPED] {
         assert_eq!(one(op, "/json"), built_in, "{}", op.type_name);
     }
 }

@@ -469,7 +469,9 @@ where
 
 #[cfg(feature = "openapi")]
 mod openapi {
-    use super::{Form, Json, Multipart, Path, Query, TypedHeader};
+    use super::{
+        kind, Form, FormProvider, Json, JsonProvider, Multipart, MultipartProvider, Path, PathProvider, Query, QueryProvider, TypedHeader, TypedHeaderProvider,
+    };
     use crate::{Either, ExtractorKind, ParameterProvider, Responsible, Schematic};
 
     /// Documentation is produced by Axum's extractors, so documents do not change when a handler
@@ -488,7 +490,7 @@ mod openapi {
         }
 
         fn extractor_kinds() -> &'static [ExtractorKind] {
-            &[ExtractorKind::Json]
+            const { &[kind::<JsonProvider>()] }
         }
     }
 
@@ -501,7 +503,7 @@ mod openapi {
         }
 
         fn extractor_kinds() -> &'static [ExtractorKind] {
-            &[ExtractorKind::Path]
+            const { &[kind::<PathProvider>()] }
         }
     }
 
@@ -514,7 +516,7 @@ mod openapi {
         }
 
         fn extractor_kinds() -> &'static [ExtractorKind] {
-            &[ExtractorKind::Query]
+            const { &[kind::<QueryProvider>()] }
         }
     }
 
@@ -531,7 +533,7 @@ mod openapi {
         }
 
         fn extractor_kinds() -> &'static [ExtractorKind] {
-            &[ExtractorKind::Form]
+            const { &[kind::<FormProvider>()] }
         }
     }
 
@@ -545,7 +547,7 @@ mod openapi {
         }
 
         fn extractor_kinds() -> &'static [ExtractorKind] {
-            &[ExtractorKind::Multipart]
+            const { &[kind::<MultipartProvider>()] }
         }
     }
 
@@ -558,7 +560,7 @@ mod openapi {
         }
 
         fn extractor_kinds() -> &'static [ExtractorKind] {
-            &[ExtractorKind::TypedHeader]
+            const { &[kind::<TypedHeaderProvider>()] }
         }
     }
 

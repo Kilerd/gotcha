@@ -24,35 +24,14 @@ use crate::Schematic;
 /// extractors report none: their rejections keep Axum's plain-text response.
 ///
 /// A provider is named by [`Provider`](Self::Provider), built with `gotcha::extract::kind::<P>()`
-/// for any `gotcha::extract::RejectionProvider`; new providers use it. The unit variants name
-/// Gotcha's built-in providers and stay supported: they resolve to the same configuration as
-/// their `kind::<P>()` and document the same responses. The two are not equal as values
-/// (`ExtractorKind::Json != kind::<JsonProvider>()`), and the built-in extractors report the unit
-/// variants until a later major release switches them to keys.
+/// for any `gotcha::extract::RejectionProvider`, Gotcha's built-in providers included:
+/// `Json<T>` reports `kind::<JsonProvider>()`.
 ///
-/// This enum is `#[non_exhaustive]`: a later release may add a provider, so a `match` outside this
+/// This enum is `#[non_exhaustive]`: a later release may add a variant, so a `match` outside this
 /// crate needs a wildcard arm.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[non_exhaustive]
 pub enum ExtractorKind {
-    /// The JSON body provider. Rejections are configured with `JsonConfig`.
-    Json,
-    /// The URL-encoded form body provider. Rejections are configured with `FormConfig`.
-    Form,
-    /// The query-string provider. Rejections are configured with `QueryConfig`.
-    Query,
-    /// The path-parameter provider. Rejections are configured with `PathConfig`.
-    Path,
-    /// The multipart form provider. Rejections are configured with `MultipartConfig`.
-    Multipart,
-    /// The typed-header provider. Rejections are configured with `TypedHeaderConfig`.
-    TypedHeader,
-    /// Gotcha's typed header parameter. Rejections are configured with `HeaderConfig`.
-    Header,
-    /// Gotcha's typed cookie parameter. Rejections are configured with `CookieConfig`.
-    Cookie,
-    /// The `Valid` wrapper's validation failure. Configured with `ValidConfig`.
-    Valid,
     /// A rejection provider identified by its type. Built by `gotcha::extract::kind::<P>()`.
     Provider(ProviderKey),
     /// Every kind another extractor reports, built with [`ExtractorKind::all`].
