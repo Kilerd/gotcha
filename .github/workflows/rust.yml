@@ -120,6 +120,28 @@ jobs:
       - name: Run clippy
         run: cargo clippy --all-features --workspace -- -D warnings
 
+  msrv:
+    name: MSRV
+    runs-on: ubuntu-latest
+    env:
+      # Resolve dependency versions that support the declared `rust-version` where they exist,
+      # as a 1.89 user with the MSRV-aware resolver gets.
+      CARGO_RESOLVER_INCOMPATIBLE_RUST_VERSIONS: fallback
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Install Rust
+        # Keep in step with `rust-version` in the three published crates.
+        uses: dtolnay/rust-toolchain@1.89
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Check the published crates
+        run: |
+          cargo check -p gotcha_macro -p gotcha_core -p gotcha --all-features
+          cargo check -p gotcha_core -p gotcha --no-default-features
+
   fmt:
     name: Formatting
     runs-on: ubuntu-latest

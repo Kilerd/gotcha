@@ -102,7 +102,7 @@ let app = Gotcha::new()
 For the trait API, override `config_error_policy()` to return the same policy. A custom fallback
 can use `ConfigErrorPolicy::Fallback(factory)`, where the factory returns a `ConfigWrapper<C>`.
 Fallback applies only to startup configuration loading; eager `build_config()` and direct
-`GotchaApp::config()` calls still return errors. See the [migration guide](MIGRATION.md#unreleased-shared-startup)
+`GotchaApp::config()` calls still return errors. See the [migration guide](MIGRATION.md#04--05-shared-startup)
 for behavior changes and the trait example.
 
 ### Shutdown and lifecycle
@@ -200,9 +200,9 @@ while cleanup hooks still run. The trait API offers `bind()`, `http_shutdown_tim
 `on_shutdown(&context)` as well.
 
 Override the HTTP drain period with builder `.http_shutdown_timeout(duration)` or trait
-`http_shutdown_timeout(&self)`; see the [migration guide](MIGRATION.md#unreleased-bound-servers-and-shutdown-lifecycle).
+`http_shutdown_timeout(&self)`; see the [migration guide](MIGRATION.md#04--05-bound-servers-and-shutdown-lifecycle).
 Background tasks keep their independent grace period (builder `.task_shutdown_timeout(duration)`
-or trait `task_shutdown_timeout(&self)`); see the [task migration notes](MIGRATION.md#unreleased-owned-scheduled-tasks).
+or trait `task_shutdown_timeout(&self)`); see the [task migration notes](MIGRATION.md#04--05-owned-scheduled-tasks).
 
 ### Complex applications
 
@@ -295,7 +295,7 @@ assert_eq!(router.oneshot(request).await.unwrap().status(), StatusCode::OK);
 
 The `GotchaApp` trait is deprecated and will be removed in a later release. Applications that
 implement it can move to the builder method by method; see the
-[migration guide](MIGRATION.md#unreleased-moving-from-gotchaapp-to-the-builder).
+[migration guide](MIGRATION.md#04--05-moving-from-gotchaapp-to-the-builder).
 
 ## 📦 Installation
 
@@ -303,7 +303,7 @@ Add Gotcha to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-gotcha = "0.4"
+gotcha = "0.5"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 serde = { version = "1", features = ["derive"] }
 ```
@@ -317,7 +317,7 @@ Enable additional features as needed:
 
 ```toml
 [dependencies]
-gotcha = { version = "0.4", features = ["openapi", "prometheus", "cors", "static_files", "task"] }
+gotcha = { version = "0.5", features = ["openapi", "prometheus", "cors", "static_files", "task"] }
 ```
 
 Available features:
@@ -352,7 +352,7 @@ unannotated handlers remain executable without generated operations.
 
 Use `.route_raw(path, axum::routing::get(handler))` for native Axum method routers. Raw routes
 do not generate OpenAPI operations, even for `#[api]` handlers. See
-[the migration guide](MIGRATION.md#unreleased-documented-method-routers) for existing `.route()`
+[the migration guide](MIGRATION.md#04--05-documented-method-routers) for existing `.route()`
 calls and the changed root/prelude exports.
 
 ### Composing Route Modules
@@ -370,7 +370,7 @@ let app = Gotcha::new().nest("/api", api).merge(health);
 ```
 
 Passing a complete `Gotcha` application is a compile error. For independently configured
-applications, run each separately. See [the migration guide](MIGRATION.md#unreleased-application-and-route-composition)
+applications, run each separately. See [the migration guide](MIGRATION.md#04--05-application-and-route-composition)
 for moving existing child settings and task registrations to the top level.
 
 ### Scoping Middleware and Mounting Services
@@ -481,10 +481,10 @@ struct SendResult {
 
 Names must be nonempty and use only ASCII letters, digits, `.`, `-`, or `_`. Choose a unique
 explicit name: duplicate overrides also warn and receive distinct module-prefixed names.
-See [the migration guide](MIGRATION.md#unreleased-schema-identity-and-component-names) for details.
+See [the migration guide](MIGRATION.md#04--05-schema-identity-and-component-names) for details.
 
 Generated documents use OpenAPI 3.2.0 and JSON Schema 2020-12 semantics. See the
-[OpenAPI migration notes](MIGRATION.md#unreleased-openapi-32) for custom schemas and tooling compatibility.
+[OpenAPI migration notes](MIGRATION.md#04--05-openapi-32) for custom schemas and tooling compatibility.
 
 #### Optional and nullable fields
 
@@ -612,7 +612,7 @@ let json = serde_json::to_string_pretty(&spec).unwrap();
 ```
 
 The OpenAPI example supports `cargo run -p openapi -- --export-openapi` for a standalone JSON export.
-See [the migration guide](MIGRATION.md#unreleased-explicit-openapi-endpoints) for both APIs and
+See [the migration guide](MIGRATION.md#04--05-explicit-openapi-endpoints) for both APIs and
 middleware scope changes.
 
 Customize the document with `.openapi(|mut spec| { /* edits */ spec })` on either `Gotcha` or
@@ -620,7 +620,7 @@ Customize the document with `.openapi(|mut spec| { /* edits */ spec })` on eithe
 insertion order, then the parent's own callbacks run, once per exported or served document. All callbacks edit the
 complete document: top-level `security` is global even when set by a child. Use operation-level
 security for individual routes. Later writes win; maps and lists are not implicitly merged.
-See [the migration guide](MIGRATION.md#unreleased-openapi-transform-composition) for details.
+See [the migration guide](MIGRATION.md#04--05-openapi-transform-composition) for details.
 
 Response contracts come from HTTP return types: `Json<T>` documents JSON, `String` documents
 plain text, `Html<T>` documents HTML, and byte bodies document binary content. `Schematic` only
@@ -717,7 +717,7 @@ provider (see [Writing an extractor provider](#writing-an-extractor-provider)). 
 `request_body(...)` replaces only the body schema; the extractor that runs still contributes its
 rejections. Opt the whole application out with `.document_extractor_errors(false)` on the builder,
 `GotchaApp::document_extractor_errors`, or `GotchaRouter::document_extractor_errors`. See
-[the migration guide](MIGRATION.md#unreleased-extractor-rejection-responses-in-openapi).
+[the migration guide](MIGRATION.md#04--05-extractor-rejection-responses-in-openapi).
 
 Each extractor provider has its own rejection configuration. The defaults keep Axum's own status
 (`400`, `415`, `422`, ...) and send `{"error": "<message>"}` as JSON; a `Valid` validation failure
@@ -811,7 +811,7 @@ async fn read_item(Path(id): Path<u32>) -> Result<Json<String>, HttpError> {
 
 Use `responses(...)` to add or override individual statuses while keeping response inference;
 `drop_default` explicitly removes an inferred default. Declarations only affect documentation.
-See [the migration guide](MIGRATION.md#unreleased-http-response-contracts) for media types and
+See [the migration guide](MIGRATION.md#04--05-http-response-contracts) for media types and
 inference/override rules.
 
 Request bodies are inferred from body extractors such as `Json<T>` and `Form<T>`. When the wire

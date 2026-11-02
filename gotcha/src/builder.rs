@@ -984,7 +984,7 @@ where
     ///
     /// [`Self::app_layer`] middleware is installed after these hooks, regardless of registration
     /// order, so it also covers everything a hook mounts. Hooks do not run during
-    /// [`Self::into_openapi`], which never assembles the application.
+    /// `into_openapi` (with the `openapi` feature), which never assembles the application.
     ///
     /// ```rust,ignore
     /// use gotcha::{Gotcha, GotchaContext};

@@ -233,10 +233,10 @@ impl<State, Config> FromRef<GotchaContext<State, Config>> for crate::config::Ser
 ///
 /// Deprecated: every method of this trait has an equivalent on the builder ([`Gotcha`]), and both
 /// assemble and serve the application through the same path. Each method's documentation names its
-/// builder equivalent. The [migration guide](https://github.com/Kilerd/gotcha/blob/main/MIGRATION.md#unreleased-moving-from-gotchaapp-to-the-builder) maps them in one table and lists the
+/// builder equivalent. The [migration guide](https://github.com/Kilerd/gotcha/blob/main/MIGRATION.md#04--05-moving-from-gotchaapp-to-the-builder) maps them in one table and lists the
 /// differences to account for. The trait will be removed in a later release.
 #[deprecated(
-    note = "describe the application with the `Gotcha` builder; see https://github.com/Kilerd/gotcha/blob/main/MIGRATION.md#unreleased-moving-from-gotchaapp-to-the-builder"
+    note = "describe the application with the `Gotcha` builder; see https://github.com/Kilerd/gotcha/blob/main/MIGRATION.md#04--05-moving-from-gotchaapp-to-the-builder"
 )]
 pub trait GotchaApp: Sized + Send + Sync {
     /// The application state, shared by every handler.

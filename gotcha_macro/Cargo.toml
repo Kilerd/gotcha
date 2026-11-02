@@ -1,9 +1,11 @@
 [package]
 name = "gotcha_macro"
-description = "gotcha web framework macro"
-version = "0.4.1"
+description = "Procedural macros for the Gotcha web framework"
+version = "0.5.0"
 edition = "2021"
+rust-version = "1.89"
 license = "MIT"
+repository = "https://github.com/Kilerd/gotcha/"
 
 # docs.rs builds with every feature, so the OpenAPI layer and the rest of the optional surface
 # actually appear; `docsrs` turns on the per-item "requires feature X" badges.
