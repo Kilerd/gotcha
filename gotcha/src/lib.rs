@@ -13,8 +13,7 @@
 extern crate self as gotcha;
 
 pub use async_trait::async_trait;
-/// WebSocket upgrade and the socket itself. The frame type stays behind `ws::Message`, since
-/// [`Message`] is already the message-system trait.
+/// WebSocket upgrade and the socket itself. The frame type is `ws::Message`.
 pub use axum::extract::ws::{self, WebSocket, WebSocketUpgrade};
 use axum::extract::FromRef;
 pub use axum::extract::{Extension, State};
@@ -50,7 +49,6 @@ pub use crate::extract::{
 /// generating a `FromRef<GotchaContext<T, C>>` impl. See [`GotchaContext`].
 pub use gotcha_macro::{config, state};
 
-pub mod message;
 /// Schema core, also usable directly by libraries without the web framework.
 pub use gotcha_core;
 #[cfg(feature = "openapi")]
@@ -78,7 +76,6 @@ pub use gotcha_macro::api;
 #[cfg_attr(docsrs, doc(cfg(feature = "openapi")))]
 pub use oas;
 
-pub use crate::message::{Message, Messager};
 #[cfg(feature = "openapi")]
 #[cfg_attr(docsrs, doc(cfg(feature = "openapi")))]
 pub use crate::openapi::{OpenApiEndpoints, Operable};

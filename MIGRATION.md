@@ -1,5 +1,6 @@
 # Migration Guide
 
+- [Unreleased: Message and Messager moved out of gotcha](#unreleased-message-and-messager-moved-out-of-gotcha)
 - [Unreleased: deny_unknown_fields closes schemas](#unreleased-deny_unknown_fields-closes-schemas)
 - [Unreleased: from and into proxies document the type](#unreleased-from-and-into-proxies-document-the-type)
 - [Unreleased: moving from GotchaApp to the builder](#unreleased-moving-from-gotchaapp-to-the-builder)
@@ -27,7 +28,6 @@
 - [Unreleased: HTTP/1 is always enabled](#unreleased-http1-is-always-enabled)
 - [Unreleased: derive dependency paths](#unreleased-derive-dependency-paths)
 - [Unreleased: explicit OpenAPI endpoints](#unreleased-explicit-openapi-endpoints)
-- [Unreleased: message task handles](#unreleased-message-task-handles)
 - [Unreleased: static OpenAPI descriptors](#unreleased-static-openapi-descriptors)
 - [Unreleased: owned scheduled tasks](#unreleased-owned-scheduled-tasks)
 - [Unreleased: shared startup](#unreleased-shared-startup)
@@ -44,6 +44,181 @@
 - [Unreleased: default configuration sources](#unreleased-default-configuration-sources)
 - [0.3 → 0.4](#03--04) — **every application must edit its route paths and configuration file**
 - [0.2 → 0.3: API simplification](#02--03-api-simplification)
+
+---
+
+# Unreleased: Message and Messager moved out of gotcha
+
+`gotcha::Message`, `gotcha::Messager`, and the `gotcha::message` module are gone. `Messager` was a
+thin wrapper over `GotchaContext` that nothing in the framework used. Its `spawn` started a detached
+task that application shutdown did not wait for, so the task could outlive the drain and race
+`on_shutdown` hooks. WebSocket frames are still `gotcha::ws::Message`, and `gotcha::async_trait`
+stays exported.
+
+To keep the same API, add this module to your own crate. It needs `tokio` with the `rt` feature,
+which `rt-multi-thread` (used by `#[tokio::main]`) already enables. An application rarely calls every
+method, and a binary crate warns about the others, so the module allows `dead_code`; delete what you
+do not use and that line with it.
+
+```rust
+// src/message.rs
+//! Typed commands over the application context. `send` runs in the caller's future; `spawn` starts
+//! a detached Tokio task that application shutdown does not wait for.
+#![allow(dead_code)]
+
+use gotcha::axum::extract::FromRef;
+use gotcha::{async_trait, GotchaContext};
+use tokio::task::JoinHandle;
+
+#[async_trait]
+pub trait Message<S, C>: Send + 'static
+where
+    S: Clone + Send + Sync + 'static,
+    C: Clone + Send + Sync + 'static,
+{
+    type Output: Send + 'static;
+
+    async fn handle(self, messager: Messager<S, C>) -> Self::Output;
+}
+
+pub struct Messager<S, C> {
+    context: GotchaContext<S, C>,
+}
+
+impl<S: Clone, C> Clone for Messager<S, C> {
+    fn clone(&self) -> Self {
+        Self { context: self.context.clone() }
+    }
+}
+
+impl<S, C> Messager<S, C>
+where
+    S: Clone + Send + Sync + 'static,
+    C: Clone + Send + Sync + 'static,
+{
+    pub fn new(context: GotchaContext<S, C>) -> Self {
+        Self { context }
+    }
+
+    pub fn context(&self) -> &GotchaContext<S, C> {
+        &self.context
+    }
+
+    pub fn state(&self) -> &S {
+        &self.context.state
+    }
+
+    pub async fn send<M: Message<S, C>>(&self, message: M) -> M::Output {
+        message.handle(self.clone()).await
+    }
+
+    pub fn spawn<M: Message<S, C>>(&self, message: M) -> JoinHandle<M::Output> {
+        let messager = self.clone();
+        tokio::spawn(async move { message.handle(messager).await })
+    }
+}
+
+impl<S: Clone, C> FromRef<GotchaContext<S, C>> for Messager<S, C> {
+    fn from_ref(context: &GotchaContext<S, C>) -> Self {
+        Self { context: context.clone() }
+    }
+}
+```
+
+Then change the import. `#[async_trait] impl Message<S, C> for ..` blocks, `State<Messager<S, C>>`
+extractors, and `send` and `spawn` calls compile unchanged:
+
+```diff
+-use gotcha::{Message, Messager};
++use crate::message::{Message, Messager};
+```
+
+Compared to 0.4.1, this `spawn` returns `JoinHandle<M::Output>` and accepts any output instead of only
+`()`. Calls ending in a semicolon compile as they are; code that needs `()` can write
+`drop(messager.spawn(command));`. Dropping the handle detaches the task. Await it to observe the
+output or a `JoinError`, or call `abort()` and then await it to cancel.
+
+To have a command share a scheduled execution's lifetime, await `messager.send(command)` inside that
+execution. A command that spawns further tasks must manage those tasks separately.
+
+A copied `spawn` still sits outside application shutdown. For work that must finish before cleanup
+hooks run, hand it to a consumer registered with `scheduler.spawn`, which the application joins
+within `task_shutdown_timeout` and aborts at the deadline.
+
+HTTP connections and tasks drain at the same time, so the consumer can stop while a handler is still
+running, and a job that handler enqueues afterwards is never consumed. The consumer below closes the
+queue before its last drain: `send` fails from then on, and every `send` that succeeded is handled
+unless the deadline aborts the consumer first. The handler has to check that result. Ignoring it and
+answering `200` loses the job, so this one answers `503`.
+
+This covers one queue. Stages that feed each other are not covered: if a later stage closes first, it
+refuses jobs the stage before it had already accepted, and no client is left to tell. Stop such
+stages in order yourself, so that each one keeps receiving until the stage before it has finished.
+
+Together with the module above, this is a complete application. It needs `tokio` with the `macros`,
+`rt-multi-thread`, and `sync` features. See [`examples/message`](examples/message/src/main.rs) for
+the same pattern with nested commands.
+
+```rust
+// src/main.rs
+mod message;
+
+use gotcha::axum::http::StatusCode;
+use gotcha::{async_trait, EmptyConfig, Gotcha, GotchaResult, State};
+use message::{Message, Messager};
+use tokio::sync::mpsc;
+
+#[gotcha::state]
+#[derive(Clone)]
+struct AppState {
+    jobs: mpsc::UnboundedSender<Greet>,
+}
+
+struct Greet {
+    name: String,
+}
+
+#[async_trait]
+impl Message<AppState, EmptyConfig> for Greet {
+    type Output = ();
+    async fn handle(self, _messager: Messager<AppState, EmptyConfig>) {
+        println!("Hello, {}!", self.name);
+    }
+}
+
+async fn enqueue(State(state): State<AppState>) -> StatusCode {
+    match state.jobs.send(Greet { name: "world".into() }) {
+        Ok(()) => StatusCode::ACCEPTED,
+        Err(_) => StatusCode::SERVICE_UNAVAILABLE,
+    }
+}
+
+#[tokio::main]
+async fn main() -> GotchaResult<()> {
+    let (jobs, mut queue) = mpsc::unbounded_channel::<Greet>();
+    Gotcha::from_state(AppState { jobs })
+        .get("/", enqueue)
+        .tasks(move |scheduler| {
+            scheduler.spawn("commands", |ctx| async move {
+                let messager = Messager::new(ctx.clone());
+                let shutdown = ctx.shutdown();
+                loop {
+                    tokio::select! {
+                        _ = shutdown.cancelled() => break,
+                        Some(command) = queue.recv() => messager.send(command).await,
+                    }
+                }
+                // Refuse new jobs and finish the queued ones; cleanup hooks run after this returns.
+                queue.close();
+                while let Some(command) = queue.recv().await {
+                    messager.send(command).await;
+                }
+            });
+        })
+        .run()
+        .await
+}
+```
 
 ---
 
@@ -1082,46 +1257,6 @@ It prints JSON and exits without starting the application.
 
 ---
 
-# Unreleased: message task handles
-
-`Message` and `Messager` remain available in the same module and root exports, without a feature
-flag. They provide a typed command convention and application context, rather than a queue or
-transport. `send` still executes directly in the caller's future; its output (including application
-errors), panic, and cancellation remain at that boundary.
-
-`Messager::spawn` now returns `tokio::task::JoinHandle<M::Output>` and accepts any message output,
-including `Result<T, E>`. Previously it only accepted `Output = ()` and discarded the handle.
-
-```rust,no_run
-# use gotcha::{Message, Messager};
-# async fn example<M: Message<(), (), Output = Result<u32, std::io::Error>>>(
-#     messager: Messager<(), ()>, command: M,
-# ) -> Result<(), Box<dyn std::error::Error>> {
-let task = messager.spawn(command);
-let output = task.await?; // Task panic/cancellation is a JoinError.
-let value = output?;     // Application errors stay in the message's Result.
-# let _ = value;
-# Ok(())
-# }
-```
-
-Existing calls with a semicolon still compile. Code requiring a `()` return, such as a function
-ending in `messager.spawn(command)` without a semicolon or a stored function pointer, must adapt
-to the new return type. To explicitly keep the previous detached behavior, use
-`drop(messager.spawn(command));`.
-
-Retaining a handle allows joining or aborting; it does **not** enable automatic cancellation on
-drop. Dropping it, including when its owning future is cancelled, detaches the task and loses its
-result. To cancel, call `task.abort()` and then `task.await` to observe completion. Abort requires
-the task to yield and can race with normal completion; already performed side effects remain.
-
-These tasks are not registered with the application's shutdown or scheduler ownership. Await
-`messager.send(command)` inside a scheduled execution when the command should share that execution's
-lifetime. Commands that spawn further tasks must manage them separately. No queue, retry, or extra
-task has been introduced: `spawn` returns the handle from its existing `tokio::spawn` call.
-
----
-
 # Unreleased: static OpenAPI descriptors
 
 `#[api]` keeps its existing syntax and OpenAPI behavior. Its generated `Operable` now stores
@@ -1223,7 +1358,8 @@ one second after it, shutdown names the task in a warning and continues without 
 waits for that thread when it is dropped. Cleanup hooks can overlap a `Drop` that takes longer than
 that second. A task that blocks right after a timer woke it can stall the runtime itself, so that
 shutdown does not start until it stops blocking; move blocking work to
-`tokio::task::spawn_blocking`. Tasks explicitly detached by application code (including `Messager::spawn`) remain outside this ownership.
+`tokio::task::spawn_blocking`. Tasks explicitly detached by application code (`tokio::spawn`) remain
+outside this ownership.
 
 Single-execution panics are logged and the schedule continues, including a panic while constructing
 the execution future. Interval tasks retain their existing immediate first tick and non-overlapping
@@ -1309,7 +1445,7 @@ that depended on initializing state before a bind attempt must account for the n
 # Unreleased: runtime type bounds
 
 Initialized values no longer have to implement loading or default-construction traits just to
-be stored in a context, extracted by handlers, or used by messages and scheduled tasks.
+be stored in a context, extracted by handlers, or used by scheduled tasks.
 
 - Use `Gotcha::from_state(value)` for state without `Default` and automatic empty configuration.
 - Use `Gotcha::from_context(GotchaContext::new(state, config))` when both values are already ready.
@@ -1920,7 +2056,7 @@ Typed fields (numbers, booleans) are now parsed from the environment string inst
 
 ## 5. The `message` feature is gone
 
-The message system is always available. Drop it from your feature list:
+The message system is always available in 0.4 (it has since [moved out of gotcha](#unreleased-message-and-messager-moved-out-of-gotcha)). Drop it from your feature list:
 
 ```toml
 # before
