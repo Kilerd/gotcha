@@ -1,6 +1,9 @@
 //! Work registered with `TaskScheduler::spawn` joins the application's lifecycle. Nothing here
 //! needs the `task` feature, so these also run in the builds without it.
 
+// These tests also cover `GotchaApp`, which stays supported until it is removed.
+#![allow(deprecated)]
+
 use gotcha::axum::http::StatusCode;
 use gotcha::{ConfigWrapper, Gotcha, GotchaApp, GotchaContext, GotchaError, GotchaResult, GotchaRouter, ServerConfig, State, TaskScheduler};
 use std::future::Future;

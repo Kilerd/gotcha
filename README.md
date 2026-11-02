@@ -293,8 +293,9 @@ assert_eq!(router.oneshot(request).await.unwrap().status(), StatusCode::OK);
 # Ok(()) }
 ```
 
-Applications that implement the `GotchaApp` trait can move to the builder method by method; see
-the [migration guide](MIGRATION.md#unreleased-moving-from-gotchaapp-to-the-builder).
+The `GotchaApp` trait is deprecated and will be removed in a later release. Applications that
+implement it can move to the builder method by method; see the
+[migration guide](MIGRATION.md#unreleased-moving-from-gotchaapp-to-the-builder).
 
 ## 📦 Installation
 

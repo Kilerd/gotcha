@@ -1,5 +1,8 @@
 //! Route-scoped middleware, nested services, and the context-aware finish hook.
 
+// These tests also cover `GotchaApp`, which stays supported until it is removed.
+#![allow(deprecated)]
+
 use std::convert::Infallible;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;

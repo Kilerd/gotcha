@@ -1,5 +1,8 @@
 //! Binding before serving, shutdown tokens in the context, bounded HTTP draining, and cleanup hooks.
 
+// These tests also cover `GotchaApp`, which stays supported until it is removed.
+#![allow(deprecated)]
+
 use std::convert::Infallible;
 use std::future::Future;
 use std::net::SocketAddr;

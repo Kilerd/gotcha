@@ -418,7 +418,9 @@ Regenerate clients built from such a type.
 # Unreleased: moving from GotchaApp to the builder
 
 Every `GotchaApp` method now has a `Gotcha` builder equivalent, so an application can be described
-with the builder alone. Nothing changes for existing trait applications. The table maps each method;
+with the builder alone. **`GotchaApp` is deprecated** and will be removed in a later release. Until
+then trait applications keep working unchanged, with a deprecation warning; a crate that denies
+warnings needs `#[allow(deprecated)]` until it migrates. The table maps each method;
 [the differences below](#differences-to-account-for) matter when moving an application over.
 
 | `GotchaApp` | `Gotcha` builder |

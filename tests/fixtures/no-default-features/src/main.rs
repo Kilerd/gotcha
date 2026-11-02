@@ -1,3 +1,6 @@
+// The trait entry point stays covered until `GotchaApp` is removed.
+#![allow(deprecated)]
+
 use gotcha::{ConfigWrapper, EmptyConfig, Gotcha, GotchaApp, GotchaContext, GotchaResult, GotchaRouter, Json, Schematic, Valid, Validate};
 use serde::Deserialize;
 

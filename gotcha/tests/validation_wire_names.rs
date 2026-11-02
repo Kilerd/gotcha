@@ -1,5 +1,8 @@
 //! `Valid` reports validation errors under serde's wire names, end to end through a request.
 
+// These tests also cover `GotchaApp`, which stays supported until it is removed.
+#![allow(deprecated)]
+
 use std::collections::HashMap;
 
 use gotcha::axum::body::{to_bytes, Body};

@@ -19,7 +19,9 @@ use tracing::level_filters::LevelFilter;
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::{fmt, EnvFilter};
 
-use crate::{ConfigErrorPolicy, ConfigWrapper, GotchaApp, GotchaContext, GotchaError, GotchaResult, ServerConfig};
+#[allow(deprecated)]
+use crate::GotchaApp;
+use crate::{ConfigErrorPolicy, ConfigWrapper, GotchaContext, GotchaError, GotchaResult, ServerConfig};
 
 /// How long HTTP connections may drain before their sockets are closed.
 pub(crate) const DEFAULT_HTTP_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(30);
@@ -628,8 +630,11 @@ fn is_connection_error(error: &io::Error) -> bool {
 }
 
 #[cfg(test)]
+#[allow(deprecated)] // Both application APIs are covered until `GotchaApp` is removed.
 mod tests;
 
+// The trait adapters stay until `GotchaApp` is removed.
+#[allow(deprecated)]
 impl<A> Application for &A
 where
     A: GotchaApp,
@@ -683,6 +688,7 @@ where
 /// server's signal and cleanup driver.
 pub(crate) struct OwnedApp<A>(pub(crate) A);
 
+#[allow(deprecated)]
 impl<A> Application for OwnedApp<A>
 where
     A: GotchaApp + 'static,

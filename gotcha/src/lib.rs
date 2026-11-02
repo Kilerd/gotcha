@@ -231,8 +231,13 @@ impl<State, Config> FromRef<GotchaContext<State, Config>> for crate::config::Ser
 
 /// The trait API: implement it to describe an application, then call `run()`.
 ///
-/// The builder ([`Gotcha`]) is the simpler alternative; both assemble the router through the same
-/// path, so they behave identically.
+/// Deprecated: every method of this trait has an equivalent on the builder ([`Gotcha`]), and both
+/// assemble and serve the application through the same path. Each method's documentation names its
+/// builder equivalent. The [migration guide](https://github.com/Kilerd/gotcha/blob/main/MIGRATION.md#unreleased-moving-from-gotchaapp-to-the-builder) maps them in one table and lists the
+/// differences to account for. The trait will be removed in a later release.
+#[deprecated(
+    note = "describe the application with the `Gotcha` builder; see https://github.com/Kilerd/gotcha/blob/main/MIGRATION.md#unreleased-moving-from-gotchaapp-to-the-builder"
+)]
 pub trait GotchaApp: Sized + Send + Sync {
     /// The application state, shared by every handler.
     type State: Clone + Send + Sync + 'static;
@@ -264,6 +269,7 @@ pub trait GotchaApp: Sized + Send + Sync {
     /// Startup is strict by default. Override to opt into a fallback after a configuration error.
     /// This applies to `run()`, including errors returned by a custom `config()` implementation.
     /// Direct calls to `config()` still return their loading errors.
+    /// [`Gotcha::config_error_policy`] is the builder equivalent.
     fn config_error_policy(&self) -> ConfigErrorPolicy<Self::Config> {
         ConfigErrorPolicy::Strict
     }
@@ -278,7 +284,7 @@ pub trait GotchaApp: Sized + Send + Sync {
     ///
     /// The future is polled on the serving task, so it must not block the thread: blocking work
     /// starves the server it is meant to stop. Use an async primitive such as
-    /// [`tokio::sync::Notify`] or a channel.
+    /// [`tokio::sync::Notify`] or a channel. [`Gotcha::shutdown_signal`] is the builder equivalent.
     fn shutdown_signal(&self) -> impl std::future::Future<Output = ()> + Send {
         crate::startup::shutdown_signal()
     }
@@ -288,6 +294,7 @@ pub trait GotchaApp: Sized + Send + Sync {
     /// not track after the upgrade. At the deadline, remaining sockets are shut down at the OS
     /// level, handlers get up to one second to observe the closure, and then shutdown continues.
     /// This is independent of, and runs concurrently with, `task_shutdown_timeout()`.
+    /// [`Gotcha::http_shutdown_timeout`] is the builder equivalent.
     fn http_shutdown_timeout(&self) -> std::time::Duration {
         crate::startup::DEFAULT_HTTP_SHUTDOWN_TIMEOUT
     }
@@ -302,6 +309,7 @@ pub trait GotchaApp: Sized + Send + Sync {
     /// A panicking hook is re-raised to the caller of `run()` / `serve()` after the remaining
     /// cleanup hooks have run. A hook that never resolves blocks shutdown; there is no timeout
     /// around application cleanup. Cancelling the serving future aborts a running hook.
+    /// [`Gotcha::on_shutdown`] is the builder equivalent.
     fn on_shutdown(&self, _context: &GotchaContext<Self::State, Self::Config>) -> impl std::future::Future<Output = ()> + Send {
         async {}
     }
@@ -310,17 +318,21 @@ pub trait GotchaApp: Sized + Send + Sync {
     /// requested. Defaults to 30 seconds. At the deadline, remaining tasks are aborted and get up
     /// to one second to stop; see [`RunningTasks::shutdown`].
     /// This runs concurrently with HTTP request draining.
+    /// [`Gotcha::task_shutdown_timeout`] is the builder equivalent.
     fn task_shutdown_timeout(&self) -> std::time::Duration {
         crate::task::DEFAULT_SHUTDOWN_TIMEOUT
     }
 
-    /// Install the tracing subscriber. The default reads `RUST_LOG`.
-    /// [`Gotcha::with_default_logger`] installs the same subscriber on the builder.
+    /// Install the tracing subscriber. The default, [`default_logger`], reads `RUST_LOG`.
+    /// [`Gotcha::with_default_logger`] installs the same subscriber on the builder, and
+    /// [`Gotcha::logger`] installs another one.
     fn logger(&self) -> GotchaResult<()> {
         startup::default_logger()
     }
 
     /// Register the application's routes.
+    /// The builder registers them with its route methods, such as [`Gotcha::get`] and
+    /// [`Gotcha::route`], or with [`Gotcha::routes`] and the same body.
     fn routes(&self, router: GotchaRouter<GotchaContext<Self::State, Self::Config>>) -> GotchaRouter<GotchaContext<Self::State, Self::Config>>;
 
     /// Build the application state, given the loaded configuration.
@@ -336,6 +348,7 @@ pub trait GotchaApp: Sized + Send + Sync {
 
     /// Select the application's documentation endpoints. Defaults to `None` (disabled).
     /// Return `Some(OpenApiEndpoints::default())` to enable the standard JSON and UI paths.
+    /// [`Gotcha::openapi_endpoints`] and [`Gotcha::with_openapi`] are the builder equivalents.
     #[cfg(feature = "openapi")]
     fn openapi_endpoints(&self) -> Option<OpenApiEndpoints> {
         None
@@ -349,6 +362,7 @@ pub trait GotchaApp: Sized + Send + Sync {
     /// from the calling crate's Cargo metadata:
     ///
     /// ```rust,no_run
+    /// # #![allow(deprecated)]
     /// # #[cfg(feature = "openapi")]
     /// # {
     /// use gotcha::{ConfigWrapper, EmptyConfig, GotchaApp, GotchaResult};
@@ -376,6 +390,7 @@ pub trait GotchaApp: Sized + Send + Sync {
     /// `app.routes(GotchaRouter::default()).openapi_info(app.openapi_info()).into_openapi()`.
     /// `Info` describes the whole application, so nested and merged routers do not contribute
     /// one. `.openapi(..)` transforms run afterwards and can still override it.
+    /// [`Gotcha::openapi_info`] is the builder equivalent.
     #[cfg(feature = "openapi")]
     fn openapi_info(&self) -> oas::Info {
         crate::openapi::default_info()
@@ -418,10 +433,11 @@ pub trait GotchaApp: Sized + Send + Sync {
     /// Rejection responses for the extractors this application uses.
     ///
     /// The default is every provider's default handler. Override it and use
-    /// [`ExtractorConfigs::set`] to replace one provider:
-    /// [`Gotcha::extractor_config`] is the builder equivalent.
+    /// [`ExtractorConfigs::set`] to replace one provider. [`Gotcha::extractor_configs`] is the
+    /// builder equivalent, and [`Gotcha::extractor_config`] sets one provider.
     ///
     /// ```rust,no_run
+    /// # #![allow(deprecated)]
     /// use gotcha::{ConfigWrapper, EmptyConfig, ErrorBody, ExtractorConfigs, GotchaApp, GotchaContext, GotchaResult, GotchaRouter, JsonConfig};
     ///
     /// struct App;
@@ -451,6 +467,8 @@ pub trait GotchaApp: Sized + Send + Sync {
     /// or call `finish_router`. Each call creates and consumes a fresh route definition,
     /// applying its transforms once, as HTTP documentation assembly does. Route registration
     /// and user transforms still execute, so their own side effects remain the caller's concern.
+    /// The builder equivalent is [`Gotcha::into_openapi`] on a freshly built application, since a
+    /// builder is consumed by its export.
     #[cfg(feature = "openapi")]
     fn openapi_document(&self) -> oas::OpenAPIV3 {
         self.routes(GotchaRouter::default())
@@ -472,6 +490,8 @@ pub trait GotchaApp: Sized + Send + Sync {
     /// For example, return `router.layer(auth)` to protect every endpoint. This hook runs once
     /// in the default `build_router` implementation and is not called during document export.
     /// Routes added here use native Axum routing and are not included in OpenAPI metadata.
+    /// [`Gotcha::finish_router`] is the builder equivalent, and [`Gotcha::try_finish_router`]
+    /// registers one that can fail.
     fn finish_router(&self, router: axum::Router, _context: &GotchaContext<Self::State, Self::Config>) -> axum::Router {
         router
     }
@@ -512,7 +532,7 @@ pub trait GotchaApp: Sized + Send + Sync {
     /// State initialization and handlers receive the effective address, including the port chosen
     /// for port 0. Binding failure does not initialize state or register background tasks.
     /// For configuration without `Deserialize`, assemble an explicit context using
-    /// [`Self::build_router`] or [`Gotcha::from_context`].
+    /// [`Self::build_router`] or [`Gotcha::from_context`]. [`Gotcha::run`] is the builder equivalent.
     fn run(self) -> impl std::future::Future<Output = GotchaResult<()>> + Send
     where
         Self::Config: for<'de> Deserialize<'de>,
@@ -528,6 +548,7 @@ pub trait GotchaApp: Sized + Send + Sync {
     /// cleanup hooks. Dropping the result without serving releases the port without running
     /// cleanup. Requires `Self: 'static` because the bound server erases the application into
     /// its signal and cleanup driver; use [`Self::run`] for applications that borrow external data.
+    /// [`Gotcha::bind`] is the builder equivalent.
     fn bind(self) -> impl std::future::Future<Output = GotchaResult<BoundServer>> + Send
     where
         Self: 'static,

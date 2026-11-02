@@ -1,5 +1,8 @@
 //! Per-extractor rejection defaults, overrides, and OpenAPI components.
 
+// These tests also cover `GotchaApp`, which stays supported until it is removed.
+#![allow(deprecated)]
+
 use gotcha::axum::body::{to_bytes, Body};
 use gotcha::axum::http::{Request, StatusCode};
 use gotcha::axum::response::IntoResponse;

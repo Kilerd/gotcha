@@ -1,4 +1,6 @@
 #![cfg(feature = "openapi")]
+// These tests also cover `GotchaApp`, which stays supported until it is removed.
+#![allow(deprecated)]
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
