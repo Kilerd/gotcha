@@ -22,7 +22,7 @@ pub(crate) fn variant_branch(core: &TokenStream2, variant: ParameterEnumVariantO
 
     match variant.style() {
         darling::ast::Style::Struct => {
-            let object = crate::schematic::named_variant_object(core, None, variant.fields.fields, true);
+            let object = crate::schematic::named_variant_object(core, None, variant.fields.fields, true, variant.serde.deny_unknown_fields);
             quote! {
                 {
                     let mut variant_object = #object;

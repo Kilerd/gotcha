@@ -35,6 +35,13 @@ pub(crate) fn handler(
 
             let variant_string = variant.serde_name();
             let variant_annotations = variant.variant_customizations(core);
+            let deny_unknown_fields = variant.serde.deny_unknown_fields;
+            // serde also rejects unknown keys next to the tag and the content.
+            let closed = deny_unknown_fields.then(|| {
+                quote! {
+                    variant_object.insert("additionalProperties".to_string(), #core::serde_json::Value::Bool(false));
+                }
+            });
 
             let tag_enum = quote! {
                 let mut tag_enum: ::std::collections::HashMap<String, #core::serde_json::Value> = ::std::collections::HashMap::new();
@@ -44,7 +51,7 @@ pub(crate) fn handler(
 
             match variant.style() {
                 darling::ast::Style::Struct => {
-                    let content = crate::schematic::named_variant_object(core, None, variant.fields.fields, false);
+                    let content = crate::schematic::named_variant_object(core, None, variant.fields.fields, false, deny_unknown_fields);
                     quote! {
                         {
                             #tag_enum
@@ -57,6 +64,7 @@ pub(crate) fn handler(
                             variant_object.insert("type".to_string(), #core::serde_json::to_value("object").unwrap());
                             variant_object.insert("properties".to_string(), #core::serde_json::to_value(properties).unwrap());
                             variant_object.insert("required".to_string(), #core::serde_json::to_value(vec![#tag_name_str, #content_name_str]).unwrap());
+                            #closed
                             #( #variant_annotations )*
                             variant_object
                         }
@@ -74,6 +82,7 @@ pub(crate) fn handler(
                             variant_object.insert("type".to_string(), #core::serde_json::to_value("object").unwrap());
                             variant_object.insert("properties".to_string(), #core::serde_json::to_value(properties).unwrap());
                             variant_object.insert("required".to_string(), #core::serde_json::to_value(vec![#tag_name_str]).unwrap());
+                            #closed
                             #( #variant_annotations )*
                             variant_object
                         }
@@ -110,6 +119,7 @@ pub(crate) fn handler(
                             variant_object.insert("type".to_string(), #core::serde_json::to_value("object").unwrap());
                             variant_object.insert("properties".to_string(), #core::serde_json::to_value(properties).unwrap());
                             variant_object.insert("required".to_string(), #core::serde_json::to_value(vec![#tag_name_str, #content_name_str]).unwrap());
+                            #closed
                             #( #variant_annotations )*
                             variant_object
                         }
@@ -164,12 +174,17 @@ pub(crate) fn handler(
         }
 
         fn flatten_schema() -> Option<#core::serde_json::Value> {
+            // A closed branch's `additionalProperties` would also constrain the fields the parent
+            // declares next to the flattened enum, so it is dropped here.
             let flattening = true;
-            let branches: Vec<::std::collections::HashMap<String, #core::serde_json::Value>> = vec![
+            let mut branches: Vec<::std::collections::HashMap<String, #core::serde_json::Value>> = vec![
                 #(
                     #variants_codegen,
                 )*
             ];
+            for branch in &mut branches {
+                branch.remove("additionalProperties");
+            }
 
             let mut obj: ::std::collections::HashMap<String, #core::serde_json::Value> = ::std::collections::HashMap::new();
             obj.insert(#union_keyword.to_string(), #core::serde_json::to_value(branches).unwrap());

@@ -1,6 +1,7 @@
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 
+use crate::schematic::serde_model::{SerdeContainer, Tagging};
 use crate::schematic::ParameterStructFieldOpt;
 
 /// The `wire_fields` table of a named struct.
@@ -51,9 +52,27 @@ pub(crate) fn wire_fields_impl(core: &TokenStream2, fields: &[ParameterStructFie
 }
 
 pub(crate) fn handler(
-    core: &TokenStream2, ident_string: String, doc: TokenStream2, fields: darling::ast::Fields<ParameterStructFieldOpt>, container_default: bool,
-    tag: Option<(&str, &str)>, reads_another_type: bool,
+    core: &TokenStream2, ident_string: String, doc: TokenStream2, fields: darling::ast::Fields<ParameterStructFieldOpt>, container: &SerdeContainer,
+    tag: Option<(&str, &str)>,
 ) -> syn::Result<TokenStream2> {
+    // `deny_unknown_fields` closes the object. A flattened field keeps it open, by not taking the
+    // path that adds this: serde documents the combination as unsupported, and a closed object
+    // would reject the flattened fields of an `allOf` sibling. So does what leaves a key out of the
+    // schema that serde writes or reads: a field skipped in one direction, a field with different
+    // names in each, and the tag of a struct, which serde writes and rejects when reading it.
+    let closes = container.closes_objects()
+        && !matches!(container.tagging, Tagging::Internal(_))
+        && !fields
+            .fields
+            .iter()
+            .any(|field| field.serde.skip_serializing != field.serde.skip_deserializing || field.serde.has_split_name());
+    let closed = closes.then(|| {
+        quote! {
+            schema.schema.extras.insert("additionalProperties".to_string(), #core::serde_json::Value::Bool(false));
+        }
+    });
+    let wire_fields = wire_fields_impl(core, &fields.fields, container.reads_another_type);
+
     // `#[serde(tag = "..")]`: serde writes the tag next to the fields and ignores it when reading,
     // so this struct's own schema documents it without requiring it. It stays out of `fields()`, so
     // it is neither a query or path parameter nor part of a type that flattens this one. A field can
@@ -70,7 +89,6 @@ pub(crate) fn handler(
     let mut flatten_fields_stream: Vec<TokenStream2> = Vec::new();
     let mut flatten_schema_stream: Vec<TokenStream2> = Vec::new();
     let mut flatten_map_stream: Vec<TokenStream2> = Vec::new();
-    let wire_fields = wire_fields_impl(core, &fields.fields, reads_another_type);
 
     for field in fields.fields.into_iter() {
         // `skip` and `skip_deserializing` fields never arrive on the wire, so they get no schema
@@ -111,7 +129,7 @@ pub(crate) fn handler(
             let field_name = field.serde.schema_name();
             // Presence and nullability come from the serde attributes already on the field, so
             // the schema matches what deserialization requires and serialization writes.
-            let presence = field.serde.presence(&field_ty, container_default);
+            let presence = field.serde.presence(&field_ty, container.default);
             let schema_ty = presence.schema_type;
             let required_override = match presence.required {
                 Some(required) => quote! { field_schema.required = #required; },
@@ -219,6 +237,7 @@ pub(crate) fn handler(
             #own_tag
             schema.schema.extras.insert("properties".to_string(), #core::serde_json::to_value(properties).unwrap());
             schema.schema.extras.insert("required".to_string(), #core::serde_json::to_value(required_fields).unwrap());
+            #closed
             schema
         }
     };

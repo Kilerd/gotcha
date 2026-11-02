@@ -49,7 +49,7 @@ pub(crate) fn handler(
 
             match variant.style() {
                 darling::ast::Style::Struct => {
-                    let object = crate::schematic::named_variant_object(core, Some((tag_name_str, &varient_string)), variant.fields.fields, true);
+                    let object = crate::schematic::named_variant_object(core, Some((tag_name_str, &varient_string)), variant.fields.fields, true, variant.serde.deny_unknown_fields);
                     quote! {
                         let mut variant_object = #object;
                         variant_object.insert("title".to_string(), #core::serde_json::to_value(#varient_string).expect("cannot convert title to value"));

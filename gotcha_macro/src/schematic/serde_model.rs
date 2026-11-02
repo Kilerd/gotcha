@@ -98,6 +98,12 @@ pub(crate) struct SerdeContainer {
 }
 
 impl SerdeContainer {
+    /// Whether `deny_unknown_fields` decides what serde writes and reads. A conversion replaces
+    /// them with another type, whose keys this one's schema cannot speak for.
+    pub(crate) fn closes_objects(&self) -> bool {
+        self.deny_unknown_fields && !self.converts
+    }
+
     pub(crate) fn from_input(input: &syn::DeriveInput) -> Self {
         with_context(|cx| {
             let parsed = attr::Container::from_ast(cx, input);
@@ -137,6 +143,8 @@ pub(crate) struct SerdeVariant {
     pub(crate) skipped: bool,
     /// `#[serde(untagged)]` on the variant: it is written without the enum's tag.
     pub(crate) untagged: bool,
+    /// The enum's `deny_unknown_fields` applies to the fields of this variant.
+    pub(crate) deny_unknown_fields: bool,
 }
 
 impl SerdeVariant {
@@ -158,6 +166,7 @@ impl SerdeVariant {
                 schema_name: schema_name(name.serialize_name(), name.deserialize_name(), common),
                 skipped: parsed.skip_serializing() && parsed.skip_deserializing(),
                 untagged: parsed.untagged(),
+                deny_unknown_fields: container.closes_objects(),
             };
             (serde, CaseRules::new(parsed.rename_all_rules()).or(container.rename_all_fields))
         })
@@ -247,6 +256,11 @@ impl SerdeField {
     /// it is the key a client actually sent.
     pub(crate) fn wire_name(&self) -> &str {
         &self.wire_name
+    }
+
+    /// Whether serde writes and reads the field under different names, so the schema leaves one out.
+    pub(crate) fn has_split_name(&self) -> bool {
+        !self.skipped() && self.serialize_name != self.wire_name
     }
 
     /// Whether serde may write or read the field under `name`, through an `alias` too.
