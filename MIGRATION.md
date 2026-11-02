@@ -144,8 +144,8 @@ What changes:
   loading error, and so is a key holding different types in two layers: `[db]` in `application.toml`
   with `db = "..."` in `local.toml` fails with `merge fail, path=$.db`, though both files are valid.
   The strict policy stops startup on these errors.
-- **A fallback policy can now drop added files.** `ConfigErrorPolicy` still replaces the whole
-  configuration after any loading error, and these errors now count. With an invalid
+- **A fallback policy drops added files.** `ConfigErrorPolicy` replaces the whole configuration
+  after any loading error, including errors in the automatic sources. With an invalid
   `application.toml`, `.with_optional_config("local.toml")` under `fallback_to_default()` does not
   load `local.toml`: it falls back to full defaults (port 3000, empty application settings), with
   only a warning in the log.
@@ -667,8 +667,8 @@ writes nor reads.
 
 `gotcha`, `gotcha_core`, and `gotcha_macro` declare `rust-version = "1.89"`, and CI checks
 them with Rust 1.89. With an older compiler, Cargo refuses to build them and names the required
-version. The default features need 1.89 through `uuid`; `gotcha_macro` on its own needs at
-least 1.88, because it now depends on darling 0.23.
+version. The default features need 1.89 through `uuid`. `gotcha_macro` also moved to darling
+0.23, which by itself would need 1.88.
 
 ---
 
