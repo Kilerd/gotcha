@@ -237,6 +237,20 @@ where
     );
 }
 
+/// Assert serde and `T`'s generated schema both reject `instance`.
+///
+/// Validation is lenient: a variant left out must be rejected by the document as it is.
+#[track_caller]
+fn assert_rejected<T>(instance: Value)
+where
+    T: Schematic + DeserializeOwned,
+{
+    assert!(serde_json::from_str::<T>(&instance.to_string()).is_err(), "serde accepts {instance}");
+    let document = schema_document::<T>();
+    let validator = jsonschema::validator_for(&document).expect("generated schema is a valid JSON Schema");
+    assert!(validator.validate(&instance).is_err(), "the generated schema accepts {instance}: {document}");
+}
+
 /// `rename`, `rename_all`, `default`, `skip_serializing_if` and `flatten` on a struct.
 #[derive(Schematic, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1685,6 +1699,1322 @@ fn a_one_sided_variant_name_keeps_the_input_serde_reads() {
     assert_requests_are_read::<VariantRenameSerializeOnly>();
 }
 
+/// `#[serde(skip)]` variants are neither written nor read.
+#[allow(dead_code)]
+#[derive(Schematic, Serialize, Deserialize)]
+enum SkippedSimple {
+    Kept,
+    #[serde(skip)]
+    Skipped,
+}
+
+#[allow(dead_code)]
+#[derive(Schematic, Serialize, Deserialize)]
+enum SkippedExternal {
+    Kept(u8),
+    #[serde(skip)]
+    Skipped(u8),
+}
+
+/// Without the skipped variant only unit variants are left, so this is a plain string enum.
+#[allow(dead_code)]
+#[derive(Schematic, Serialize, Deserialize)]
+enum SkippedLeavesUnits {
+    Kept,
+    #[serde(skip)]
+    Skipped(u8),
+}
+
+#[allow(dead_code)]
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(tag = "kind")]
+enum SkippedInternal {
+    Kept {
+        value: u8,
+    },
+    #[serde(skip)]
+    Skipped {
+        other: u8,
+    },
+}
+
+#[allow(dead_code)]
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "data")]
+enum SkippedAdjacent {
+    Kept(u8),
+    #[serde(skip)]
+    Skipped(u8),
+}
+
+#[allow(dead_code)]
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(untagged)]
+enum SkippedUntagged {
+    Kept(u8),
+    #[serde(skip)]
+    Skipped(String),
+}
+
+#[allow(dead_code)]
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(tag = "kind")]
+enum AllSkippedInternal {
+    #[serde(skip)]
+    Skipped { other: u8 },
+}
+
+/// A variant skipped in one direction stays documented: the other direction uses that branch.
+#[allow(dead_code)]
+#[derive(Schematic, Serialize, Deserialize)]
+enum SkippedOneDirection {
+    #[serde(skip_serializing)]
+    InputOnly(u8),
+    #[serde(skip_deserializing)]
+    OutputOnly(u8),
+}
+
+/// `#[serde(untagged)]` variants of a tagged enum are written without the tag.
+#[derive(Schematic, Serialize, Deserialize)]
+enum UntaggedVariantExternal {
+    Tagged(u8),
+    Unit,
+    #[serde(untagged)]
+    Newtype(String),
+    #[serde(untagged)]
+    Named {
+        x: u8,
+    },
+    #[serde(untagged)]
+    Tuple(u8, u8),
+    #[serde(untagged)]
+    Null,
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+enum UntaggedVariantUnits {
+    Tagged,
+    #[serde(untagged)]
+    Null,
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(tag = "kind")]
+enum UntaggedVariantInternal {
+    Tagged {
+        value: u8,
+    },
+    Unit,
+    #[serde(untagged)]
+    Newtype(String),
+    #[serde(untagged)]
+    Named {
+        x: u8,
+    },
+    #[serde(untagged)]
+    Null,
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "data")]
+enum UntaggedVariantAdjacent {
+    Tagged(u8),
+    Unit,
+    #[serde(untagged)]
+    Newtype(String),
+    #[serde(untagged)]
+    Named {
+        x: u8,
+    },
+    #[serde(untagged)]
+    Null,
+}
+
+/// The tagged `Tagged` value also matches the untagged branch, so the branches are an `anyOf`.
+#[derive(Schematic, Serialize, Deserialize)]
+enum OverlappingUntaggedVariant {
+    Tagged {
+        value: u8,
+    },
+    #[serde(untagged)]
+    Anything(HashMap<String, Value>),
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(tag = "kind")]
+enum FlattenableUntaggedVariant {
+    Tagged {
+        value: u8,
+    },
+    #[serde(untagged)]
+    Mapped {
+        x: u8,
+        #[serde(flatten)]
+        extra: HashMap<String, u8>,
+    },
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+struct FlattensUntaggedVariant {
+    name: String,
+    #[serde(flatten)]
+    variant: FlattenableUntaggedVariant,
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+enum FlattenableExternalUntaggedVariant {
+    Tagged(u8),
+    #[serde(untagged)]
+    Mapped {
+        x: u8,
+        #[serde(flatten)]
+        extra: HashMap<String, u8>,
+    },
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+struct FlattensExternalUntaggedVariant {
+    name: String,
+    #[serde(flatten)]
+    variant: FlattenableExternalUntaggedVariant,
+}
+
+/// `#[serde(other)]` writes its own name in every form; only the reader accepts any tag.
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(tag = "kind")]
+enum OtherInternal {
+    Known {
+        value: u8,
+    },
+    #[serde(other)]
+    Fallback,
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "data")]
+enum OtherAdjacent {
+    Known(u8),
+    #[serde(other)]
+    Fallback,
+}
+
+/// A skipped variant leaves zero-field variants, which are not unit variants.
+#[allow(dead_code)]
+#[derive(Schematic, Serialize, Deserialize)]
+enum ZeroFieldNextToSkipped {
+    Named {},
+    #[serde(skip)]
+    Skipped(u8),
+}
+
+#[allow(dead_code)]
+#[derive(Schematic, Serialize, Deserialize)]
+enum ZeroFieldTupleNextToSkipped {
+    Tuple(),
+    #[serde(skip)]
+    Skipped(u8),
+}
+
+#[allow(dead_code)]
+#[derive(Schematic, Serialize, Deserialize)]
+enum UnitAndZeroFieldNextToSkipped {
+    Unit,
+    Named {},
+    #[serde(skip)]
+    Skipped(u8),
+}
+
+/// A map's value type, and a type named like the map holder's own component.
+#[derive(Schematic, Serialize, Deserialize)]
+struct OnlyInAMap {
+    inner: u8,
+}
+
+macro_rules! flattened_map_variant {
+    ($enum_name:ident, $parent:ident, $($serde:tt)*) => {
+        #[derive(Schematic, Serialize, Deserialize)]
+        #[serde($($serde)*)]
+        enum $enum_name {
+            Tagged { value: u8 },
+            #[serde(untagged)]
+            Newtype(HashMap<String, OnlyInAMap>),
+            #[serde(untagged)]
+            Named {
+                x: u8,
+                #[serde(flatten)]
+                extra: HashMap<String, OnlyInAMap>,
+            },
+        }
+
+        #[derive(Schematic, Serialize, Deserialize)]
+        struct $parent {
+            id: u8,
+            #[serde(flatten)]
+            variant: $enum_name,
+        }
+    };
+}
+
+flattened_map_variant!(MapVariantInternal, FlattensMapVariantInternal, tag = "kind");
+flattened_map_variant!(MapVariantAdjacent, FlattensMapVariantAdjacent, tag = "kind", content = "data");
+flattened_map_variant!(MapVariantExternal, FlattensMapVariantExternal,);
+
+/// The struct a variant wraps does not become a component, so it cannot collide with another type
+/// of the same name.
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(tag = "kind")]
+enum WrapsAuditWithoutTag {
+    Tagged {
+        value: u8,
+    },
+    #[serde(untagged)]
+    Wrapped(Audit),
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+struct HoldsOtherAudit {
+    audit: other::Audit,
+    wrapped: WrapsAuditWithoutTag,
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "data")]
+enum FlattenableAdjacentUntaggedVariant {
+    Tagged(u8),
+    #[serde(untagged)]
+    Mapped {
+        x: u8,
+        #[serde(flatten)]
+        extra: HashMap<String, u8>,
+    },
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+struct FlattensAdjacentUntaggedVariant {
+    name: String,
+    #[serde(flatten)]
+    variant: FlattenableAdjacentUntaggedVariant,
+}
+
+#[test]
+fn a_zero_field_struct_variant_next_to_a_skipped_one_is_not_a_string() {
+    assert_serialization_matches(&ZeroFieldNextToSkipped::Named {});
+    assert_rejected::<ZeroFieldNextToSkipped>(json!("Named"));
+    assert_requests_are_read::<ZeroFieldNextToSkipped>();
+}
+
+#[test]
+fn a_zero_field_tuple_variant_next_to_a_skipped_one_is_not_a_string() {
+    assert_serialization_matches(&ZeroFieldTupleNextToSkipped::Tuple());
+    assert_rejected::<ZeroFieldTupleNextToSkipped>(json!("Tuple"));
+    assert_requests_are_read::<ZeroFieldTupleNextToSkipped>();
+}
+
+#[test]
+fn a_unit_and_a_zero_field_variant_next_to_a_skipped_one_are_not_strings() {
+    assert_serialization_matches(&UnitAndZeroFieldNextToSkipped::Unit);
+    assert_serialization_matches(&UnitAndZeroFieldNextToSkipped::Named {});
+    assert_rejected::<UnitAndZeroFieldNextToSkipped>(json!("Named"));
+    assert_requests_are_read::<UnitAndZeroFieldNextToSkipped>();
+}
+
+#[test]
+fn flattening_a_map_variant_collects_no_component_for_its_value_type() {
+    fn names<T: Schematic>() -> Vec<String> {
+        let (_, components) = gotcha::gotcha_core::registry::collect(|| T::generate_schema());
+        components.keys().cloned().collect()
+    }
+    assert_eq!(names::<FlattensMapVariantInternal>(), ["FlattensMapVariantInternal"]);
+    assert_eq!(names::<FlattensMapVariantAdjacent>(), ["FlattensMapVariantAdjacent"]);
+    assert_eq!(names::<FlattensMapVariantExternal>(), ["FlattensMapVariantExternal"]);
+}
+
+#[test]
+fn a_wrapped_struct_does_not_rename_a_type_on_another_route() {
+    let (_, components) = gotcha::gotcha_core::registry::collect(|| HoldsOtherAudit::generate_schema());
+    let names = components.keys().cloned().collect::<Vec<_>>();
+    assert_eq!(names, ["Audit", "HoldsOtherAudit", "WrapsAuditWithoutTag"]);
+    assert!(components["Audit"].to_value()["properties"].get("source").is_some());
+}
+
+#[test]
+fn a_wrapped_struct_matches_serde_without_a_component() {
+    assert_serialization_matches(&WrapsAuditWithoutTag::Wrapped(Audit {
+        created_by: "x".into(),
+        version: 1,
+    }));
+    assert_requests_are_read::<WrapsAuditWithoutTag>();
+}
+
+/// `wrapped_value_fields_schema`: an empty struct and a non-struct value have no fields to merge.
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(tag = "kind")]
+enum WrapsValueWithoutFields {
+    Tagged {
+        value: u8,
+    },
+    #[serde(untagged)]
+    Text(String),
+}
+
+/// A value that may be absent is a reference, which makes `Audit` a component of the document.
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(tag = "kind")]
+enum WrapsOptionalAudit {
+    Tagged {
+        value: u8,
+    },
+    #[serde(untagged)]
+    Wrapped(Option<Audit>),
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+struct HoldsOtherAuditNextToOptional {
+    audit: other::Audit,
+    wrapped: WrapsOptionalAudit,
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+struct AuditFlatteningEnum {
+    name: String,
+    #[serde(flatten)]
+    inner: InternallyTagged,
+}
+
+/// A value flattening an enum is a reference too, because its fields do not say everything.
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(tag = "kind")]
+enum WrapsValueFlatteningEnum {
+    Tagged {
+        value: u8,
+    },
+    #[serde(untagged)]
+    Wrapped(AuditFlatteningEnum),
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+struct StructFlatteningMap {
+    name: String,
+    #[serde(flatten)]
+    extra: HashMap<String, u8>,
+}
+
+/// The struct's map stays where nothing composes with the branch, and leaves when it is flattened.
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(tag = "kind")]
+enum WrapsStructFlatteningMap {
+    Tagged {
+        value: u8,
+    },
+    #[serde(untagged)]
+    Wrapped(StructFlatteningMap),
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+struct FlattensWrappedStructFlatteningMap {
+    own: u8,
+    #[serde(flatten)]
+    inner: WrapsStructFlatteningMap,
+}
+
+/// The value type of a map that leaves when it is flattened is not registered either.
+#[derive(Schematic, Serialize, Deserialize)]
+struct WrappedMapValue {
+    v: u8,
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+struct StructFlatteningMapOfStructs {
+    name: String,
+    #[serde(flatten)]
+    extra: HashMap<String, WrappedMapValue>,
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(tag = "kind")]
+enum WrapsStructFlatteningMapOfStructs {
+    Tagged {
+        value: u8,
+    },
+    #[serde(untagged)]
+    Wrapped(StructFlatteningMapOfStructs),
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+struct FlattensWrappedStructFlatteningMapOfStructs {
+    own: u8,
+    #[serde(flatten)]
+    inner: WrapsStructFlatteningMapOfStructs,
+}
+
+/// A value leading back to itself through a flattened enum: a probe must not recurse forever.
+#[derive(Schematic, Serialize, Deserialize)]
+struct RecursiveNode {
+    next: Option<Box<RecursiveParent>>,
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+struct RecursiveParent {
+    #[serde(flatten)]
+    branch: RecursiveBranch,
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(untagged)]
+enum RecursiveBranch {
+    Node(RecursiveNode),
+    Text(String),
+}
+
+// serde's `Serialize` for a type flattening itself does not compile: its serializer type grows.
+macro_rules! self_flattening_enum {
+    ($node:ident, $enum:ident, $parent:ident, $($attribute:tt)*) => {
+        #[allow(dead_code)]
+        #[derive(Schematic, Deserialize)]
+        struct $node {
+            value: u8,
+            #[serde(flatten)]
+            branch: Option<Box<$enum>>,
+        }
+
+        #[allow(dead_code)]
+        #[derive(Schematic, Deserialize)]
+        $($attribute)*
+        enum $enum {
+            Named { x: u8 },
+            #[serde(untagged)]
+            Wrapped($node),
+        }
+
+        #[allow(dead_code)]
+        #[derive(Schematic, Deserialize)]
+        struct $parent {
+            own: u8,
+            #[serde(flatten)]
+            inner: $enum,
+        }
+    };
+}
+
+self_flattening_enum!(ExternalNode, ExternalSelfFlattening, FlattensExternalSelfFlattening,);
+self_flattening_enum!(InternalNode, InternalSelfFlattening, FlattensInternalSelfFlattening, #[serde(tag = "kind")]);
+self_flattening_enum!(AdjacentNode, AdjacentSelfFlattening, FlattensAdjacentSelfFlattening, #[serde(tag = "kind", content = "data")]);
+
+#[allow(dead_code)]
+#[derive(Schematic, Deserialize)]
+struct UntaggedNode {
+    value: u8,
+    #[serde(flatten)]
+    branch: Option<Box<UntaggedSelfFlattening>>,
+}
+
+#[allow(dead_code)]
+#[derive(Schematic, Deserialize)]
+#[serde(untagged)]
+enum UntaggedSelfFlattening {
+    Named { x: u8 },
+    Wrapped(UntaggedNode),
+}
+
+#[allow(dead_code)]
+#[derive(Schematic, Deserialize)]
+struct FlattensUntaggedSelfFlattening {
+    own: u8,
+    #[serde(flatten)]
+    inner: UntaggedSelfFlattening,
+}
+
+thread_local! {
+    static BUILT_SCHEMAS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Counts how often its schema is built, which a time limit could not do without flaking under load.
+#[derive(Serialize, Deserialize)]
+struct CountsSchemas;
+
+impl Schematic for CountsSchemas {
+    fn name() -> &'static str {
+        "CountsSchemas"
+    }
+
+    fn required() -> bool {
+        true
+    }
+
+    fn type_() -> &'static str {
+        "null"
+    }
+
+    fn generate_schema() -> gotcha::EnhancedSchema {
+        BUILT_SCHEMAS.set(BUILT_SCHEMAS.get() + 1);
+        <() as Schematic>::generate_schema()
+    }
+}
+
+/// An ordinary tree of nodes: every node of a flattened enum holds the type flattening it.
+macro_rules! wide_recursion {
+    ($expr:ident, $kind:ident, $($(#[$attribute:meta])* $variant:ident($node:ident)),* $(,)?) => {
+        #[derive(Schematic, Serialize, Deserialize)]
+        struct $expr {
+            span: u8,
+            #[serde(flatten)]
+            kind: $kind,
+        }
+
+        #[derive(Schematic, Serialize, Deserialize)]
+        #[serde(untagged)]
+        enum $kind {
+            $($variant($node),)*
+        }
+
+        $(
+            #[derive(Schematic, Serialize, Deserialize)]
+            $(#[$attribute])*
+            struct $node {
+                counted: CountsSchemas,
+                next: Option<Box<$expr>>,
+            }
+        )*
+    };
+}
+
+wide_recursion!(
+    WideExpr,
+    WideKind,
+    A(WideA),
+    B(WideB),
+    C(WideC),
+    D(WideD),
+    E(WideE),
+    F(WideF),
+    G(WideG),
+    H(WideH)
+);
+
+/// Looking into the same value twice below one flatten must not change the document.
+#[derive(Schematic, Serialize, Deserialize)]
+struct WrappedTwice {
+    x: u8,
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(tag = "k")]
+enum WrapsOneStructTwice {
+    Named {
+        y: u8,
+    },
+    #[serde(untagged)]
+    First(WrappedTwice),
+    #[serde(untagged)]
+    Second(WrappedTwice),
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+struct FlattensWrapsOneStructTwice {
+    own: u8,
+    #[serde(flatten)]
+    inner: WrapsOneStructTwice,
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(tag = "w")]
+enum WrapsFlattensWrapsOneStructTwice {
+    Named {
+        z: u8,
+    },
+    #[serde(untagged)]
+    Wrapped(FlattensWrapsOneStructTwice),
+}
+
+/// A map panicking the first time it is looked into, to leave a probe through an unwind.
+struct PanicsOnceInAProbe;
+
+thread_local! {
+    static PANICKED_IN_A_PROBE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+impl Schematic for PanicsOnceInAProbe {
+    fn name() -> &'static str {
+        "PanicsOnceInAProbe"
+    }
+
+    fn required() -> bool {
+        true
+    }
+
+    fn type_() -> &'static str {
+        "object"
+    }
+
+    fn generate_schema() -> gotcha::EnhancedSchema {
+        if !PANICKED_IN_A_PROBE.replace(true) {
+            panic!("the first look into this value");
+        }
+        <HashMap<String, u8> as Schematic>::generate_schema()
+    }
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+struct ReferencedByHandWritten {
+    v: u8,
+}
+
+/// A hand-written value with a root `additionalProperties` that inlines a reference, in each form
+/// of an enum flattened into a parent: the reference must stay resolvable.
+macro_rules! hand_written_reference {
+    ($value:ident, $keyword:literal, $($enum:ident / $parent:ident [$($attribute:tt)*] $($variant_attribute:ident)?),* $(,)?) => {
+        #[derive(Serialize, Deserialize)]
+        struct $value {
+            other: ReferencedByHandWritten,
+        }
+
+        impl Schematic for $value {
+            fn name() -> &'static str {
+                stringify!($value)
+            }
+
+            fn required() -> bool {
+                true
+            }
+
+            fn type_() -> &'static str {
+                "object"
+            }
+
+            fn generate_schema() -> gotcha::EnhancedSchema {
+                let mut schema = gotcha::gotcha_core::oas::Schema {
+                    _type: Some(Self::type_().into()),
+                    ..gotcha::gotcha_core::oas::Schema::default()
+                };
+                schema
+                    .extras
+                    .insert("properties".to_owned(), json!({"other": ReferencedByHandWritten::generate_schema().schema.to_value()}));
+                schema.extras.insert("additionalProperties".to_owned(), json!($keyword));
+                gotcha::EnhancedSchema { schema, required: true }
+            }
+        }
+
+        $(
+            #[derive(Schematic, Serialize, Deserialize)]
+            $($attribute)*
+            enum $enum {
+                Named {
+                    x: u8,
+                },
+                #[serde(untagged)]
+                Wrapped($value),
+            }
+
+            #[derive(Schematic, Serialize, Deserialize)]
+            struct $parent {
+                own: u8,
+                #[serde(flatten)]
+                inner: $enum,
+            }
+        )*
+    };
+}
+
+hand_written_reference!(
+    OpenWithReference,
+    true,
+    OpenExternal / FlattensOpenExternal[],
+    OpenInternal / FlattensOpenInternal[#[serde(tag = "kind")]],
+    OpenAdjacent / FlattensOpenAdjacent[#[serde(tag = "kind", content = "data")]],
+);
+hand_written_reference!(
+    ClosedWithReference,
+    false,
+    ClosedExternal / FlattensClosedExternal[],
+    ClosedInternal / FlattensClosedInternal[#[serde(tag = "kind")]],
+    ClosedAdjacent / FlattensClosedAdjacent[#[serde(tag = "kind", content = "data")]],
+);
+
+#[derive(Serialize, Deserialize)]
+struct UntaggedValueWithReference {
+    other: ReferencedByHandWritten,
+}
+
+impl Schematic for UntaggedValueWithReference {
+    fn name() -> &'static str {
+        "UntaggedValueWithReference"
+    }
+
+    fn required() -> bool {
+        true
+    }
+
+    fn type_() -> &'static str {
+        "object"
+    }
+
+    fn generate_schema() -> gotcha::EnhancedSchema {
+        OpenWithReference::generate_schema()
+    }
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(untagged)]
+enum UntaggedWithReference {
+    Wrapped(UntaggedValueWithReference),
+    Text(String),
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+struct FlattensUntaggedWithReference {
+    own: u8,
+    #[serde(flatten)]
+    inner: UntaggedWithReference,
+}
+
+/// A hand-written value embedding another enum's flatten schema, which a probe stops at.
+#[derive(Serialize, Deserialize)]
+struct EmbedsAFlattenSchema {
+    kind: String,
+    x: u8,
+}
+
+impl Schematic for EmbedsAFlattenSchema {
+    fn name() -> &'static str {
+        "EmbedsAFlattenSchema"
+    }
+
+    fn required() -> bool {
+        true
+    }
+
+    fn type_() -> &'static str {
+        "object"
+    }
+
+    fn generate_schema() -> gotcha::EnhancedSchema {
+        let mut schema = gotcha::gotcha_core::oas::Schema::default();
+        let embedded = UntaggedWithReference::flatten_schema().expect("an enum flattens");
+        schema.extras.insert("anyOf".to_owned(), json!([embedded]));
+        schema.extras.insert("additionalProperties".to_owned(), json!(true));
+        gotcha::EnhancedSchema { schema, required: true }
+    }
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+#[serde(untagged)]
+enum WrapsEmbeddedFlattenSchema {
+    Wrapped(EmbedsAFlattenSchema),
+    Number(u8),
+}
+
+#[derive(Schematic, Serialize, Deserialize)]
+struct FlattensWrapsEmbeddedFlattenSchema {
+    own: u8,
+    #[serde(flatten)]
+    inner: WrapsEmbeddedFlattenSchema,
+}
+
+/// A reference can also sit in the typed fields of a hand-written schema.
+macro_rules! hand_written_typed_reference {
+    ($value:ident, $enum:ident, $parent:ident, |$schema:ident, $reference:ident| $fill:expr) => {
+        #[allow(dead_code)]
+        #[derive(Serialize, Deserialize)]
+        struct $value {
+            v: u8,
+        }
+
+        impl Schematic for $value {
+            fn name() -> &'static str {
+                stringify!($value)
+            }
+
+            fn required() -> bool {
+                true
+            }
+
+            fn type_() -> &'static str {
+                "object"
+            }
+
+            fn generate_schema() -> gotcha::EnhancedSchema {
+                let mut $schema = gotcha::gotcha_core::oas::Schema::default();
+                let $reference = ReferencedByHandWritten::generate_schema().schema;
+                $fill;
+                $schema.extras.insert("additionalProperties".to_owned(), json!(true));
+                gotcha::EnhancedSchema {
+                    schema: $schema,
+                    required: true,
+                }
+            }
+        }
+
+        #[derive(Schematic, Serialize, Deserialize)]
+        #[serde(untagged)]
+        enum $enum {
+            Wrapped($value),
+            Text(String),
+        }
+
+        #[derive(Schematic, Serialize, Deserialize)]
+        struct $parent {
+            own: u8,
+            #[serde(flatten)]
+            inner: $enum,
+        }
+    };
+}
+
+hand_written_typed_reference!(RootReference, RootReferenceEnum, FlattensRootReference, |schema, reference| schema._ref =
+    reference._ref);
+hand_written_typed_reference!(
+    ContentSchemaReference,
+    ContentSchemaReferenceEnum,
+    FlattensContentSchemaReference,
+    |schema, reference| schema.content_schema = Some(Box::new(reference.into()))
+);
+
+/// Every reference in `document` points at a component it holds.
+#[track_caller]
+fn assert_references_resolve(document: &Value) {
+    fn visit(value: &Value, document: &Value) {
+        match value {
+            Value::Object(object) => {
+                if let Some(name) = object
+                    .get("$ref")
+                    .and_then(Value::as_str)
+                    .and_then(|reference| reference.strip_prefix("#/components/schemas/"))
+                {
+                    assert!(document["components"]["schemas"].get(name).is_some(), "{name} is not in {document}");
+                }
+                object.values().for_each(|child| visit(child, document));
+            }
+            Value::Array(items) => items.iter().for_each(|item| visit(item, document)),
+            _ => {}
+        }
+    }
+    visit(document, document);
+}
+
+#[test]
+fn a_flattened_hand_written_value_keeps_the_components_it_refers_to() {
+    assert_references_resolve(&schema_document::<FlattensOpenExternal>());
+    assert_references_resolve(&schema_document::<FlattensOpenInternal>());
+    assert_references_resolve(&schema_document::<FlattensOpenAdjacent>());
+    assert_references_resolve(&schema_document::<FlattensClosedExternal>());
+    assert_references_resolve(&schema_document::<FlattensClosedInternal>());
+    assert_references_resolve(&schema_document::<FlattensClosedAdjacent>());
+    assert_references_resolve(&schema_document::<FlattensUntaggedWithReference>());
+    assert_references_resolve(&schema_document::<FlattensRootReference>());
+    assert_references_resolve(&schema_document::<FlattensContentSchemaReference>());
+    let output = json!({"own": 1, "other": {"v": 2}});
+    assert!(schema_accepts::<FlattensUntaggedWithReference>(&output));
+    assert!(
+        schema_accepts::<FlattensClosedInternal>(&output),
+        "{}",
+        schema_document::<FlattensClosedInternal>()
+    );
+    assert!(
+        schema_accepts::<FlattensClosedExternal>(&output),
+        "{}",
+        schema_document::<FlattensClosedExternal>()
+    );
+    assert!(
+        schema_accepts::<FlattensClosedAdjacent>(&output),
+        "{}",
+        schema_document::<FlattensClosedAdjacent>()
+    );
+}
+
+#[test]
+fn a_flattened_hand_written_value_loses_its_root_keyword() {
+    let schema = own_schema::<FlattensClosedExternal>();
+    assert!(!schema.to_string().contains("additionalProperties"), "{schema}");
+}
+
+#[test]
+fn a_flattened_hand_written_value_keeps_the_branches_it_embeds() {
+    // The embedded branch documents an object with `other`, so it does not accept just anything.
+    assert!(!schema_accepts::<FlattensWrapsEmbeddedFlattenSchema>(&json!({"own": 1, "other": 1})));
+    assert!(schema_accepts::<FlattensWrapsEmbeddedFlattenSchema>(&json!({"own": 1, "other": {"v": 2}})));
+    assert_references_resolve(&schema_document::<FlattensWrapsEmbeddedFlattenSchema>());
+}
+
+#[test]
+fn wide_recursion_through_a_flattened_enum_builds_each_schema_a_bounded_number_of_times() {
+    BUILT_SCHEMAS.set(0);
+    let (_, components) = gotcha::gotcha_core::registry::collect(|| WideExpr::generate_schema());
+    assert_eq!(components.len(), 9, "{:?}", components.keys());
+    // One probe and one document per node, which is 16. Walking every path of nodes builds 876808,
+    // which took a minute here and hours with twelve nodes.
+    let built = BUILT_SCHEMAS.get();
+    assert!(built <= 100, "the schema of a node was built {built} times");
+}
+
+#[test]
+fn wide_recursion_through_a_flattened_enum_matches_serde() {
+    // Loose validation on purpose: a branch is a reference, so strict validation rejects the
+    // parent's fields there, as for the other flattened references.
+    let output = serde_json::to_value(WideExpr {
+        span: 1,
+        kind: WideKind::C(WideC {
+            counted: CountsSchemas,
+            next: Some(Box::new(WideExpr {
+                span: 2,
+                kind: WideKind::H(WideH {
+                    counted: CountsSchemas,
+                    next: None,
+                }),
+            })),
+        }),
+    })
+    .expect("sample serializes");
+    assert!(schema_accepts::<WideExpr>(&output), "{output}");
+}
+
+#[test]
+fn looking_into_a_value_twice_registers_no_component() {
+    let (_, components) = gotcha::gotcha_core::registry::collect(|| WrapsFlattensWrapsOneStructTwice::generate_schema());
+    let names = components.keys().cloned().collect::<Vec<_>>();
+    assert_eq!(names, ["FlattensWrapsOneStructTwice", "WrapsFlattensWrapsOneStructTwice"]);
+}
+
+#[test]
+fn a_probe_ends_with_an_unwind() {
+    use gotcha::gotcha_core::registry::wrapped_value_schema;
+    assert!(std::panic::catch_unwind(|| wrapped_value_schema::<PanicsOnceInAProbe>(true)).is_err());
+    // Still probed: the map's keyword leaves, and the value is not skipped as part of a probe.
+    let schema = wrapped_value_schema::<PanicsOnceInAProbe>(true).schema.to_value();
+    assert_eq!(schema, json!({"type": "object"}));
+}
+
+#[test]
+fn a_wrapped_value_without_fields_is_not_an_object() {
+    assert_serialization_matches(&WrapsValueWithoutFields::Text("text".into()));
+    assert_requests_are_read::<WrapsValueWithoutFields>();
+}
+
+#[test]
+fn a_wrapped_value_that_may_be_absent_stays_a_reference() {
+    assert_serialization_matches(&WrapsOptionalAudit::Wrapped(None));
+    assert_serialization_matches(&WrapsOptionalAudit::Wrapped(Some(Audit {
+        created_by: "x".into(),
+        version: 1,
+    })));
+    assert_requests_are_read::<WrapsOptionalAudit>();
+}
+
+/// Disclosed in MIGRATION: a reference registers `Audit`, so a same-named type changes its name.
+#[test]
+fn a_wrapped_value_that_may_be_absent_renames_a_type_on_another_route() {
+    let (_, components) = gotcha::gotcha_core::registry::collect(|| HoldsOtherAuditNextToOptional::generate_schema());
+    let names = components.keys().cloned().collect::<Vec<_>>();
+    assert_eq!(
+        names,
+        ["HoldsOtherAuditNextToOptional", "OtherAudit", "SchemaMatchesSerdeAudit", "WrapsOptionalAudit"]
+    );
+}
+
+#[test]
+fn a_wrapped_value_flattening_an_enum_keeps_the_enum() {
+    assert_serialization_matches(&WrapsValueFlatteningEnum::Wrapped(AuditFlatteningEnum {
+        name: "x".into(),
+        inner: InternallyTagged::A { x: 1 },
+    }));
+    assert_requests_are_read::<WrapsValueFlatteningEnum>();
+    let (_, components) = gotcha::gotcha_core::registry::collect(|| WrapsValueFlatteningEnum::generate_schema());
+    assert!(components.contains_key("AuditFlatteningEnum"), "{:?}", components.keys());
+}
+
+#[test]
+fn a_wrapped_struct_merges_its_fields_with_their_presence() {
+    let schema = own_schema::<WrapsAuditWithoutTag>();
+    let branch = &schema["anyOf"][1];
+    assert_eq!(branch["type"], json!("object"), "{schema}");
+    assert_eq!(branch["required"], json!(["created_by"]), "{schema}");
+    assert_eq!(branch["properties"]["version"], json!({"type": "integer"}), "{schema}");
+}
+
+#[test]
+fn a_wrapped_struct_keeps_its_map_unless_it_is_flattened() {
+    let value = WrapsStructFlatteningMap::Wrapped(StructFlatteningMap {
+        name: "x".into(),
+        extra: HashMap::from([("a".to_owned(), 1)]),
+    });
+    assert_serialization_matches(&value);
+    assert_eq!(
+        own_schema::<WrapsStructFlatteningMap>()["anyOf"][1]["additionalProperties"],
+        json!({"type": "integer"})
+    );
+    let schema = own_schema::<FlattensWrappedStructFlatteningMap>();
+    assert_eq!(schema["allOf"][1]["anyOf"][1].get("additionalProperties"), None, "{schema}");
+    assert_request_accepted::<FlattensWrappedStructFlatteningMap>(json!({"own": 1, "name": "x"}));
+}
+
+#[test]
+fn flattening_a_wrapped_struct_collects_no_component_for_its_map_values() {
+    let (_, components) = gotcha::gotcha_core::registry::collect(|| FlattensWrappedStructFlatteningMapOfStructs::generate_schema());
+    assert_eq!(components.keys().cloned().collect::<Vec<_>>(), ["FlattensWrappedStructFlatteningMapOfStructs"]);
+    let (_, components) = gotcha::gotcha_core::registry::collect(|| WrapsStructFlatteningMapOfStructs::generate_schema());
+    assert!(components.contains_key("WrappedMapValue"), "{:?}", components.keys());
+}
+
+#[test]
+fn a_value_leading_back_to_itself_through_a_flattened_enum_ends() {
+    assert_serialization_matches(&RecursiveParent {
+        branch: RecursiveBranch::Node(RecursiveNode {
+            next: Some(Box::new(RecursiveParent {
+                branch: RecursiveBranch::Node(RecursiveNode { next: None }),
+            })),
+        }),
+    });
+    assert!(schema_accepts::<RecursiveParent>(&json!({"next": null})));
+    assert!(schema_accepts::<RecursiveNode>(&json!({"next": {"next": null}})));
+}
+
+#[test]
+fn an_enum_flattened_by_the_value_it_wraps_ends_in_every_form() {
+    fn accepts<T: Schematic>(instance: Value) {
+        assert!(schema_accepts::<T>(&instance), "{instance}: {}", schema_document::<T>());
+    }
+    accepts::<ExternalSelfFlattening>(json!({"value": 1, "Named": {"x": 1}}));
+    accepts::<InternalSelfFlattening>(json!({"value": 1, "kind": "Named", "x": 1}));
+    accepts::<AdjacentSelfFlattening>(json!({"value": 1, "kind": "Named", "data": {"x": 1}}));
+    accepts::<UntaggedSelfFlattening>(json!({"value": 1, "x": 1}));
+    accepts::<FlattensExternalSelfFlattening>(json!({"own": 1, "Named": {"x": 1}}));
+    accepts::<FlattensInternalSelfFlattening>(json!({"own": 1, "kind": "Named", "x": 1}));
+    accepts::<FlattensAdjacentSelfFlattening>(json!({"own": 1, "kind": "Named", "data": {"x": 1}}));
+    accepts::<FlattensUntaggedSelfFlattening>(json!({"own": 1, "x": 1}));
+}
+
+#[cfg(feature = "openapi")]
+#[test]
+fn parameters_of_a_value_leading_back_to_itself_end() {
+    use gotcha::axum::extract::Query;
+    use gotcha::{Json, ParameterProvider};
+    fn generate<T: Schematic>() {
+        let _ = gotcha::gotcha_core::registry::collect(|| {
+            let _ = <Json<T> as ParameterProvider>::generate("/".into());
+            let _ = <Query<T> as ParameterProvider>::generate("/".into());
+        });
+    }
+    generate::<RecursiveParent>();
+    generate::<RecursiveNode>();
+    generate::<ExternalSelfFlattening>();
+    generate::<InternalSelfFlattening>();
+    generate::<AdjacentSelfFlattening>();
+    generate::<UntaggedSelfFlattening>();
+    generate::<InternalNode>();
+}
+
+#[test]
+fn flattening_an_internal_enum_with_an_untagged_variant_has_no_discriminator() {
+    let schema = own_schema::<FlattensUntaggedVariant>();
+    let flattened = &schema["allOf"][1];
+    assert!(flattened.get("anyOf").is_some() && flattened.get("discriminator").is_none(), "{schema}");
+}
+
+#[test]
+fn flattening_an_adjacent_enum_with_an_untagged_variant_has_no_discriminator() {
+    let schema = own_schema::<FlattensAdjacentSelfFlattening>();
+    let flattened = &schema["allOf"][1];
+    assert!(flattened.get("anyOf").is_some() && flattened.get("discriminator").is_none(), "{schema}");
+}
+
+#[test]
+fn flattening_a_tagged_enum_without_an_untagged_variant_keeps_the_discriminator() {
+    assert_eq!(
+        Adjacent::flatten_schema().expect("an enum flattens")["discriminator"],
+        json!({"propertyName": "kind"})
+    );
+    assert_eq!(
+        InternallyTagged::flatten_schema().expect("an enum flattens")["discriminator"],
+        json!({"propertyName": "kind"})
+    );
+}
+
+#[test]
+fn flattening_an_untagged_variant_of_an_adjacent_enum_does_not_constrain_the_parent() {
+    // Loose validation on purpose, as for the other flattened map variants.
+    let instance = serde_json::to_value(FlattensAdjacentUntaggedVariant {
+        name: "x".into(),
+        variant: FlattenableAdjacentUntaggedVariant::Mapped {
+            x: 1,
+            extra: HashMap::from([("a".to_owned(), 2)]),
+        },
+    })
+    .expect("sample serializes");
+    assert!(schema_accepts::<FlattensAdjacentUntaggedVariant>(&instance), "{instance}");
+}
+
+#[test]
+fn the_input_of_skipped_and_untagged_variants_is_what_serde_reads() {
+    assert_requests_are_read::<SkippedSimple>();
+    assert_requests_are_read::<SkippedExternal>();
+    assert_requests_are_read::<SkippedLeavesUnits>();
+    assert_requests_are_read::<SkippedInternal>();
+    assert_requests_are_read::<SkippedAdjacent>();
+    assert_requests_are_read::<SkippedUntagged>();
+    assert_requests_are_read::<UntaggedVariantExternal>();
+    assert_requests_are_read::<UntaggedVariantUnits>();
+    assert_requests_are_read::<UntaggedVariantInternal>();
+    assert_requests_are_read::<UntaggedVariantAdjacent>();
+}
+
+#[test]
+fn a_skipped_unit_variant_is_not_documented() {
+    assert_rejected::<SkippedSimple>(json!("Skipped"));
+}
+
+#[test]
+fn a_skipped_external_variant_is_not_documented() {
+    assert_rejected::<SkippedExternal>(json!({"Skipped": 1}));
+}
+
+#[test]
+fn a_skipped_variant_can_leave_a_plain_string_enum() {
+    assert_rejected::<SkippedLeavesUnits>(json!({"Skipped": 1}));
+    assert_serialization_matches(&SkippedLeavesUnits::Kept);
+}
+
+#[test]
+fn a_skipped_internal_variant_is_not_documented() {
+    assert_rejected::<SkippedInternal>(json!({"kind": "Skipped", "other": 1}));
+}
+
+#[test]
+fn a_skipped_adjacent_variant_is_not_documented() {
+    assert_rejected::<SkippedAdjacent>(json!({"kind": "Skipped", "data": 1}));
+}
+
+#[test]
+fn a_skipped_untagged_variant_is_not_documented() {
+    assert_rejected::<SkippedUntagged>(json!("text"));
+}
+
+#[test]
+fn an_enum_with_every_variant_skipped_accepts_nothing() {
+    assert_rejected::<AllSkippedInternal>(json!({"kind": "Skipped", "other": 1}));
+}
+
+#[test]
+fn a_variant_skipped_in_one_direction_stays_documented() {
+    assert_serialization_matches(&SkippedOneDirection::OutputOnly(1));
+    let document = schema_document::<SkippedOneDirection>();
+    let validator = jsonschema::validator_for(&document).expect("generated schema is a valid JSON Schema");
+    let input = json!({"InputOnly": 1});
+    assert!(serde_json::from_value::<SkippedOneDirection>(input.clone()).is_ok());
+    assert!(validator.validate(&input).is_ok(), "the input-only branch must stay: {document}");
+}
+
+#[test]
+fn an_untagged_newtype_variant_of_an_external_enum_has_no_tag() {
+    assert_serialization_matches(&UntaggedVariantExternal::Newtype("x".into()));
+}
+
+#[test]
+fn an_untagged_struct_variant_of_an_external_enum_has_no_tag() {
+    assert_serialization_matches(&UntaggedVariantExternal::Named { x: 1 });
+}
+
+#[test]
+fn an_untagged_tuple_variant_of_an_external_enum_has_no_tag() {
+    assert_serialization_matches(&UntaggedVariantExternal::Tuple(1, 2));
+}
+
+#[test]
+fn an_untagged_unit_variant_of_an_external_enum_is_null() {
+    assert_serialization_matches(&UntaggedVariantExternal::Null);
+}
+
+#[test]
+fn an_untagged_unit_variant_keeps_an_enum_from_being_a_string_enum() {
+    assert_serialization_matches(&UntaggedVariantUnits::Null);
+}
+
+#[test]
+fn an_untagged_newtype_variant_of_an_internal_enum_has_no_tag() {
+    assert_serialization_matches(&UntaggedVariantInternal::Newtype("x".into()));
+}
+
+#[test]
+fn an_untagged_struct_variant_of_an_internal_enum_has_no_tag() {
+    assert_serialization_matches(&UntaggedVariantInternal::Named { x: 1 });
+}
+
+#[test]
+fn an_untagged_unit_variant_of_an_internal_enum_is_null() {
+    assert_serialization_matches(&UntaggedVariantInternal::Null);
+}
+
+#[test]
+fn an_untagged_newtype_variant_of_an_adjacent_enum_has_no_tag() {
+    assert_serialization_matches(&UntaggedVariantAdjacent::Newtype("x".into()));
+}
+
+#[test]
+fn an_untagged_struct_variant_of_an_adjacent_enum_has_no_tag() {
+    assert_serialization_matches(&UntaggedVariantAdjacent::Named { x: 1 });
+}
+
+#[test]
+fn an_untagged_unit_variant_of_an_adjacent_enum_is_null() {
+    assert_serialization_matches(&UntaggedVariantAdjacent::Null);
+}
+
+#[test]
+fn an_untagged_variant_turns_the_branches_into_an_any_of() {
+    let schema = own_schema::<OverlappingUntaggedVariant>();
+    assert!(schema.get("oneOf").is_none() && schema.get("anyOf").is_some(), "{schema}");
+    assert_serialization_matches(&OverlappingUntaggedVariant::Tagged { value: 1 });
+}
+
+#[test]
+fn an_untagged_variant_removes_the_internal_discriminator() {
+    let schema = own_schema::<UntaggedVariantInternal>();
+    assert!(schema.get("anyOf").is_some() && schema.get("discriminator").is_none(), "{schema}");
+}
+
+#[test]
+fn an_untagged_variant_removes_the_adjacent_discriminator() {
+    let schema = own_schema::<UntaggedVariantAdjacent>();
+    assert!(schema.get("anyOf").is_some() && schema.get("discriminator").is_none(), "{schema}");
+}
+
+#[test]
+fn flattening_an_untagged_variant_of_an_internal_enum_has_no_tag() {
+    let document = schema_document::<FlattensUntaggedVariant>();
+    let instance = serde_json::to_value(FlattensUntaggedVariant {
+        name: "x".into(),
+        variant: FlattenableUntaggedVariant::Mapped {
+            x: 1,
+            extra: HashMap::from([("a".to_owned(), 2)]),
+        },
+    })
+    .expect("sample serializes");
+    let validator = jsonschema::validator_for(&document).expect("generated schema is a valid JSON Schema");
+    assert!(validator.validate(&instance).is_ok(), "{instance} vs {document}");
+}
+
+#[test]
+fn flattening_an_untagged_variant_of_an_external_enum_does_not_constrain_the_parent() {
+    // Loose validation on purpose, as for the other flattened map variants.
+    let document = schema_document::<FlattensExternalUntaggedVariant>();
+    let instance = serde_json::to_value(FlattensExternalUntaggedVariant {
+        name: "x".into(),
+        variant: FlattenableExternalUntaggedVariant::Mapped {
+            x: 1,
+            extra: HashMap::from([("a".to_owned(), 2)]),
+        },
+    })
+    .expect("sample serializes");
+    let validator = jsonschema::validator_for(&document).expect("generated schema is a valid JSON Schema");
+    assert!(validator.validate(&instance).is_ok(), "{instance} vs {document}");
+}
+
+#[test]
+fn other_variants_are_documented_as_serde_writes_them() {
+    assert_serialization_matches(&OtherInternal::Fallback);
+    assert_serialization_matches(&OtherAdjacent::Fallback);
+    assert!(own_schema::<OtherInternal>().get("discriminator").is_some());
+    assert!(own_schema::<OtherAdjacent>().get("discriminator").is_some());
+}
+
 /// `#[serde(tag = "..")]` on a struct: serde writes the tag with the struct's serialize name.
 #[derive(Schematic, Serialize, Deserialize)]
 #[serde(tag = "kind")]
@@ -2214,10 +3544,26 @@ fn a_conversion_leaves_the_struct_tag_undocumented() {
 //   schema. Flattening that enum composes the tag with the parent, so the tag's value also conflicts
 //   with a parent's field or a sibling's property of that name: `{"kind":1,"v":1}` for
 //   `struct P { kind: u8, #[serde(flatten)] e: E }` is read by serde and rejected by the document.
+// - The same `$ref` also composes the tag with a parent in the other ways it can use that name.
+//   serde's output `{"kind":1,"value":1}` fails when the parent's `kind` comes after the flatten or
+//   is `skip_deserializing`. `{"own":1,"value":1,"kind":"T1"}` is accepted by the document and
+//   rejected by serde when the parent also flattens a `HashMap<String, u8>`. A
+//   `#[serde(alias = "kind")] k: u8` beside the enum makes `{"k":1,"kind":"T1","value":1}` a duplicate
+//   field for serde, which the document accepts.
 // - A flattened externally tagged enum's unit variant: serde writes `{"A": null}` next to the
 //   parent's fields, while the flattened schema documents `"A"`.
-// - An externally tagged enum whose variants are all zero-field struct variants (`A {}`): it is
-//   still routed to the string-enum shape (the dispatch checks emptiness, not `Style::Unit`).
+// - An externally tagged enum whose variants are all zero-field struct or tuple variants (`A {}`,
+//   `A()`): it is still routed to the string-enum shape (the dispatch checks emptiness, not
+//   `Style::Unit`).
+// - Flattening an enum with an `#[serde(untagged)]` unit variant: serde writes only the parent's
+//   fields, while the branch documents `null`, so the parent's object fails validation.
+// - Flattening an enum with an `#[serde(untagged)]` newtype variant that wraps a map: the branch is
+//   a bare `{"type": "object"}`, which lets `anyOf` accept nearly anything, and strict validation
+//   rejects the entries.
+// - Flattening an enum with an `#[serde(untagged)]` newtype variant that wraps `Option<map>` or a
+//   map with `#[schematic(name)]`: the branch keeps the map's `additionalProperties`, so it also
+//   constrains the parent's fields, and serde's output fails lenient validation when one of them
+//   has another type (on `main` too).
 // - Flattening an internally tagged enum whose newtype variant wraps a map omits the map's
 //   `additionalProperties` from the composed schema: keeping it would constrain the parent's own
 //   declared fields (the variant branch is composed through `allOf`), so strict validation

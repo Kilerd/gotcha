@@ -491,7 +491,18 @@ pub(crate) fn tuple_variant_schema(core: &TokenStream2, fields: &[ParameterStruc
 /// schema. One emitter keeps `skip`, `rename_all` / `rename_all_fields`, `flatten` and
 /// `#[schematic(..)]` identical for externally, internally, adjacently and untagged enums
 /// instead of drifting per copy.
-pub(crate) fn named_variant_object(core: &TokenStream2, tag: Option<(&str, &str)>, fields: Vec<ParameterStructFieldOpt>) -> TokenStream2 {
+///
+/// `at_parent_level` says the object is the branch itself, not a body nested under a key. Such a
+/// branch loses a flattened map's `additionalProperties` when its enum is flattened (where the
+/// `flattening` local says so), so the value type must not be registered then.
+pub(crate) fn named_variant_object(
+    core: &TokenStream2, tag: Option<(&str, &str)>, fields: Vec<ParameterStructFieldOpt>, at_parent_level: bool,
+) -> TokenStream2 {
+    let keeps_flattened_maps = if at_parent_level {
+        quote! { !flattening }
+    } else {
+        quote! { true }
+    };
     let tag_code = match tag {
         Some((tag_name, variant_name)) => quote! {
             {
@@ -523,8 +534,10 @@ pub(crate) fn named_variant_object(core: &TokenStream2, tag: Option<(&str, &str)
                         if let Some(flatten_val) = <#field_ty as #core::Schematic>::flatten_schema() {
                             flatten_schemas.push(flatten_val);
                         }
-                        if let Some(additional) = <#field_ty as #core::Schematic>::additional_properties() {
-                            flatten_maps.push(additional);
+                        if #keeps_flattened_maps {
+                            if let Some(additional) = <#field_ty as #core::Schematic>::additional_properties() {
+                                flatten_maps.push(additional);
+                            }
                         }
                         for (inner_name, mut inner_schema) in <#field_ty as #core::Schematic>::fields() {
                             if !<#field_ty as #core::Schematic>::required() {
@@ -622,6 +635,15 @@ impl ParameterEnumVariantOpt {
         }
     }
 
+    /// Emit an expression for the branch of this `#[serde(untagged)]` variant of a tagged enum, as
+    /// the `HashMap` the tagged handlers collect their branches in.
+    pub(crate) fn untagged_branch_object(self, core: &TokenStream2, wrapped: untagged_enum::WrappedValue) -> TokenStream2 {
+        let branch = untagged_enum::variant_branch(core, self, wrapped);
+        quote! {
+            #core::serde_json::from_value::<::std::collections::HashMap<String, #core::serde_json::Value>>(#branch).expect("cannot convert branch to object")
+        }
+    }
+
     /// The name the schema documents for this variant.
     pub(crate) fn serde_name(&self) -> String {
         self.serde.schema_name().to_owned()
@@ -708,12 +730,24 @@ pub(crate) fn handler(input: TokenStream2) -> syn::Result<TokenStream2> {
     let (generics, generics_single, where_clause) = param_opts.generics.split_for_impl();
 
     let impl_stream = match param_opts.data {
-        Data::Enum(enum_variants) => {
+        Data::Enum(mut enum_variants) => {
+            // A variant serde neither writes nor reads is not on the wire. One skipped in a
+            // single direction stays: a branch the other direction never uses invalidates
+            // nothing, while dropping it would hide a shape that direction does use.
+            let declared_variants = enum_variants.len();
+            let all_fieldless = enum_variants.iter().all(|variant| variant.fields.is_empty());
+            enum_variants.retain(|variant| !variant.serde.skipped);
+            let all_skipped = declared_variants > 0 && enum_variants.is_empty();
             // An all-unit enum is a plain string enum only in the default, externally tagged
             // representation. A tag turns it into an object and `untagged` writes null, so the
-            // shape must come from the tag handler, not from the variant count.
-            let is_simple_enum = enum_variants.iter().all(|variant| variant.fields.is_empty());
+            // shape must come from the tag handler, not from the variant count. Removing skipped
+            // variants can leave only unit variants; a zero-field `A {}` or `A()` is not one.
+            let only_units = enum_variants.iter().all(|variant| matches!(variant.fields.style, darling::ast::Style::Unit));
+            let is_simple_enum = (all_fieldless || only_units) && !enum_variants.iter().any(|variant| variant.serde.untagged);
             match serde.tagging {
+                // No value is on the wire. The empty string enum says so; an empty `oneOf` or
+                // `anyOf` is not a valid schema.
+                _ if all_skipped => simple_enum::handler(&core, schema_name.clone(), doc, enum_variants)?,
                 Tagging::External if is_simple_enum => simple_enum::handler(&core, schema_name.clone(), doc, enum_variants)?,
                 Tagging::External => external_tagged_enum::handler(&core, schema_name.clone(), doc, enum_variants)?,
                 Tagging::Internal(tag_name) => tagged_enum::handler(&core, schema_name.clone(), doc, enum_variants, tag_name)?,

@@ -196,6 +196,11 @@ pub fn api(args: TokenStream, input_stream: TokenStream) -> TokenStream {
 /// form leaves the name as it is; otherwise the schema uses the name serde writes. `Valid` errors
 /// and query and path parameters use the name serde reads.
 ///
+/// A `#[serde(skip)]` variant is left out. One skipped in a single direction stays, because the
+/// other direction uses it. An enum with an `#[serde(untagged)]` variant documents that variant
+/// without the tag, and its branches with `anyOf` and no `discriminator`, because serde takes the
+/// first match and the untagged branch has no tag.
+///
 /// ## Field attributes
 ///
 /// Individual fields can be annotated with `#[schematic(...)]` to enrich the

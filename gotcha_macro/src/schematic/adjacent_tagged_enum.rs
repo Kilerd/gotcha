@@ -1,6 +1,7 @@
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 
+use crate::schematic::untagged_enum::WrappedValue;
 use crate::schematic::ParameterEnumVariantOpt;
 
 /// Handler for adjacently tagged enums: #[serde(tag = "kind", content = "data")]
@@ -11,9 +12,27 @@ pub(crate) fn handler(
     let tag_name_str = tag_name.as_str();
     let content_name_str = content_name.as_str();
 
+    // An `#[serde(untagged)]` branch has no tag to discriminate on and can accept what another
+    // branch accepts, and serde takes the first match.
+    let has_untagged = variants.iter().any(|variant| variant.serde.untagged);
+    let union_keyword = if has_untagged { "anyOf" } else { "oneOf" };
+    let discriminator = quote! {
+        {
+            let mut discriminator: ::std::collections::HashMap<String, #core::serde_json::Value> = ::std::collections::HashMap::new();
+            discriminator.insert("propertyName".to_string(), #core::serde_json::to_value(#tag_name_str).unwrap());
+            #core::serde_json::to_value(discriminator).unwrap()
+        }
+    };
+    let schema_discriminator = (!has_untagged).then(|| quote! { schema.schema.extras.insert("discriminator".to_string(), #discriminator); });
+    let flatten_discriminator = (!has_untagged).then(|| quote! { obj.insert("discriminator".to_string(), #discriminator); });
+
     let variants_codegen: Vec<TokenStream2> = variants
         .into_iter()
         .map(|variant| {
+            if variant.serde.untagged {
+                return variant.untagged_branch_object(core, WrappedValue::Referenced);
+            }
+
             let variant_string = variant.serde_name();
             let variant_annotations = variant.variant_customizations(core);
 
@@ -25,7 +44,7 @@ pub(crate) fn handler(
 
             match variant.style() {
                 darling::ast::Style::Struct => {
-                    let content = crate::schematic::named_variant_object(core, None, variant.fields.fields);
+                    let content = crate::schematic::named_variant_object(core, None, variant.fields.fields, false);
                     quote! {
                         {
                             #tag_enum
@@ -131,34 +150,30 @@ pub(crate) fn handler(
                     required: Self::required(),
                 };
 
+                let flattening = false;
                 let branches: Vec<::std::collections::HashMap<String, #core::serde_json::Value>> = vec![
                     #(
                         #variants_codegen,
                     )*
                 ];
 
-                let mut discriminator: ::std::collections::HashMap<String, #core::serde_json::Value> = ::std::collections::HashMap::new();
-                discriminator.insert("propertyName".to_string(), #core::serde_json::to_value(#tag_name_str).unwrap());
-
-                schema.schema.extras.insert("oneOf".to_string(), #core::serde_json::to_value(branches).unwrap());
-                schema.schema.extras.insert("discriminator".to_string(), #core::serde_json::to_value(discriminator).unwrap());
+                schema.schema.extras.insert(#union_keyword.to_string(), #core::serde_json::to_value(branches).unwrap());
+                #schema_discriminator
                 schema
             })
         }
 
         fn flatten_schema() -> Option<#core::serde_json::Value> {
+            let flattening = true;
             let branches: Vec<::std::collections::HashMap<String, #core::serde_json::Value>> = vec![
                 #(
                     #variants_codegen,
                 )*
             ];
 
-            let mut discriminator: ::std::collections::HashMap<String, #core::serde_json::Value> = ::std::collections::HashMap::new();
-            discriminator.insert("propertyName".to_string(), #core::serde_json::to_value(#tag_name_str).unwrap());
-
             let mut obj: ::std::collections::HashMap<String, #core::serde_json::Value> = ::std::collections::HashMap::new();
-            obj.insert("oneOf".to_string(), #core::serde_json::to_value(branches).unwrap());
-            obj.insert("discriminator".to_string(), #core::serde_json::to_value(discriminator).unwrap());
+            obj.insert(#union_keyword.to_string(), #core::serde_json::to_value(branches).unwrap());
+            #flatten_discriminator
             Some(#core::serde_json::to_value(obj).unwrap())
         }
     };

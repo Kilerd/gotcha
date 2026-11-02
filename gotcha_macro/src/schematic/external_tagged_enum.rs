@@ -1,12 +1,26 @@
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 
+use crate::schematic::untagged_enum::WrappedValue;
 use crate::schematic::ParameterEnumVariantOpt;
 
 pub(crate) fn handler(core: &TokenStream2, ident_string: String, doc: TokenStream2, variants: Vec<ParameterEnumVariantOpt>) -> syn::Result<TokenStream2> {
+    // An `#[serde(untagged)]` branch has no tag and can accept what another branch accepts, and
+    // serde takes the first match.
+    let union_keyword = if variants.iter().any(|variant| variant.serde.untagged) {
+        "anyOf"
+    } else {
+        "oneOf"
+    };
+
     let variants_codegen: Vec<TokenStream2> = variants
         .into_iter()
         .map(|variant| {
+            if variant.serde.untagged {
+                let branch = variant.untagged_branch_object(core, WrappedValue::Referenced);
+                return quote! { let variant_object = #branch; };
+            }
+
             let varient_string = variant.serde_name();
             let variant_annotations = variant.variant_customizations(core);
             let style = variant.style();
@@ -45,7 +59,7 @@ pub(crate) fn handler(core: &TokenStream2, ident_string: String, doc: TokenStrea
             } else {
                 // Struct variant: the shared emitter applies skip/flatten/rename and
                 // `#[schematic(..)]` to its fields.
-                let content = crate::schematic::named_variant_object(core, None, variant.fields.fields);
+                let content = crate::schematic::named_variant_object(core, None, variant.fields.fields, false);
                 quote! {
                     #core::serde_json::to_value(#content).expect("cannot convert variant content to value")
                 }
@@ -95,26 +109,28 @@ pub(crate) fn handler(core: &TokenStream2, ident_string: String, doc: TokenStrea
                     required: Self::required(),
                 };
                 let mut branches = vec![];
+                let flattening = false;
 
                 #(
                     #variants_codegen
                     branches.push(variant_object);
                 )*
 
-                schema.schema.extras.insert("oneOf".to_string(), #core::serde_json::to_value(branches).unwrap());
+                schema.schema.extras.insert(#union_keyword.to_string(), #core::serde_json::to_value(branches).unwrap());
                 schema
             })
         }
 
         fn flatten_schema() -> Option<#core::serde_json::Value> {
-            // Return the oneOf schema for flattening
+            // Return the union schema for flattening
             let mut branches: Vec<::std::collections::HashMap<String, #core::serde_json::Value>> = vec![];
+            let flattening = true;
             #(
                 #variants_codegen
                 branches.push(variant_object);
             )*
             let mut obj: ::std::collections::HashMap<String, #core::serde_json::Value> = ::std::collections::HashMap::new();
-            obj.insert("oneOf".to_string(), #core::serde_json::to_value(branches).unwrap());
+            obj.insert(#union_keyword.to_string(), #core::serde_json::to_value(branches).unwrap());
             Some(#core::serde_json::to_value(obj).unwrap())
         }
     };

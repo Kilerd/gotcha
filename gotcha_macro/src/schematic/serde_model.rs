@@ -125,6 +125,10 @@ impl SerdeContainer {
 pub(crate) struct SerdeVariant {
     /// The name the schema documents.
     schema_name: String,
+    /// `#[serde(skip)]`: serde neither writes nor reads the variant.
+    pub(crate) skipped: bool,
+    /// `#[serde(untagged)]` on the variant: it is written without the enum's tag.
+    pub(crate) untagged: bool,
 }
 
 impl SerdeVariant {
@@ -144,6 +148,8 @@ impl SerdeVariant {
             let common = container.rename_all.common.apply_to_variant(&ident.unraw().to_string());
             let serde = SerdeVariant {
                 schema_name: schema_name(name.serialize_name(), name.deserialize_name(), common),
+                skipped: parsed.skip_serializing() && parsed.skip_deserializing(),
+                untagged: parsed.untagged(),
             };
             (serde, CaseRules::new(parsed.rename_all_rules()).or(container.rename_all_fields))
         })
@@ -455,6 +461,18 @@ mod tests {
 
         let plain = container(syn::parse_quote! { enum E {} });
         assert_eq!(name(&plain, syn::parse_quote!(r#Type)), "Type");
+    }
+
+    #[test]
+    fn only_a_variant_skipped_in_both_directions_is_skipped() {
+        let container = SerdeContainer::from_input(&syn::parse_quote! { enum E {} });
+        let ident: syn::Ident = syn::parse_quote!(V);
+        let skipped = |attr: syn::Attribute| SerdeVariant::parse(&ident, &[attr], &container).0.skipped;
+
+        assert!(skipped(syn::parse_quote!(#[serde(skip)])));
+        assert!(skipped(syn::parse_quote!(#[serde(skip_serializing, skip_deserializing)])));
+        assert!(!skipped(syn::parse_quote!(#[serde(skip_serializing)])));
+        assert!(!skipped(syn::parse_quote!(#[serde(skip_deserializing)])));
     }
 
     #[test]
