@@ -1,61 +1,106 @@
 # Migration Guide
 
-- [Unreleased: built-in extractors report provider keys](#unreleased-built-in-extractors-report-provider-keys)
-- [Unreleased: additive configuration sources](#unreleased-additive-configuration-sources)
-- [Unreleased: Message and Messager moved out of gotcha](#unreleased-message-and-messager-moved-out-of-gotcha)
-- [Unreleased: deny_unknown_fields closes schemas](#unreleased-deny_unknown_fields-closes-schemas)
-- [Unreleased: from and into proxies document the type](#unreleased-from-and-into-proxies-document-the-type)
-- [Unreleased: moving from GotchaApp to the builder](#unreleased-moving-from-gotchaapp-to-the-builder)
-- [Unreleased: extractor provider keys](#unreleased-extractor-provider-keys)
-- [Unreleased: skipped and untagged variants](#unreleased-skipped-and-untagged-variants)
-- [Unreleased: names serde writes and reads differently](#unreleased-names-serde-writes-and-reads-differently)
-- [Unreleased: the macro crate needs Rust 1.88](#unreleased-the-macro-crate-needs-rust-188)
-- [Unreleased: untagged enums use anyOf](#unreleased-untagged-enums-use-anyof)
-- [Unreleased: variant-level schematic attributes](#unreleased-variant-level-schematic-attributes)
-- [Unreleased: derive documents serde's wire shapes](#unreleased-derive-documents-serdes-wire-shapes)
-- [Unreleased: invalid task registrations fail startup](#unreleased-invalid-task-registrations-fail-startup)
-- [Unreleased: non-exhaustive extractor enums](#unreleased-non-exhaustive-extractor-enums)
-- [Unreleased: shared configuration](#unreleased-shared-configuration)
-- [Unreleased: removed unused public items](#unreleased-removed-unused-public-items)
-- [Unreleased: duplicate operation ids are suffixed](#unreleased-duplicate-operation-ids-are-suffixed)
-- [Unreleased: data-type Schematic impls are features](#unreleased-data-type-schematic-impls-are-features)
-- [Unreleased: validation `length` keywords follow the schema type](#unreleased-validation-length-keywords-follow-the-schema-type)
-- [Unreleased: extractor rejection responses in OpenAPI](#unreleased-extractor-rejection-responses-in-openapi)
-- [Unreleased: neutral OpenAPI info defaults](#unreleased-neutral-openapi-info-defaults)
-- [Unreleased: serde-driven field presence](#unreleased-serde-driven-field-presence)
-- [Unreleased: validation error bodies](#unreleased-validation-error-bodies)
-- [Unreleased: Schematic in every build and wire-name validation errors](#unreleased-schematic-in-every-build-and-wire-name-validation-errors)
-- [Unreleased: JSON error bodies and extractors](#unreleased-json-error-bodies-and-extractors)
-- [Unreleased: OpenAPI 3.2](#unreleased-openapi-32)
-- [Unreleased: HTTP/1 is always enabled](#unreleased-http1-is-always-enabled)
-- [Unreleased: derive dependency paths](#unreleased-derive-dependency-paths)
-- [Unreleased: explicit OpenAPI endpoints](#unreleased-explicit-openapi-endpoints)
-- [Unreleased: static OpenAPI descriptors](#unreleased-static-openapi-descriptors)
-- [Unreleased: owned scheduled tasks](#unreleased-owned-scheduled-tasks)
-- [Unreleased: shared startup](#unreleased-shared-startup)
-- [Unreleased: runtime type bounds](#unreleased-runtime-type-bounds)
-- [Unreleased: bound servers and shutdown lifecycle](#unreleased-bound-servers-and-shutdown-lifecycle)
-- [Unreleased: HTTP response contracts](#unreleased-http-response-contracts)
-- [Unreleased: application and route composition](#unreleased-application-and-route-composition)
-- [Unreleased: documented method routers](#unreleased-documented-method-routers)
-- [Unreleased: OpenAPI transform composition](#unreleased-openapi-transform-composition)
-- [Unreleased: nested OpenAPI paths](#unreleased-nested-openapi-paths)
-- [Unreleased: schema identity and component names](#unreleased-schema-identity-and-component-names)
-- [Unreleased: ordered configuration sources](#unreleased-ordered-configuration-sources)
-- [Unreleased: typed configuration defaults](#unreleased-typed-configuration-defaults)
-- [Unreleased: default configuration sources](#unreleased-default-configuration-sources)
+- [0.4 → 0.5](#04--05) — start here: what most applications change, then every change
+  - [built-in extractors report provider keys](#04--05-built-in-extractors-report-provider-keys)
+  - [additive configuration sources](#04--05-additive-configuration-sources)
+  - [Message and Messager moved out of gotcha](#04--05-message-and-messager-moved-out-of-gotcha)
+  - [deny_unknown_fields closes schemas](#04--05-deny_unknown_fields-closes-schemas)
+  - [from and into proxies document the type](#04--05-from-and-into-proxies-document-the-type)
+  - [moving from GotchaApp to the builder](#04--05-moving-from-gotchaapp-to-the-builder)
+  - [extractor provider keys](#04--05-extractor-provider-keys)
+  - [skipped and untagged variants](#04--05-skipped-and-untagged-variants)
+  - [names serde writes and reads differently](#04--05-names-serde-writes-and-reads-differently)
+  - [Rust 1.89 is required](#04--05-rust-189-is-required)
+  - [untagged enums use anyOf](#04--05-untagged-enums-use-anyof)
+  - [variant-level schematic attributes](#04--05-variant-level-schematic-attributes)
+  - [derive documents serde's wire shapes](#04--05-derive-documents-serdes-wire-shapes)
+  - [invalid task registrations fail startup](#04--05-invalid-task-registrations-fail-startup)
+  - [non-exhaustive extractor enums](#04--05-non-exhaustive-extractor-enums)
+  - [shared configuration](#04--05-shared-configuration)
+  - [removed unused public items](#04--05-removed-unused-public-items)
+  - [duplicate operation ids are suffixed](#04--05-duplicate-operation-ids-are-suffixed)
+  - [data-type Schematic impls are features](#04--05-data-type-schematic-impls-are-features)
+  - [validation `length` keywords follow the schema type](#04--05-validation-length-keywords-follow-the-schema-type)
+  - [extractor rejection responses in OpenAPI](#04--05-extractor-rejection-responses-in-openapi)
+  - [neutral OpenAPI info defaults](#04--05-neutral-openapi-info-defaults)
+  - [serde-driven field presence](#04--05-serde-driven-field-presence)
+  - [validation error bodies](#04--05-validation-error-bodies)
+  - [Schematic in every build and wire-name validation errors](#04--05-schematic-in-every-build-and-wire-name-validation-errors)
+  - [JSON error bodies and extractors](#04--05-json-error-bodies-and-extractors)
+  - [OpenAPI 3.2](#04--05-openapi-32)
+  - [HTTP/1 is always enabled](#04--05-http1-is-always-enabled)
+  - [derive dependency paths](#04--05-derive-dependency-paths)
+  - [explicit OpenAPI endpoints](#04--05-explicit-openapi-endpoints)
+  - [static OpenAPI descriptors](#04--05-static-openapi-descriptors)
+  - [owned scheduled tasks](#04--05-owned-scheduled-tasks)
+  - [shared startup](#04--05-shared-startup)
+  - [runtime type bounds](#04--05-runtime-type-bounds)
+  - [bound servers and shutdown lifecycle](#04--05-bound-servers-and-shutdown-lifecycle)
+  - [HTTP response contracts](#04--05-http-response-contracts)
+  - [application and route composition](#04--05-application-and-route-composition)
+  - [documented method routers](#04--05-documented-method-routers)
+  - [OpenAPI transform composition](#04--05-openapi-transform-composition)
+  - [nested OpenAPI paths](#04--05-nested-openapi-paths)
+  - [schema identity and component names](#04--05-schema-identity-and-component-names)
+  - [ordered configuration sources](#04--05-ordered-configuration-sources)
+  - [typed configuration defaults](#04--05-typed-configuration-defaults)
+  - [default configuration sources](#04--05-default-configuration-sources)
 - [0.3 → 0.4](#03--04) — **every application must edit its route paths and configuration file**
 - [0.2 → 0.3: API simplification](#02--03-api-simplification)
 
 ---
 
-# Unreleased: built-in extractors report provider keys
+# 0.4 → 0.5
+
+This part covers upgrading from 0.4.1. Sections run roughly newest first and each says what to
+change. Where two sections touch the same API, follow the one nearer the top. `ExtractorKind` is new
+since 0.4.1, so changes to it need no action when coming from a published release.
+
+Most applications need to act on these:
+
+- **Every application:** [Rust 1.89 is required](#04--05-rust-189-is-required). [Bound servers and
+  shutdown lifecycle](#04--05-bound-servers-and-shutdown-lifecycle): Ctrl-C and SIGTERM now start a
+  drain bounded at 30 seconds, and `GotchaContext` struct literals stop compiling.
+- **Builder applications:** [shared startup](#04--05-shared-startup): `run()` now binds the address
+  in `config.server`, and configuration errors stop startup.
+- **Applications using Gotcha's extractors:** [JSON error bodies and
+  extractors](#04--05-json-error-bodies-and-extractors): rejections are JSON, and `Result<Json<T>,
+  JsonRejection>` becomes `Result<Json<T>, Rejected<JsonRejection>>`.
+- **Applications calling `.route(..)`:** [documented method
+  routers](#04--05-documented-method-routers): an Axum method router needs `route_raw`. The
+  `.get(path, handler)` shortcuts are unchanged.
+- **`GotchaApp` applications:** [moving from GotchaApp to the
+  builder](#04--05-moving-from-gotchaapp-to-the-builder): the trait is deprecated, so a crate that
+  denies warnings needs `#[allow(deprecated)]`.
+- **Applications using `Valid`:** [Schematic in every build and wire-name validation
+  errors](#04--05-schematic-in-every-build-and-wire-name-validation-errors): the validated type
+  needs `Schematic`. [Validation error bodies](#04--05-validation-error-bodies): the `422` body
+  changes.
+- **Applications listing the `http1` feature:** [HTTP/1 is always
+  enabled](#04--05-http1-is-always-enabled): the feature is gone, and Cargo fails to resolve a
+  dependency that still names it.
+- **Applications using `Message` or `Messager`:** [Message and Messager moved out of
+  gotcha](#04--05-message-and-messager-moved-out-of-gotcha): copy the module from the guide.
+- **Applications calling `with_env_config`, `with_file_config` or `with_optional_config`:**
+  [additive configuration sources](#04--05-additive-configuration-sources): they now also read
+  `configurations/application.toml`, the profile file and `APP_*` variables, which can silently
+  change settings such as the bound port.
+- **`openapi` applications:** [explicit OpenAPI endpoints](#04--05-explicit-openapi-endpoints):
+  nothing is served until the builder calls `.with_openapi()` or a `GotchaApp` returns
+  `Some(OpenApiEndpoints::default())` from `openapi_endpoints`. [OpenAPI 3.2](#04--05-openapi-32),
+  [HTTP response contracts](#04--05-http-response-contracts) and [extractor rejection
+  responses](#04--05-extractor-rejection-responses-in-openapi) change documents and return types, so
+  regenerate clients.
+
+---
+
+# 0.4 → 0.5: built-in extractors report provider keys
 
 **`ExtractorKind` loses its unit variants (`Json`, `Form`, `Query`, `Path`, `Multipart`,
 `TypedHeader`, `Header`, `Cookie`, `Valid`).** Gotcha's own extractors now report the same
 `ExtractorKind::Provider` keys a third-party provider uses, so there is one way to name a provider.
-Documents and rejection responses do not change. `ExtractorKind` is not in a published release
-yet, so this only affects code written against an unreleased revision.
+Documents and rejection responses do not change. `ExtractorKind` is new in 0.5, so this only
+affects code written against a revision between 0.4 and 0.5.
 
 - Replace each unit variant with the key of its provider: `ExtractorKind::Json` becomes
   `gotcha::extract::kind::<JsonProvider>()`, and likewise `FormProvider`, `QueryProvider`,
@@ -70,7 +115,7 @@ yet, so this only affects code written against an unreleased revision.
 
 ---
 
-# Unreleased: additive configuration sources
+# 0.4 → 0.5: additive configuration sources
 
 `with_env_config`, `with_file_config`, `with_optional_config`, `with_default_files`,
 `with_default_env`, and `enable_variable_substitution` were documented as adding to existing
@@ -99,11 +144,11 @@ What changes:
   loading error, and so is a key holding different types in two layers: `[db]` in `application.toml`
   with `db = "..."` in `local.toml` fails with `merge fail, path=$.db`, though both files are valid.
   The strict policy stops startup on these errors.
-- **A fallback policy can now drop added files.** `ConfigErrorPolicy` still replaces the whole
-  configuration after any loading error, and these errors now count. With an invalid
-  `application.toml`, `.with_optional_config("local.toml")` under `fallback_to_default()` used to
-  load `local.toml`; it now falls back to full defaults (port 3000, empty application settings),
-  with only a warning in the log.
+- **A fallback policy drops added files.** `ConfigErrorPolicy` replaces the whole configuration
+  after any loading error, including errors in the automatic sources. With an invalid
+  `application.toml`, `.with_optional_config("local.toml")` under `fallback_to_default()` does not
+  load `local.toml`: it falls back to full defaults (port 3000, empty application settings), with
+  only a warning in the log.
 - **A non-UTF-8 environment variable now panics in more chains.** Every environment source calls
   `std::env::vars()`, which panics on any variable that is not valid Unicode, whatever its name,
   and a panic bypasses `ConfigErrorPolicy`. Automatic loading already did this. A chain with no
@@ -185,7 +230,7 @@ environment, while `with_optional_config("first.toml")` keeps it below. Likewise
 
 ---
 
-# Unreleased: Message and Messager moved out of gotcha
+# 0.4 → 0.5: Message and Messager moved out of gotcha
 
 `gotcha::Message`, `gotcha::Messager`, and the `gotcha::message` module are gone. `Messager` was a
 thin wrapper over `GotchaContext` that nothing in the framework used. Its `spawn` started a detached
@@ -360,7 +405,7 @@ async fn main() -> GotchaResult<()> {
 
 ---
 
-# Unreleased: deny_unknown_fields closes schemas
+# 0.4 → 0.5: deny_unknown_fields closes schemas
 
 `#[serde(deny_unknown_fields)]` now adds `additionalProperties: false` to the schema, where serde
 rejects unknown keys:
@@ -398,7 +443,7 @@ These stay as they were:
 
 ---
 
-# Unreleased: from and into proxies document the type
+# 0.4 → 0.5: from and into proxies document the type
 
 A type that converts through one proxy in both directions, `#[serde(from = "P", into = "P")]` or
 `#[serde(try_from = "P", into = "P")]`, is now documented as `P`, because that is what is on the
@@ -437,7 +482,7 @@ Regenerate clients built from such a type.
 
 ---
 
-# Unreleased: moving from GotchaApp to the builder
+# 0.4 → 0.5: moving from GotchaApp to the builder
 
 Every `GotchaApp` method now has a `Gotcha` builder equivalent, so an application can be described
 with the builder alone. **`GotchaApp` is deprecated** and will be removed in a later release. Until
@@ -548,7 +593,7 @@ not cover.
 
 ---
 
-# Unreleased: extractor provider keys
+# 0.4 → 0.5: extractor provider keys
 
 Rejection configurations and their documentation are keyed by the provider's type, so an extractor
 defined outside Gotcha can be configured and documented like the built-in ones. Documents and
@@ -558,12 +603,12 @@ rejection responses do not change.
   `gotcha::extract::RejectionProvider`, and `All(KindList)`, built by `ExtractorKind::all(..)`,
   which stands for every kind another extractor reports. The enum was already
   `#[non_exhaustive]`, so `match` is unaffected, but it now has variants that carry data:
-  **casting it with `as` no longer compiles.** `ExtractorKind` is not in a published release
-  yet.
+  **casting it with `as` no longer compiles.** `ExtractorKind` is new in 0.5, so code upgrading
+  from 0.4 is not affected.
 - `kind::<JsonProvider>()` documents exactly like the built-in `Json` extractor, including the
   application's `JsonConfig`, and likewise for the other built-in providers. The built-in
   extractors later switched to these keys; see
-  [built-in extractors report provider keys](#unreleased-built-in-extractors-report-provider-keys).
+  [built-in extractors report provider keys](#04--05-built-in-extractors-report-provider-keys).
 - Providers, including hand-written `extractor_kinds()`, are named with
   `gotcha::extract::kind::<P>()`. See
   [Writing an extractor provider](README.md#writing-an-extractor-provider) for an extractor
@@ -571,7 +616,7 @@ rejection responses do not change.
 
 ---
 
-# Unreleased: skipped and untagged variants
+# 0.4 → 0.5: skipped and untagged variants
 
 The `Schematic` derive now reads `#[serde(skip)]` and `#[serde(untagged)]` on enum variants.
 
@@ -593,7 +638,7 @@ regenerate clients built from them.
 
 ---
 
-# Unreleased: names serde writes and reads differently
+# 0.4 → 0.5: names serde writes and reads differently
 
 The `Schematic` derive now reads the list forms of `rename`, `rename_all` and `rename_all_fields`.
 A type has one schema, so it cannot describe both directions when the names differ. A name stays
@@ -618,15 +663,16 @@ writes nor reads.
 
 ---
 
-# Unreleased: the macro crate needs Rust 1.88
+# 0.4 → 0.5: Rust 1.89 is required
 
-`gotcha_macro` now depends on darling 0.23, which declares `rust-version = "1.88"`, so a
-dependency tree with only `gotcha_core` or `gotcha_macro` needs Rust 1.88 (previously 1.85).
-`gotcha` already resolved darling 0.23 through `validator`, so its requirement is unchanged.
+`gotcha`, `gotcha_core`, and `gotcha_macro` declare `rust-version = "1.89"`, and CI checks
+them with Rust 1.89. With an older compiler, Cargo refuses to build them and names the required
+version. The default features need 1.89 through `uuid`. `gotcha_macro` also moved to darling
+0.23, which by itself would need 1.88.
 
 ---
 
-# Unreleased: untagged enums use anyOf
+# 0.4 → 0.5: untagged enums use anyOf
 
 `#[serde(untagged)]` enums are now documented with `anyOf` instead of `oneOf`. Serde picks the
 first variant that accepts a value, and more than one branch may accept the same value
@@ -639,7 +685,7 @@ fields, so regenerate them.
 
 ---
 
-# Unreleased: variant-level schematic attributes
+# 0.4 → 0.5: variant-level schematic attributes
 
 Enum variants accept `#[schematic(title = "...", description = "...")]`. The annotations are
 added to the variant's schema branch, and a doc comment on the variant is the description
@@ -655,7 +701,7 @@ named struct-variant fields keep their doc comments, as before.
 
 ---
 
-# Unreleased: derive documents serde's wire shapes
+# 0.4 → 0.5: derive documents serde's wire shapes
 
 The `Schematic` derive now documents enum variants and struct-variant fields the way serde writes
 them. Generated documents change for these shapes; regenerate clients built from them.
@@ -683,7 +729,7 @@ them. Generated documents change for these shapes; regenerate clients built from
 
 ---
 
-# Unreleased: invalid task registrations fail startup
+# 0.4 → 0.5: invalid task registrations fail startup
 
 **An application that registers an invalid cron expression or a zero interval no longer starts.**
 `TaskScheduler::cron` and `interval` previously logged the problem and dropped the task, so
@@ -698,7 +744,7 @@ upgrading.
 
 ---
 
-# Unreleased: non-exhaustive extractor enums
+# 0.4 → 0.5: non-exhaustive extractor enums
 
 **`gotcha::ExtractorKind` (with the `openapi` feature), `gotcha_core::ExtractorKind` (with
 `axum`), `gotcha::validation::ValidRejection`, and `gotcha::ParamRejection` are now
@@ -710,11 +756,11 @@ variant, or a header/cookie rejection variant without a breaking change.
 - Constructing the existing variants is unchanged: the `ValidRejection` variants and
   `ParamRejection::Missing`/`Invalid`/`NotText` remain usable. `ExtractorKind`'s unit variants
   were later removed; see
-  [built-in extractors report provider keys](#unreleased-built-in-extractors-report-provider-keys).
+  [built-in extractors report provider keys](#04--05-built-in-extractors-report-provider-keys).
 
 ---
 
-# Unreleased: shared configuration
+# 0.4 → 0.5: shared configuration
 
 `GotchaContext::config` is now an `Arc<ConfigWrapper<C>>` rather than a `ConfigWrapper<C>`. axum
 clones the state passed through `with_state` for every request, so the previous representation
@@ -755,7 +801,7 @@ fn app_config(context: &GotchaContext<AppState, AppConfig>) -> ConfigWrapper<App
 
 ---
 
-# Unreleased: removed unused public items
+# 0.4 → 0.5: removed unused public items
 
 Several public items that nothing in the framework, examples, or documentation used are gone.
 Each had a direct replacement:
@@ -783,7 +829,7 @@ removing a concept.
 
 ---
 
-# Unreleased: duplicate operation ids are suffixed
+# 0.4 → 0.5: duplicate operation ids are suffixed
 
 **Two operations can no longer emit the same `operationId`.** The id defaults to the handler's
 function name, so `users::list` and `books::list`, or one handler mounted at two paths, used to
@@ -799,7 +845,7 @@ unique are unchanged.
 
 ---
 
-# Unreleased: data-type Schematic impls are features
+# 0.4 → 0.5: data-type Schematic impls are features
 
 **`gotcha_core`'s `Schematic` implementations for `bigdecimal`, `chrono`, `rust_decimal`, and
 `uuid` are now default features of `gotcha_core`.** A default dependency behaves exactly as
@@ -823,7 +869,7 @@ Applications that never document these types can now leave them out with
 
 ---
 
-# Unreleased: validation `length` keywords follow the schema type
+# 0.4 → 0.5: validation `length` keywords follow the schema type
 
 `#[validate(length(min = .., max = ..))]` now documents the keywords of the schema the field
 serializes to, chosen at runtime:
@@ -842,7 +888,7 @@ Generated clients that pinned the old keywords on such fields must be regenerate
 
 ---
 
-# Unreleased: extractor rejection responses in OpenAPI
+# 0.4 → 0.5: extractor rejection responses in OpenAPI
 
 **Operations now document the rejections of Gotcha's extractors by default.** An operation whose
 arguments use `Json`, `Form`, `Query`, `Path`, `Multipart`, `TypedHeader`, `Header`, `Cookie`, or
@@ -924,7 +970,7 @@ Regenerate or republish checked-in documents and generated clients.
 
 ---
 
-# Unreleased: neutral OpenAPI info defaults
+# 0.4 → 0.5: neutral OpenAPI info defaults
 
 **Generated documents no longer identify themselves as gotcha.** The default `info` block is now
 neutral: `title: "API"`, `version: "0.1.0"`, and no description (every other optional field is
@@ -967,7 +1013,7 @@ checked-in documents if clients or tooling read `info`.
 
 ---
 
-# Unreleased: serde-driven field presence
+# 0.4 → 0.5: serde-driven field presence
 
 `#[derive(Schematic)]` now derives a named field's presence and nullability from the serde
 attributes already on it, so the document follows the contract for most patterns. Plain
@@ -1000,7 +1046,7 @@ needed unless a type relied on the previous document shape.
 
 ---
 
-# Unreleased: validation error bodies
+# 0.4 → 0.5: validation error bodies
 
 A `Valid` validation failure still returns `422 Unprocessable Entity`, but its body is now the
 framework-wide `ErrorBody` instead of validator's raw `ValidationErrors` structure:
@@ -1032,8 +1078,8 @@ framework-wide `ErrorBody` instead of validator's raw `ValidationErrors` structu
   the original key cannot be recovered and the index may differ between requests.
 - Field segments are serde wire names, not Rust identifiers: `first_name` sent as `firstName` is
   reported as `firstName`. See
-  [Schematic in every build and wire-name validation errors](#unreleased-schematic-in-every-build-and-wire-name-validation-errors).
-- The unreleased `ValidationErrorsBody` type is removed. A custom
+  [Schematic in every build and wire-name validation errors](#04--05-schematic-in-every-build-and-wire-name-validation-errors).
+- The `ValidationErrorsBody` type, added after 0.4 and never released, is removed. A custom
   `ValidConfig::error_handler` still receives `&validator::ValidationErrors`; use
   `gotcha::validation::flatten_errors(&errors)` to build the same field map (or any other
   response shape).
@@ -1046,7 +1092,7 @@ Clients that parsed the raw `ValidationErrors` structure must move to the `field
 
 ---
 
-# Unreleased: Schematic in every build and wire-name validation errors
+# 0.4 → 0.5: Schematic in every build and wire-name validation errors
 
 **`Schematic` no longer requires the `openapi` feature, and `Valid` reports failures under the
 names serde reads.**
@@ -1098,7 +1144,7 @@ read `fields` keys may see renamed keys; regenerate clients that pinned the Rust
 
 ---
 
-# Unreleased: JSON error bodies and extractors
+# 0.4 → 0.5: JSON error bodies and extractors
 
 **Every extractor provider now has its own rejection configuration.** The defaults keep Axum's
 own status for that rejection (`400`, `415`, `422`, ...) and send `{"error": "<message>"}` with
@@ -1119,7 +1165,7 @@ Default behavior by provider:
 - `Header`, `Cookie`: `400` with the same JSON body.
 - `Valid`: validation failures keep today's `422 Unprocessable Entity`, now with the shared
   `ErrorBody` plus a flattened `fields` map (see
-  [validation error bodies](#unreleased-validation-error-bodies)). A malformed body inside
+  [validation error bodies](#04--05-validation-error-bodies)). A malformed body inside
   `Valid<Json<T>>` is a `Json` rejection and uses the `Json` handler.
 
 Override one provider on the builder with
@@ -1188,7 +1234,7 @@ forwards object and array literal tokens correctly, so `json_response!({"ok": tr
 
 ---
 
-# Unreleased: OpenAPI 3.2
+# 0.4 → 0.5: OpenAPI 3.2
 
 Generated documents now use **OpenAPI 3.2.0** and `oas 0.3`. This changes both the exported
 schema format and the public `oas` types used by custom schema/response implementations.
@@ -1246,7 +1292,7 @@ WebSocket message contracts remain separate AsyncAPI work.
 
 ---
 
-# Unreleased: HTTP/1 is always enabled
+# 0.4 → 0.5: HTTP/1 is always enabled
 
 The `http1` feature has been removed. It existed to support Cloudflare Worker integration,
 which is no longer supported. HTTP/1 and Tokio support are now required Axum dependency
@@ -1258,7 +1304,7 @@ Libraries that only implement `Schematic` can continue to depend on `gotcha_core
 
 ---
 
-# Unreleased: derive dependency paths
+# 0.4 → 0.5: derive dependency paths
 
 **`Schematic` stays in `gotcha_core`.** Libraries can continue to depend only on core and either
 implement the trait manually or use `#[derive(gotcha_core::Schematic)]`. Core's web integration
@@ -1296,7 +1342,7 @@ when their trait version matches gotcha's.
 
 ---
 
-# Unreleased: explicit OpenAPI endpoints
+# 0.4 → 0.5: explicit OpenAPI endpoints
 
 **The `openapi` feature no longer exposes HTTP documentation by itself.** It enables schema and
 operation metadata. Applications choose whether and where to serve the resulting document.
@@ -1398,7 +1444,7 @@ It prints JSON and exits without starting the application.
 
 ---
 
-# Unreleased: static OpenAPI descriptors
+# 0.4 → 0.5: static OpenAPI descriptors
 
 `#[api]` keeps its existing syntax and OpenAPI behavior. Its generated `Operable` now stores
 constructor function pointers directly, without `Lazy`, boxed closures, or a runtime constructor
@@ -1435,7 +1481,7 @@ performance improvement is claimed.
 
 ---
 
-# Unreleased: owned scheduled tasks
+# 0.4 → 0.5: owned scheduled tasks
 
 **Task registration no longer starts background work.** The application owns its scheduled tasks
 and shuts them down together with HTTP serving.
@@ -1490,7 +1536,7 @@ Scheduled executions get a 30-second grace period by default. Configure it with 
 `.task_shutdown_timeout(duration)` or the trait's `fn task_shutdown_timeout(&self) -> Duration`.
 The deadline starts when shutdown is requested, independently of HTTP draining. HTTP draining is
 bounded separately by `http_shutdown_timeout`; see
-[bound servers and shutdown lifecycle](#unreleased-bound-servers-and-shutdown-lifecycle). A serve
+[bound servers and shutdown lifecycle](#04--05-bound-servers-and-shutdown-lifecycle). A serve
 error also stops and drains the scheduled tasks; cancelling the serving future requests abortion of
 all scheduled work and signals HTTP shutdown.
 
@@ -1510,11 +1556,11 @@ already-due tick once when it finishes and then resumes at the next period bound
 time, anchored to the last trigger that fired so a wall-clock step back cannot repeat it. The
 low-level `cron_proc_macro_wrapper` and `interval_proc_macro_wrapper` drivers share these rules.
 Invalid cron expressions and zero intervals are registration errors that fail application startup;
-see [invalid task registrations fail startup](#unreleased-invalid-task-registrations-fail-startup).
+see [invalid task registrations fail startup](#04--05-invalid-task-registrations-fail-startup).
 
 ---
 
-# Unreleased: shared startup
+# 0.4 → 0.5: shared startup
 
 **Builder and trait applications now share configuration policy, address resolution, binding,
 initialization, and serving.** This changes the builder's default error policy and listener source.
@@ -1579,11 +1625,11 @@ address, including a dynamically assigned port, so state initialization and hand
 
 State initialization now runs while the port is reserved, before requests are accepted. Applications
 that depended on initializing state before a bind attempt must account for the new order. See
-[owned scheduled tasks](#unreleased-owned-scheduled-tasks) for task startup and shutdown behavior.
+[owned scheduled tasks](#04--05-owned-scheduled-tasks) for task startup and shutdown behavior.
 
 ---
 
-# Unreleased: runtime type bounds
+# 0.4 → 0.5: runtime type bounds
 
 Initialized values no longer have to implement loading or default-construction traits just to
 be stored in a context, extracted by handlers, or used by scheduled tasks.
@@ -1609,14 +1655,14 @@ This method bound applies even when `config()` is overridden; use an explicit co
 configuration cannot be deserialized. Generic callers of these methods must now state that bound
 explicitly. `Serialize` and `Default` are no longer required by trait-based loading.
 
-Explicit configuration still wins over registered sources. See [shared startup](#unreleased-shared-startup)
+Explicit configuration still wins over registered sources. See [shared startup](#04--05-shared-startup)
 for the unified strict loading policy, explicit fallback, and listener address precedence.
 
 See the [initialized-values example](README.md#initialized-state-and-configuration).
 
 ---
 
-# Unreleased: bound servers and shutdown lifecycle
+# 0.4 → 0.5: bound servers and shutdown lifecycle
 
 ## Bind before serving
 
@@ -1668,7 +1714,7 @@ compatible `tokio-util` dependency.
 
 ## Bounded HTTP draining
 
-HTTP draining was previously unbounded. `http_shutdown_timeout` now defaults to 30 seconds
+HTTP draining is bounded: `http_shutdown_timeout` defaults to 30 seconds
 (builder `.http_shutdown_timeout(duration)` or trait `http_shutdown_timeout(&self)`). Upgraded
 connections (WebSockets) are no longer tracked by axum's graceful shutdown after the upgrade, so
 the drain also waits for those tracked streams. At the deadline, every tracked socket is shut down
@@ -1701,7 +1747,7 @@ cancelling the serving future, releases the listener and skips cleanup.
 
 ---
 
-# Unreleased: HTTP response contracts
+# 0.4 → 0.5: HTTP response contracts
 
 **`Schematic` no longer implies `Responsible`.** A data schema does not determine how a value is
 sent over HTTP. For automatic response inference, custom HTTP types implement `Responsible`
@@ -1774,7 +1820,7 @@ When the return type cannot be inferred — WebSocket upgrades, SSE streams, or 
 such as `Sse<impl Stream<...>>` — add `skip_response`. The nonempty `responses(...)` list then
 describes the return-type part of the contract, and the return type is never placed in a trait
 path. Extractor rejection responses are still added; see
-[extractor rejection responses in OpenAPI](#unreleased-extractor-rejection-responses-in-openapi):
+[extractor rejection responses in OpenAPI](#04--05-extractor-rejection-responses-in-openapi):
 
 ```rust,ignore
 #[derive(Schematic)]
@@ -1854,7 +1900,7 @@ cannot be unioned and fail at assembly; use inline responses with schema-level r
 
 ---
 
-# Unreleased: application and route composition
+# 0.4 → 0.5: application and route composition
 
 **`Gotcha::nest` and `Gotcha::merge` now accept `GotchaRouter<GotchaContext<S, C>>`, not another
 `Gotcha<S, C>`.** Previously they extracted only the child's router and silently discarded its
@@ -1887,7 +1933,7 @@ same context type; doing so reuses only routes, not its `state`, `tasks`, or sta
 
 ---
 
-# Unreleased: documented method routers
+# 0.4 → 0.5: documented method routers
 
 **`Gotcha::route` and `GotchaRouter::route` now require `MethodRouter`.** This type carries
 HTTP handlers and their OpenAPI descriptors together. Previously, passing an Axum `MethodRouter`
@@ -1936,7 +1982,7 @@ but is not represented by the current oas PathItem model.
 
 ---
 
-# Unreleased: OpenAPI transform composition
+# 0.4 → 0.5: OpenAPI transform composition
 
 Repeated `.openapi(...)` calls now append callbacks instead of replacing the previous callback.
 `nest` and `merge` retain child callbacks instead of silently dropping them. Both `Gotcha` and
@@ -1959,7 +2005,7 @@ their final prefixed paths. Moving a callback into a nested router does not make
 
 ---
 
-# Unreleased: nested OpenAPI paths
+# 0.4 → 0.5: nested OpenAPI paths
 
 `GotchaRouter::nest` now records OpenAPI paths using the same join rules as the underlying
 Axum router. For example, nesting `/hello` under `/api` documents `/api/hello`, rather than the
@@ -1972,7 +2018,7 @@ remain significant. The same rules apply at each level of nesting and preserve p
 
 ---
 
-# Unreleased: schema identity and component names
+# 0.4 → 0.5: schema identity and component names
 
 Schema collection now identifies derived types by their full Rust type name, including generic
 arguments, instead of treating the display name as the type's identity. Different types no longer
@@ -2029,7 +2075,7 @@ callers of that helper remain responsible for making those identities unique.
 
 ---
 
-# Unreleased: ordered configuration sources
+# 0.4 → 0.5: ordered configuration sources
 
 Configuration sources now retain their insertion order when cloned or restored. Later sources
 override earlier matching values, including when files and environment prefixes are interleaved:
@@ -2047,7 +2093,7 @@ let restored = ConfigBuilder::from_state(builder.state());
 Here `APP` overrides `base.toml`, and `local.toml` overrides both. Previously restoration grouped
 all environment sources before all files, changing precedence. To let environment values win, add
 their source after the files. The `Gotcha::with_*` methods have their own fixed precedence; see
-[additive configuration sources](#unreleased-additive-configuration-sources).
+[additive configuration sources](#04--05-additive-configuration-sources).
 
 **Direct `ConfigState` construction is a source-breaking change.** Replace `file_paths` and
 `env_prefixes` with the ordered `sources` list, specifying which files are required:
@@ -2077,12 +2123,12 @@ through `run()` / `listen()` instead of replacing the configuration with `Defaul
 by `with_default_files` are still optional, but errors in existing files propagate.
 
 An already supplied `.config(...)` value still takes precedence over accumulated sources.
-Automatic loading now follows the same strict default policy; see [shared startup](#unreleased-shared-startup)
+Automatic loading now follows the same strict default policy; see [shared startup](#04--05-shared-startup)
 for explicitly opting into fallback.
 
 ---
 
-# Unreleased: typed configuration defaults
+# 0.4 → 0.5: typed configuration defaults
 
 Framework-managed loading now installs the reserved `[server]` settings as typed defaults beneath
 files and environment variables. `APP_SERVER__PORT=9000` therefore loads on a machine with no
@@ -2105,7 +2151,7 @@ values for those fields are coerced rather than rejected.
 
 ---
 
-# Unreleased: default configuration sources
+# 0.4 → 0.5: default configuration sources
 
 `Gotcha::with_default_config()`, `with_default_files()`, and `with_default_env()` now enable
 variable substitution, matching the explicit `with_*` helpers and automatic loading. `${VAR}`
@@ -2197,7 +2243,7 @@ Typed fields (numbers, booleans) are now parsed from the environment string inst
 
 ## 5. The `message` feature is gone
 
-The message system is always available in 0.4 (it has since [moved out of gotcha](#unreleased-message-and-messager-moved-out-of-gotcha)). Drop it from your feature list:
+The message system is always available in 0.4 (it has since [moved out of gotcha](#04--05-message-and-messager-moved-out-of-gotcha)). Drop it from your feature list:
 
 ```toml
 # before
@@ -2211,7 +2257,7 @@ gotcha = { version = "0.4", features = ["openapi"] }
 ## 6. Smaller changes
 
 - **Validation rejections return `422`**, not `400`. `400` is still used for a malformed body. Every error now carries a readable `message`.
-- **`Result<T, E>` handlers** require `Responsible` on both sides for automatic inference, or can use `#[api(errors(...))]` for explicit error documentation; see [HTTP response contracts](#unreleased-http-response-contracts) for migration.
+- **`Result<T, E>` handlers** require `Responsible` on both sides for automatic inference, or can use `#[api(errors(...))]` for explicit error documentation; see [HTTP response contracts](#04--05-http-response-contracts) for migration.
 - **Handlers returning nothing** now compile (they previously failed with `E0782`) and document an empty body.
 - **`Operable`** gained `summary` and `security` fields; only relevant if you construct it by hand rather than through `#[api]`.
 - **axum 0.8** also removed `#[async_trait]` from its extractor traits. A hand-written `FromRequest` / `FromRequestParts` impl should drop the attribute and use a plain `async fn`.
