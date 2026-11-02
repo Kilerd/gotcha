@@ -1551,6 +1551,7 @@ where
 }
 
 #[cfg(test)]
+#[allow(deprecated)] // The trait's default `config()` is covered until the trait is removed.
 mod source_tests;
 
 #[cfg(test)]
