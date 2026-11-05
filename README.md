@@ -1414,7 +1414,7 @@ gotcha/
     ├── message/      # Typed commands in application code, drained at shutdown
     ├── openapi/      # OpenAPI 3.2 document generation
     ├── simple/       # Builder API example
-    ├── task/         # Cron and interval background tasks
+    ├── task/         # An interval background task
     └── testing-guide/# Integration tests with axum-test
 ```
 
