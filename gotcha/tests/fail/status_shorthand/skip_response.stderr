@@ -1,0 +1,5 @@
+error: responses(STATUS = "description") rewords an inferred response and cannot be combined with skip_response; declare the status with response(status = ..., description = ...) instead
+ --> tests/fail/status_shorthand/skip_response.rs:4:7
+  |
+4 | #[api(skip_response, responses(200 = "hello"))]
+  |       ^^^^^^^^^^^^^

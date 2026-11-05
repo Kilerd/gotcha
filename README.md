@@ -675,6 +675,12 @@ Each endpoint declares its complete error set; the same enum can be shared by en
 different errors. `body` describes the actual wire data, which may be separate from the error enum.
 `errors(...)` also supports return type aliases such as `ApiResult<T>`.
 
+An error type that implements `Responsible` can supply the body for a status, so the description
+alone is enough: `errors(404 = "User not found")`. The shorthand takes the body and media type
+from the error type's entry for that status, or from its `default` response when the status is only
+known at runtime. This form requires `E: Responsible`; the explicit `response(...)` form keeps
+working for error types without one.
+
 #### Extractor rejection responses
 
 Operations also document the rejections of Gotcha's extractor providers, on by default. An
@@ -811,6 +817,11 @@ async fn read_item(Path(id): Path<u32>) -> Result<Json<String>, HttpError> {
 
 Use `responses(...)` to add or override individual statuses while keeping response inference;
 `drop_default` explicitly removes an inferred default. Declarations only affect documentation.
+`responses(STATUS = "description")` restates only the description of a response the success type
+already infers, keeping its body and content type: `responses(200 = "The stored record")`.
+Overriding a status the return type does not document is a compile error; a custom response type
+declares its statuses through `Responsible::STATUSES`. Shorthand and `response(...)` entries mix
+freely and apply in written order.
 See [the migration guide](https://github.com/Kilerd/gotcha/blob/main/MIGRATION.md#04--05-http-response-contracts) for media types and
 inference/override rules.
 

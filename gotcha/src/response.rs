@@ -6,7 +6,10 @@ use axum::{
 };
 
 #[cfg(feature = "openapi")]
-pub use gotcha_core::responsible::{default_response, empty_response, item_response, merge_responses, response, response_with_item, Responsible};
+pub use gotcha_core::responsible::{
+    default_response, describe_error_response, describe_response, empty_response, item_response, merge_responses, response, response_with_item, ErrorResponse,
+    Responsible, Statuses,
+};
 
 #[cfg(feature = "openapi")]
 #[doc(hidden)]
@@ -64,6 +67,8 @@ impl<T: IntoResponse, const STATUS: u16> IntoResponse for WithStatus<T, STATUS> 
 
 #[cfg(feature = "openapi")]
 impl<T: Responsible, const STATUS: u16> Responsible for WithStatus<T, STATUS> {
+    const STATUSES: Statuses = Statuses::of(&[STATUS]);
+
     fn response() -> oas::Responses {
         let () = Self::VALID;
         if Self::has_body() {

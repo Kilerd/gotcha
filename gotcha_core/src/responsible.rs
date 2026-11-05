@@ -9,20 +9,105 @@ use std::convert::Infallible;
 
 /// Maps a handler's HTTP return type to its OpenAPI responses.
 pub trait Responsible {
+    /// The fixed statuses [`Self::response`] places in `Responses::data`.
+    ///
+    /// Responses whose status is only known at runtime live under `default` and are not
+    /// listed. The `#[api(responses(STATUS = "description"))]` shorthand reads this in a
+    /// `const` context to reject an override of a status the return type never infers, so a
+    /// custom implementation that documents fixed statuses must declare them here. The
+    /// default is empty.
+    const STATUSES: Statuses = Statuses::NONE;
+
     /// The statuses, media types, and bodies this type can produce.
     fn response() -> Responses;
+}
+
+/// The fixed statuses a [`Responsible`] implementation documents.
+///
+/// Kept as a bitset so the set can be unioned and queried in a `const` context, where the
+/// `#[api]` response shorthand performs its compile-time checks. Statuses outside
+/// `100..=599` are ignored.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Statuses {
+    /// One bit per status, offset from 100: status 100 is bit 0 and status 599 is bit 499.
+    bits: [u64; 8],
+}
+
+impl Statuses {
+    /// No fixed statuses.
+    pub const NONE: Self = Self { bits: [0; 8] };
+
+    /// Build a set from status codes.
+    pub const fn of(statuses: &[u16]) -> Self {
+        let mut set = Self::NONE;
+        let mut index = 0;
+        while index < statuses.len() {
+            set = set.with(statuses[index]);
+            index += 1;
+        }
+        set
+    }
+
+    /// Add one status.
+    pub const fn with(self, status: u16) -> Self {
+        if status < 100 || status > 599 {
+            return self;
+        }
+        let offset = (status - 100) as usize;
+        let mut bits = self.bits;
+        bits[offset / 64] |= 1 << (offset % 64);
+        Self { bits }
+    }
+
+    /// Combine two sets.
+    pub const fn union(self, other: Self) -> Self {
+        let mut bits = self.bits;
+        let mut index = 0;
+        while index < bits.len() {
+            bits[index] |= other.bits[index];
+            index += 1;
+        }
+        Self { bits }
+    }
+
+    /// Whether `status` is in the set.
+    pub const fn contains(self, status: u16) -> bool {
+        if status < 100 || status > 599 {
+            return false;
+        }
+        let offset = (status - 100) as usize;
+        self.bits[offset / 64] & (1 << (offset % 64)) != 0
+    }
 }
 
 /// Macro support for documenting only the `Ok` branch of a `Result`.
 /// Using trait resolution also supports type aliases without inspecting their spelling.
 #[doc(hidden)]
 pub trait ResultResponse {
+    /// The success branch's fixed statuses.
+    const SUCCESS_STATUSES: Statuses = Statuses::NONE;
+
     fn success_responses() -> Responses;
 }
 
 impl<T: Responsible, E> ResultResponse for Result<T, E> {
+    const SUCCESS_STATUSES: Statuses = T::STATUSES;
+
     fn success_responses() -> Responses {
         T::response()
+    }
+}
+
+/// Macro support for documenting only the `Err` branch of a `Result`.
+/// Using trait resolution also supports type aliases without inspecting their spelling.
+#[doc(hidden)]
+pub trait ErrorResponse {
+    fn error_responses() -> Responses;
+}
+
+impl<T, E: Responsible> ErrorResponse for Result<T, E> {
+    fn error_responses() -> Responses {
+        E::response()
     }
 }
 
@@ -217,6 +302,48 @@ pub fn with_status(responses: Responses, status: u16) -> Responses {
     result
 }
 
+/// Replace the description of the response inferred for `status`.
+///
+/// Backs the `#[api(responses(STATUS = "description"))]` shorthand. Panics when the inferred
+/// contract has no response for that status or when that response is a `$ref`; the panic message
+/// says which declaration to use instead.
+pub fn describe_response(responses: &mut Responses, status: u16, description: impl Into<String>) {
+    let Some(response) = responses.data.get_mut(&status.to_string()) else {
+        panic!("no response is inferred for status {status}; declare it with response(status = {status}, ...)");
+    };
+    let Referenceable::Data(response) = response else {
+        panic!("the response inferred for status {status} is a reference; declare it with response(status = {status}, ...)");
+    };
+    response.description = description.into();
+}
+
+/// Merge the error type's documented response for `status`, replacing its description.
+///
+/// Backs the `#[api(errors(STATUS = "description"))]` shorthand. The body and content type come
+/// from the error type's fixed response for `status`, or from its `default` response when the
+/// error type has no fixed status. Panics when the error type documents neither.
+pub fn describe_error_response(responses: &mut Responses, error_responses: Responses, status: u16, description: impl Into<String>) {
+    let response = error_responses
+        .data
+        .get(&status.to_string())
+        .cloned()
+        .or_else(|| error_responses.default.clone());
+    let Some(mut response) = response else {
+        panic!("the error type documents no response for status {status} and no default response");
+    };
+    let Referenceable::Data(response_data) = &mut response else {
+        panic!("the error type's response for status {status} is a reference");
+    };
+    response_data.description = description.into();
+    merge_responses(
+        responses,
+        Responses {
+            default: None,
+            data: BTreeMap::from([(status.to_string(), response)]),
+        },
+    );
+}
+
 #[cfg(feature = "axum")]
 fn dynamic_status(responses: Responses) -> Responses {
     let mut result = with_status(responses, 200);
@@ -225,6 +352,8 @@ fn dynamic_status(responses: Responses) -> Responses {
 }
 
 impl Responsible for () {
+    const STATUSES: Statuses = Statuses::of(&[200]);
+
     fn response() -> Responses {
         empty_response(200, "no content")
     }
@@ -240,6 +369,8 @@ impl Responsible for Infallible {
 
 macro_rules! text_response {
     ($($ty:ty),* $(,)?) => { $(impl Responsible for $ty {
+        const STATUSES: Statuses = Statuses::of(&[200]);
+
         fn response() -> Responses { response::<String>(200, "text/plain", "text response") }
     })* };
 }
@@ -249,17 +380,23 @@ text_response!(String, &str, Box<str>, std::borrow::Cow<'_, str>);
 mod axum_responses {
     use super::*;
     impl<T: Schematic> Responsible for axum::Json<T> {
+        const STATUSES: Statuses = Statuses::of(&[200]);
+
         fn response() -> Responses {
             response::<T>(200, "application/json", T::doc().unwrap_or_else(|| "JSON response".into()))
         }
     }
     impl<T> Responsible for axum::response::Html<T> {
+        const STATUSES: Statuses = Statuses::of(&[200]);
+
         fn response() -> Responses {
             response::<String>(200, "text/html", "HTML response")
         }
     }
     macro_rules! binary_response {
         ($($ty:ty),* $(,)?) => { $(impl Responsible for $ty {
+            const STATUSES: Statuses = Statuses::of(&[200]);
+
             fn response() -> Responses {
                 // In OpenAPI 3.2 the media type describes unencoded binary content.
                 // A string schema would constrain it as a JSON string instead.
@@ -286,6 +423,8 @@ mod axum_responses {
 }
 
 impl<T: Responsible, E: Responsible> Responsible for Result<T, E> {
+    const STATUSES: Statuses = T::STATUSES.union(E::STATUSES);
+
     fn response() -> Responses {
         let mut responses = T::response();
         merge_responses(&mut responses, E::response());
@@ -296,6 +435,66 @@ impl<T: Responsible, E: Responsible> Responsible for Result<T, E> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn status_sets_union_and_contain_only_response_statuses() {
+        let set = Statuses::of(&[200, 404]).union(Statuses::of(&[201]));
+        for status in [200, 201, 404] {
+            assert!(set.contains(status), "{status}");
+        }
+        for status in [99, 500, 600] {
+            assert!(!set.contains(status), "{status}");
+        }
+        assert_eq!(Statuses::NONE, Statuses::of(&[99, 600]));
+    }
+
+    #[test]
+    fn describe_response_reworks_an_inferred_entry_and_reports_a_missing_one() {
+        let mut responses = response::<String>(200, "text/plain", "old");
+        describe_response(&mut responses, 200, "new");
+        assert_eq!(serde_json::to_value(&responses).unwrap()["200"]["description"], "new");
+
+        let missing = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let mut responses = response::<String>(200, "text/plain", "old");
+            describe_response(&mut responses, 404, "new");
+        }));
+        assert!(missing.is_err());
+    }
+
+    #[test]
+    fn describe_error_response_uses_the_error_types_default_response() {
+        struct WidgetError;
+        impl Responsible for WidgetError {
+            fn response() -> Responses {
+                default_response::<String>("application/json", "error")
+            }
+        }
+
+        let mut responses = response::<String>(200, "application/json", "ok");
+        describe_error_response(&mut responses, WidgetError::response(), 404, "missing");
+        let json = serde_json::to_value(&responses).unwrap();
+        assert_eq!(json["404"]["description"], "missing");
+        assert_eq!(json["404"]["content"]["application/json"]["schema"]["type"], "string");
+        // The error's runtime status was moved to the requested status, not kept as a default.
+        assert!(json.get("default").is_none());
+    }
+
+    #[test]
+    fn result_statuses_union_both_branches() {
+        struct Failure;
+        impl Responsible for Failure {
+            const STATUSES: Statuses = Statuses::of(&[409]);
+
+            fn response() -> Responses {
+                response::<String>(409, "application/json", "conflict")
+            }
+        }
+
+        let set = <Result<String, Failure> as Responsible>::STATUSES;
+        assert!(set.contains(200));
+        assert!(set.contains(409));
+        assert_eq!(<Result<String, Failure> as ResultResponse>::SUCCESS_STATUSES, Statuses::of(&[200]));
+    }
 
     #[test]
     fn response_union_preserves_boolean_and_stream_item_schemas() {

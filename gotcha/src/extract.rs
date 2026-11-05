@@ -565,6 +565,8 @@ mod openapi {
     }
 
     impl<T: Schematic> Responsible for Json<T> {
+        const STATUSES: crate::response::Statuses = <axum::Json<T> as Responsible>::STATUSES;
+
         fn response() -> oas::Responses {
             <axum::Json<T> as Responsible>::response()
         }

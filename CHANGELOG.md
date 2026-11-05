@@ -3,6 +3,18 @@
 All notable changes to Gotcha are documented in this file, in the format of [Keep a
 Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+
+- `#[api]` accepts a description-only shorthand in `responses(...)` and `errors(...)`:
+  `responses(200 = "Stored")` keeps the body and content type the success type infers for that
+  status, and `errors(404 = "Not found")` takes the body and media type the error type documents
+  (its fixed entry, or its `default` response). Overriding a status the success type does not
+  infer is a compile error. `Responsible` gained a `STATUSES` constant to make that check
+  possible; a custom implementation that documents fixed statuses must declare it.
+  ([#211](https://github.com/Kilerd/gotcha/pull/211))
+
 ## [0.5.0] - 2026-11-05
 
 `gotcha`, `gotcha_core` and `gotcha_macro` are released together. To upgrade from 0.4.1, read [the

@@ -1,0 +1,22 @@
+error[E0277]: the trait bound `UndocumentedError: Responsible` is not satisfied
+  --> tests/fail/status_shorthand/errors_require_responsible.rs:16:23
+   |
+16 | async fn handler() -> Result<String, UndocumentedError> {
+   |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ unsatisfied trait bound
+   |
+help: the trait `Responsible` is not implemented for `UndocumentedError`
+  --> tests/fail/status_shorthand/errors_require_responsible.rs:6:1
+   |
+ 6 | struct UndocumentedError;
+   | ^^^^^^^^^^^^^^^^^^^^^^^^
+   = help: the following other types implement trait `Responsible`:
+             &[u8]
+             &str
+             ()
+             (StatusCode, T)
+             Box<[u8]>
+             Box<str>
+             Cow<'_, [u8]>
+             Cow<'_, str>
+           and $N others
+   = note: required for `Result<std::string::String, UndocumentedError>` to implement `gotcha::response::ErrorResponse`

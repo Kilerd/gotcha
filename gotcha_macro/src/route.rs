@@ -72,6 +72,17 @@ impl RouteMeta {
         if !has_responses {
             return Err(darling::Error::custom("skip_response requires at least one responses(response(...)) declaration").with_span(&span));
         }
+        if self.responses.as_ref().is_some_and(|responses| {
+            responses
+                .0
+                .iter()
+                .any(|declaration| matches!(declaration, ResponseItem::DescriptionOnly { .. }))
+        }) {
+            return Err(darling::Error::custom(
+                "responses(STATUS = \"description\") rewords an inferred response and cannot be combined with skip_response; declare the status with response(status = ..., description = ...) instead",
+            )
+            .with_span(&span));
+        }
         Ok(())
     }
 }
@@ -189,16 +200,16 @@ impl RequestBodyMeta {
 }
 
 #[derive(Debug, Default)]
-struct ResponseDeclarations(Vec<ResponseMeta>);
+struct ResponseDeclarations(Vec<ResponseItem>);
 
 #[derive(Debug)]
-struct ErrorDeclarations(Vec<ResponseMeta>);
+struct ErrorDeclarations(Vec<ResponseItem>);
 
 impl FromMeta for ErrorDeclarations {
-    fn from_list(items: &[NestedMeta]) -> darling::Result<Self> {
-        let ResponseDeclarations(responses) = ResponseDeclarations::from_list(items)?;
+    fn from_meta(item: &syn::Meta) -> darling::Result<Self> {
+        let ResponseDeclarations(responses) = ResponseDeclarations::from_meta(item)?;
         if responses.is_empty() {
-            return Err(darling::Error::custom("errors(...) must declare at least one response"));
+            return Err(darling::Error::custom("errors(...) must declare at least one response").with_span(item));
         }
         Ok(Self(responses))
     }
@@ -219,6 +230,8 @@ struct ResponseFields {
 /// One validated `response(...)` declaration, with its types parsed.
 #[derive(Debug)]
 struct ResponseMeta {
+    /// The original `response(...)` item, kept for diagnostics.
+    source: syn::Meta,
     status: u16,
     body: Option<syn::Type>,
     item: Option<syn::Type>,
@@ -226,45 +239,87 @@ struct ResponseMeta {
     description: Option<String>,
 }
 
-impl FromMeta for ResponseDeclarations {
-    fn from_list(items: &[NestedMeta]) -> darling::Result<Self> {
-        let mut responses = Vec::new();
-        let mut statuses = std::collections::BTreeSet::new();
-        for item in items {
-            let NestedMeta::Meta(syn::Meta::List(meta)) = item else {
-                return Err(darling::Error::custom("expected response(status = ..., body = \"Type\")").with_span(item));
-            };
-            if !meta.path.is_ident("response") {
-                return Err(darling::Error::custom("expected response(...)").with_span(meta));
+/// One entry of `responses(...)` or `errors(...)`.
+#[derive(Debug)]
+enum ResponseItem {
+    /// `response(status = ..., body = ...)`: a complete declaration.
+    Explicit(Box<ResponseMeta>),
+    /// `STATUS = "description"`: keeps the inferred body and changes only the description.
+    DescriptionOnly { status: u16, description: String, source: syn::LitInt },
+}
+
+impl syn::parse::Parse for ResponseItem {
+    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+        if input.peek(syn::LitInt) {
+            let status: syn::LitInt = input.parse()?;
+            let value = status.base10_parse::<u16>()?;
+            if !(100..=599).contains(&value) {
+                return Err(syn::Error::new(status.span(), "response status must be in 100..=599"));
             }
-            let response = ResponseFields::from_list(&NestedMeta::parse_meta_list(meta.tokens.clone())?)?;
-            if !(100..=599).contains(&response.status) {
-                return Err(darling::Error::custom("response status must be in 100..=599").with_span(meta));
-            }
-            if !statuses.insert(response.status) {
-                return Err(darling::Error::custom("duplicate response status").with_span(meta));
-            }
-            let body = response.body.as_ref().map(parse_type).transpose()?;
-            let item = response.item.as_ref().map(parse_type).transpose()?;
-            if item.is_some() && response.content_type.is_none() {
-                return Err(darling::Error::custom("item requires an explicit content_type").with_span(meta));
-            }
-            let has_content = body.is_some() || item.is_some();
-            if has_content && (response.status < 200 || matches!(response.status, 204 | 205 | 304)) {
-                return Err(darling::Error::custom("this status cannot declare response content").with_span(meta));
-            }
-            if !has_content && response.content_type.is_some() {
-                return Err(darling::Error::custom("content_type requires a body or item type").with_span(meta));
-            }
-            responses.push(ResponseMeta {
-                status: response.status,
-                body,
-                item,
-                content_type: response.content_type,
-                description: response.description,
+            let _: syn::Token![=] = input.parse()?;
+            let description: syn::LitStr = input.parse()?;
+            return Ok(ResponseItem::DescriptionOnly {
+                status: value,
+                description: description.value(),
+                source: status,
             });
         }
-        Ok(Self(responses))
+        let meta: syn::Meta = input.parse()?;
+        let syn::Meta::List(list) = &meta else {
+            return Err(syn::Error::new_spanned(
+                &meta,
+                "expected response(status = ..., body = ...) or STATUS = \"description\"",
+            ));
+        };
+        if !list.path.is_ident("response") {
+            return Err(syn::Error::new_spanned(list, "expected response(...)"));
+        }
+        let response = ResponseFields::from_list(&NestedMeta::parse_meta_list(list.tokens.clone())?).map_err(|error| error.with_span(list))?;
+        if !(100..=599).contains(&response.status) {
+            return Err(syn::Error::new_spanned(list, "response status must be in 100..=599"));
+        }
+        let body = response.body.as_ref().map(parse_type).transpose()?;
+        let item = response.item.as_ref().map(parse_type).transpose()?;
+        if item.is_some() && response.content_type.is_none() {
+            return Err(syn::Error::new_spanned(list, "item requires an explicit content_type"));
+        }
+        let has_content = body.is_some() || item.is_some();
+        if has_content && (response.status < 200 || matches!(response.status, 204 | 205 | 304)) {
+            return Err(syn::Error::new_spanned(list, "this status cannot declare response content"));
+        }
+        if !has_content && response.content_type.is_some() {
+            return Err(syn::Error::new_spanned(list, "content_type requires a body or item type"));
+        }
+        Ok(ResponseItem::Explicit(Box::new(ResponseMeta {
+            source: meta,
+            status: response.status,
+            body,
+            item,
+            content_type: response.content_type,
+            description: response.description,
+        })))
+    }
+}
+
+impl FromMeta for ResponseDeclarations {
+    fn from_meta(item: &syn::Meta) -> darling::Result<Self> {
+        let syn::Meta::List(meta) = item else {
+            return Err(darling::Error::custom("expected responses(...)").with_span(item));
+        };
+        let items = meta
+            .parse_args_with(syn::punctuated::Punctuated::<ResponseItem, syn::Token![,]>::parse_terminated)
+            .map_err(|error| darling::Error::from(error).with_span(meta))?;
+        let mut statuses = std::collections::BTreeSet::new();
+        for item in &items {
+            let (status, span) = match item {
+                ResponseItem::Explicit(response) => (response.status, response.source.span()),
+                ResponseItem::DescriptionOnly { status, source, .. } => (*status, source.span()),
+            };
+            if !statuses.insert(status) {
+                return Err(darling::Error::custom("duplicate response status").with_span(&span));
+            }
+        }
+        Ok(Self(items.into_iter().collect()))
     }
 }
 
@@ -334,14 +389,9 @@ fn expand_request_handler(args: TokenStream2, input_stream: TokenStream2) -> syn
     let (meta, request_bodies) = parse_route_args(NestedMeta::parse_meta_list(args)?)?;
     let skip_response = meta.skip_response.is_present();
     let declared_request_body = RequestBodyMeta::constructor(&request_bodies, &gotcha);
-    let extra_responses: Vec<_> = meta.responses.unwrap_or_default().0.iter().map(|response| response.tokens(&gotcha)).collect();
-    let explicit_errors = meta.errors.is_some();
-    let error_responses: Vec<_> = meta
-        .errors
-        .into_iter()
-        .flat_map(|errors| errors.0)
-        .map(|response| response.tokens(&gotcha))
-        .collect();
+    let response_declarations = meta.responses.unwrap_or_default().0;
+    let error_declarations = meta.errors.map(|errors| errors.0);
+    let explicit_errors = error_declarations.is_some();
     let drop_default = meta.drop_default.is_present();
     let group = if let Some(group_name) = meta.group {
         quote! { Some(#group_name) }
@@ -425,6 +475,35 @@ fn expand_request_handler(args: TokenStream2, input_stream: TokenStream2) -> syn
         quote!(<#ret_type as #gotcha::Responsible>::response())
     };
 
+    // Statements run in declaration order, so a shorthand and a long form for the same status
+    // behave like two entries of one list. Errors join the inferred success contract first.
+    let response_statements: Vec<_> = response_declarations
+        .iter()
+        .map(|item| match item {
+            ResponseItem::Explicit(response) => {
+                let tokens = response.tokens(&gotcha);
+                quote!(responses.data.extend((#tokens).data);)
+            }
+            ResponseItem::DescriptionOnly { status, description, .. } => {
+                quote!(#gotcha::response::describe_response(&mut responses, #status, #description);)
+            }
+        })
+        .collect();
+    let error_statements: Vec<_> = error_declarations
+        .into_iter()
+        .flatten()
+        .map(|item| match item {
+            ResponseItem::Explicit(response) => {
+                let tokens = response.tokens(&gotcha);
+                quote!(#gotcha::response::merge_responses(&mut responses, #tokens);)
+            }
+            ResponseItem::DescriptionOnly { status, description, .. } => quote!({
+                let error_responses = <#ret_type as #gotcha::response::ErrorResponse>::error_responses();
+                #gotcha::response::describe_error_response(&mut responses, error_responses, #status, #description);
+            }),
+        })
+        .collect();
+
     input.sig.inputs.iter_mut().for_each(|param| {
         if let FnArg::Typed(typed) = param {
             // Remove only the #[api(...)] attributes, keep others
@@ -432,9 +511,35 @@ fn expand_request_handler(args: TokenStream2, input_stream: TokenStream2) -> syn
         }
     });
 
+    // A description-only override names a status the return type must already infer; the set is
+    // a trait constant, so a wrong status fails to compile instead of producing a broken document.
+    let inferred_statuses = if explicit_errors {
+        quote!(<#ret_type as #gotcha::response::ResultResponse>::SUCCESS_STATUSES)
+    } else {
+        quote!(<#ret_type as #gotcha::Responsible>::STATUSES)
+    };
+    let status_checks: Vec<_> = response_declarations
+        .iter()
+        .filter_map(|item| {
+            let ResponseItem::DescriptionOnly { status, .. } = item else { return None };
+            let message = format!(
+                "responses({status} = \"...\"): the success type does not infer a {status} response; declare it with \
+                 responses(response(status = {status}, body = \"...\", description = ...)) instead"
+            );
+            Some(quote! {
+                const _: () = {
+                    if !#gotcha::response::Statuses::contains(#inferred_statuses, #status) {
+                        panic!(#message);
+                    }
+                };
+            })
+        })
+        .collect();
     let ret = quote! {
 
         #input
+
+        #(#status_checks)*
 
         #gotcha::inventory::submit! {
             #gotcha::Operable {
@@ -450,9 +555,9 @@ fn expand_request_handler(args: TokenStream2, input_stream: TokenStream2) -> syn
                 responses: || {
                     let mut responses = #ret_responses;
                     // Declared Err alternatives join the inferred Ok contract, including shared statuses.
-                    #(#gotcha::response::merge_responses(&mut responses, #error_responses);)*
-                    // Explicit declarations replace inference for their status only.
-                    #(responses.data.extend((#extra_responses).data);)*
+                    #(#error_statements)*
+                    // Explicit declarations and description-only overrides apply in order.
+                    #(#response_statements)*
                     if #drop_default { responses.default = None; }
                     assert!(!responses.data.is_empty() || responses.default.is_some(), "OpenAPI operation must declare at least one response");
                     responses
@@ -624,6 +729,63 @@ mod tests {
     }
 
     #[test]
+    fn status_shorthand_parses_alongside_the_long_form() {
+        let meta = parse(syn::parse_quote!(api(
+            responses(200 = "Stored", response(status = 201, body = "User", description = "Created")),
+            errors(404 = "Missing", 409 = "Duplicate", response(status = 500, body = "Problem"))
+        )))
+        .unwrap();
+        let responses = meta.responses.unwrap().0;
+        assert_eq!(responses.len(), 2);
+        assert!(matches!(&responses[0], ResponseItem::DescriptionOnly { status: 200, description, .. } if description == "Stored"));
+        assert!(matches!(&responses[1], ResponseItem::Explicit(response) if response.status == 201));
+        let errors = meta.errors.unwrap().0;
+        assert_eq!(errors.len(), 3);
+        assert!(matches!(&errors[0], ResponseItem::DescriptionOnly { status: 404, .. }));
+        assert!(matches!(&errors[1], ResponseItem::DescriptionOnly { status: 409, .. }));
+        assert!(matches!(&errors[2], ResponseItem::Explicit(response) if response.status == 500));
+
+        // A status may be written only once per list, whatever the form.
+        for invalid in [
+            syn::parse_quote!(api(responses(200 = "one", 200 = "two"))),
+            syn::parse_quote!(api(responses(200 = "one", response(status = 200, body = "User")))),
+            syn::parse_quote!(api(errors(404 = "one", response(status = 404, body = "Problem")))),
+            syn::parse_quote!(api(responses(99 = "too small"))),
+            syn::parse_quote!(api(responses(600 = "too large"))),
+            syn::parse_quote!(api(responses(200 = 42))),
+            syn::parse_quote!(api(responses(status = 200))),
+        ] {
+            assert!(parse(invalid).is_err());
+        }
+    }
+
+    #[test]
+    fn status_shorthand_cannot_stand_in_for_skip_response() {
+        // The shorthand rewords an inferred response, and `skip_response` infers none.
+        assert!(parse_validated(syn::parse_quote!(api(skip_response, responses(200 = "hello")))).is_err());
+        assert!(parse_validated(syn::parse_quote!(api(responses(200 = "hello")))).is_ok());
+    }
+
+    #[test]
+    fn status_shorthand_skips_the_status_checks_the_long_form_keeps() {
+        // A description-only entry has no body, so a bodyless status is fine.
+        assert!(parse(syn::parse_quote!(api(responses(204 = "No content")))).is_ok());
+        // But the status itself still has to be in range and written once.
+        assert!(parse(syn::parse_quote!(api(responses(0 = "bad")))).is_err());
+        assert!(parse(syn::parse_quote!(api(responses(700 = "bad")))).is_err());
+    }
+
+    #[test]
+    fn status_shorthand_tokens_describe_the_inferred_response() {
+        let meta = parse(syn::parse_quote!(api(responses(200 = "Stored")))).unwrap();
+        let ResponseItem::DescriptionOnly { status, description, .. } = &meta.responses.unwrap().0[0] else {
+            unreachable!()
+        };
+        assert_eq!(*status, 200);
+        assert_eq!(description, "Stored");
+    }
+
+    #[test]
     fn item_declarations_require_a_content_type_and_a_content_status() {
         let meta = parse(syn::parse_quote!(api(responses(response(
             status = 200,
@@ -631,7 +793,10 @@ mod tests {
             item = "Event"
         )))))
         .unwrap();
-        let item = meta.responses.unwrap().0[0].item.as_ref().map(|item| quote!(#item).to_string());
+        let ResponseItem::Explicit(response) = &meta.responses.unwrap().0[0] else {
+            unreachable!()
+        };
+        let item = response.item.as_ref().map(|item| quote!(#item).to_string());
         assert_eq!(item.as_deref(), Some("Event"));
 
         for invalid in [
