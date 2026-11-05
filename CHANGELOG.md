@@ -3,7 +3,7 @@
 All notable changes to Gotcha are documented in this file, in the format of [Keep a
 Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [0.5.0] - 2026-11-02
+## [0.5.0] - 2026-11-05
 
 `gotcha`, `gotcha_core` and `gotcha_macro` are released together. To upgrade from 0.4.1, read [the
 migration guide](MIGRATION.md#04--05).
