@@ -3,7 +3,10 @@
 All notable changes to Gotcha are documented in this file, in the format of [Keep a
 Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [0.5.1] - 2026-11-06
+
+`gotcha`, `gotcha_core` and `gotcha_macro` are released together; `gotcha` 0.5.1 requires
+`gotcha_core` and `gotcha_macro` 0.5.1.
 
 ### Added
 
@@ -407,4 +410,5 @@ CI, test, documentation and refactoring changes with no visible effect are omitt
 
 Changes before 0.5.0 are in [MIGRATION.md](MIGRATION.md) and the git history.
 
+[0.5.1]: https://github.com/Kilerd/gotcha/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/Kilerd/gotcha/compare/v0.4.1...v0.5.0
