@@ -1,0 +1,5 @@
+error[E0080]: evaluation panicked: errors(404 = "..."): the error type's Responsible::STATUSES does not declare a 404 response and its Responsible::HAS_DEFAULT is false; declare the status with errors(response(status = 404, body = "...", description = ...)) instead, or, if the type that produces the response already documents that status or a default response, declare that in STATUSES or HAS_DEFAULT (for (StatusCode, T) and WithStatus<T, N>, on T)
+  --> tests/fail/status_shorthand/errors_tuple_with_legacy_inner.rs:27:1
+   |
+27 | #[api(errors(404 = "Not found"))]
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `_` failed here
