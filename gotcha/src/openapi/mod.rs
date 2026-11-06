@@ -38,7 +38,7 @@
 //! [`crate::GotchaApp::openapi_info`], or [`crate::cargo_info!`]; `.openapi(..)` transforms still
 //! run afterwards and can override it.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use axum::http::Method;
 use convert_case::{Case, Casing};
@@ -400,6 +400,114 @@ fn disambiguate_operation_ids(operables: &[((String, Method), &'static Operable)
     }
 }
 
+/// Drop the schemas gotcha built for response entries it then removed.
+///
+/// `dropped` names the components registered while building an inferred `default` response that
+/// `#[api(drop_default)]` removed, resolved to their final component names. A candidate stays
+/// when anything in the final document — paths, webhooks, every `components.*` section, and the
+/// reachable schemas themselves — still references it. Schemas no dropped entry contributed are
+/// never considered, so a type a user registered on purpose, and a schema behind an entry an
+/// explicit declaration overrode, stay exactly as in 0.5.1. A general unreferenced-component
+/// prune is left for 0.6.
+pub(crate) fn drop_removed_response_schemas(spec: &mut OpenAPIV3, dropped: &BTreeSet<String>) {
+    if dropped.is_empty() {
+        return;
+    }
+    let Some(components) = spec.components.as_mut() else { return };
+    let Some(mut schemas) = components.schemas.take() else { return };
+
+    // Root reachability in the whole document except the schema bodies themselves; a transform
+    // may reference a component from `paths`, `webhooks` or any `components.*` section.
+    let mut pending = Vec::new();
+    collect_schema_references(&serde_json::to_value(&*spec).expect("document is serializable"), &mut pending);
+
+    let mut reachable = BTreeSet::new();
+    while let Some(name) = pending.pop() {
+        if !reachable.insert(name.clone()) {
+            continue;
+        }
+        let Some(schema) = schemas.get(&name) else { continue };
+        collect_schema_references(&serde_json::to_value(schema).expect("schema is serializable"), &mut pending);
+    }
+
+    // A schema built for a removed response may reference further components built for it too.
+    let mut eligible = BTreeSet::new();
+    let mut pending: Vec<String> = dropped.iter().cloned().collect();
+    while let Some(name) = pending.pop() {
+        if !eligible.insert(name.clone()) {
+            continue;
+        }
+        let Some(schema) = schemas.get(&name) else { continue };
+        collect_schema_references(&serde_json::to_value(schema).expect("schema is serializable"), &mut pending);
+    }
+
+    schemas.retain(|name, _| !eligible.contains(name) || reachable.contains(name));
+    let components = spec.components.as_mut().expect("components were present");
+    components.schemas = (!schemas.is_empty()).then_some(schemas);
+    if components_is_empty(components) {
+        spec.components = None;
+    }
+}
+
+/// Collect every component name `value` references.
+///
+/// A reference may point into a sub-schema (`#/components/schemas/X/properties/value`), which
+/// still reaches component `X`. Percent-encoding and JSON Pointer escapes are decoded before the
+/// name is compared.
+fn collect_schema_references(value: &serde_json::Value, into: &mut Vec<String>) {
+    match value {
+        serde_json::Value::String(text) => {
+            if let Some(rest) = text.strip_prefix("#/components/schemas/") {
+                let segment = rest.split('/').next().unwrap_or(rest);
+                into.push(decode_component_name(segment));
+            }
+        }
+        serde_json::Value::Array(items) => items.iter().for_each(|item| collect_schema_references(item, into)),
+        serde_json::Value::Object(fields) => fields.values().for_each(|field| collect_schema_references(field, into)),
+        _ => {}
+    }
+}
+
+/// Decode one reference segment: percent-encoding first, then the JSON Pointer escapes.
+fn decode_component_name(segment: &str) -> String {
+    let bytes = segment.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' && index + 2 < bytes.len() {
+            if let (Some(high), Some(low)) = (hex_digit(bytes[index + 1]), hex_digit(bytes[index + 2])) {
+                decoded.push(high << 4 | low);
+                index += 3;
+                continue;
+            }
+        }
+        decoded.push(bytes[index]);
+        index += 1;
+    }
+    String::from_utf8_lossy(&decoded).replace("~1", "/").replace("~0", "~")
+}
+
+fn hex_digit(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
+}
+
+fn components_is_empty(components: &Components) -> bool {
+    components.schemas.is_none()
+        && components.responses.is_none()
+        && components.parameters.is_none()
+        && components.examples.is_none()
+        && components.request_bodies.is_none()
+        && components.headers.is_none()
+        && components.security_schemes.is_none()
+        && components.links.is_none()
+        && components.callbacks.is_none()
+}
+
 /// Assemble the spec from the routes' [`Operable`] descriptors.
 ///
 /// Every operation is generated inside a single [`registry::collect`](gotcha_core::registry::collect)
@@ -413,21 +521,21 @@ fn disambiguate_operation_ids(operables: &[((String, Method), &'static Operable)
 /// `#[api(id = "...")]` ids follow the same rule.
 pub fn generate_openapi(operables: HashMap<(String, Method), &'static Operable>) -> OpenAPIV3 {
     let configs = crate::extract::ExtractorConfigs::default();
-    generate_openapi_with_configs_and_info(operables, &configs, true, default_info())
+    let (mut spec, dropped) = generate_document(operables, &configs, true, default_info());
+    drop_removed_response_schemas(&mut spec, &dropped);
+    spec
 }
 
-/// Like [`generate_openapi`], with the application's extractor configurations and opt-out.
+/// Build the document, also reporting the components registered for responses gotcha removed.
 ///
-/// Every operation documents the rejection responses of the Gotcha providers its arguments use.
-/// A configured error body is built inside the collection scope only when one of those responses
-/// references it, so overrides that no documented operation reaches leave no component behind.
-#[doc(hidden)]
-pub fn generate_openapi_with_configs_and_info(
+/// The caller applies its OpenAPI transforms and then calls [`drop_removed_response_schemas`],
+/// so a transform can still reference one of those components.
+pub(crate) fn generate_document(
     operables: HashMap<(String, Method), &'static Operable>, configs: &crate::extract::ExtractorConfigs, document_extractor_errors: bool, info: Info,
-) -> OpenAPIV3 {
+) -> (OpenAPIV3, BTreeSet<String>) {
     let mut operables: Vec<_> = operables.into_iter().collect();
     operables.sort_by(|((path_a, method_a), _), ((path_b, method_b), _)| (path_a, method_a.as_str()).cmp(&(path_b, method_b.as_str())));
-    let (mut operations, schemas) = gotcha_core::registry::collect(|| {
+    let (mut operations, schemas, dropped) = gotcha_core::registry::collect_with_dropped(|| {
         operables
             .iter()
             .map(|((path, _), operable)| operable.generate_with_configs(path.clone(), configs, document_extractor_errors))
@@ -499,5 +607,21 @@ pub fn generate_openapi_with_configs_and_info(
     // Documents with no grouped operations stay without a `tags` array rather than gaining an
     // empty one.
     spec.tags = (!document_tags.is_empty()).then_some(document_tags);
+    (spec, dropped)
+}
+
+/// Like [`generate_openapi`], with the application's extractor configurations and opt-out.
+///
+/// Every operation documents the rejection responses of the Gotcha providers its arguments use.
+/// A configured error body is built inside the collection scope only when one of those responses
+/// references it, so overrides that no documented operation reaches leave no component behind.
+/// Components registered only for a `default` response that `drop_default` removed are dropped
+/// when nothing else in the document references them.
+#[doc(hidden)]
+pub fn generate_openapi_with_configs_and_info(
+    operables: HashMap<(String, Method), &'static Operable>, configs: &crate::extract::ExtractorConfigs, document_extractor_errors: bool, info: Info,
+) -> OpenAPIV3 {
+    let (mut spec, dropped) = generate_document(operables, configs, document_extractor_errors, info);
+    drop_removed_response_schemas(&mut spec, &dropped);
     spec
 }
