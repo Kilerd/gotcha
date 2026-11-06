@@ -19,6 +19,8 @@ thread_local! {
     static RUNNING: RefCell<BTreeSet<(&'static str, &'static str)>> = const { RefCell::new(BTreeSet::new()) };
     /// Whether [`probing`] is looking into a value.
     static PROBING: Cell<bool> = const { Cell::new(false) };
+    /// Identities [`mark_dropped_response`] recorded in the active collection scope.
+    static DROPPED: RefCell<BTreeSet<String>> = const { RefCell::new(BTreeSet::new()) };
 }
 
 #[derive(Default)]
@@ -193,21 +195,49 @@ fn temporary_reference(identity: &str) -> String {
     format!("{TEMPORARY_REFERENCE_PREFIX}{identity}")
 }
 
+/// Record the schemas a response gotcha is about to remove references.
+///
+/// The `#[api(drop_default)]` expansion calls this with the inferred `default` response before
+/// dropping it. Inside a collection scope, [`collect_with_dropped`] resolves the recorded
+/// identities to component names, so document assembly can remove those components when nothing
+/// else in the final document references them.
+#[doc(hidden)]
+pub fn mark_dropped_response(value: &impl serde::Serialize) {
+    let Ok(value) = serde_json::to_value(value) else { return };
+    let mut identities = Vec::new();
+    identities_in(&value, &mut identities);
+    DROPPED.with(|dropped| dropped.borrow_mut().extend(identities));
+}
+
 /// Collect schemas, finalize names, and rewrite references in both `f`'s result and components.
 ///
 /// Nested scopes and unwinding restore the enclosing scope. Types registered more than once
 /// are built only once. Custom result types implement [`SchemaReferences`].
 pub fn collect<R: SchemaReferences>(f: impl FnOnce() -> R) -> (R, BTreeMap<String, Schema>) {
-    struct Restore(Option<Registry>);
+    let (result, schemas, _) = collect_with_dropped(f);
+    (result, schemas)
+}
+
+/// Like [`collect`], also returning the component names of the schemas responses marked with
+/// [`mark_dropped_response`] referenced.
+///
+/// Names are resolved after the registry assigns them, so the caller gets final `components`
+/// keys. Nested scopes discard their own records, exactly as they discard their schemas.
+#[doc(hidden)]
+pub fn collect_with_dropped<R: SchemaReferences>(f: impl FnOnce() -> R) -> (R, BTreeMap<String, Schema>, BTreeSet<String>) {
+    struct Restore(Option<Registry>, BTreeSet<String>);
     impl Drop for Restore {
         fn drop(&mut self) {
             ACTIVE.with(|active| *active.borrow_mut() = self.0.take());
+            DROPPED.with(|dropped| *dropped.borrow_mut() = std::mem::take(&mut self.1));
         }
     }
-    let _restore = Restore(ACTIVE.with(|active| active.borrow_mut().replace(Registry::default())));
+    let previous_dropped = DROPPED.with(|dropped| std::mem::take(&mut *dropped.borrow_mut()));
+    let _restore = Restore(ACTIVE.with(|active| active.borrow_mut().replace(Registry::default())), previous_dropped);
     let mut result = f();
     let registry = ACTIVE.with(|active| active.borrow_mut().take()).expect("active collection");
     let names = registry.names();
+    let dropped = DROPPED.with(|dropped| dropped.borrow().iter().filter_map(|identity| names.get(identity).cloned()).collect());
     let references = names.iter().map(|(identity, name)| (temporary_reference(identity), reference(name))).collect();
     result.resolve_schema_references(&references);
     let schemas = registry
@@ -219,7 +249,7 @@ pub fn collect<R: SchemaReferences>(f: impl FnOnce() -> R) -> (R, BTreeMap<Strin
             (names[&identity].clone(), schema)
         })
         .collect();
-    (result, schemas)
+    (result, schemas, dropped)
 }
 
 /// The identities the active collection scope held at one point.

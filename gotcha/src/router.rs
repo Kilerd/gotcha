@@ -440,12 +440,11 @@ impl<State: Clone + Send + Sync + 'static> GotchaRouter<State> {
 
     #[cfg(feature = "openapi")]
     pub(crate) fn into_openapi_parts(mut self) -> (Router<State>, oas::OpenAPIV3, crate::extract::ExtractorConfigs) {
-        let spec = self.openapi_transforms.apply(crate::openapi::generate_openapi_with_configs_and_info(
-            self.operations,
-            &self.extractor_configs,
-            self.document_extractor_errors,
-            self.openapi_info,
-        ));
+        // Drop removed-response components only after every transform has run: a transform may
+        // reference one of them from `paths`, `webhooks` or another `components` section.
+        let (spec, dropped) = crate::openapi::generate_document(self.operations, &self.extractor_configs, self.document_extractor_errors, self.openapi_info);
+        let mut spec = self.openapi_transforms.apply(spec);
+        crate::openapi::drop_removed_response_schemas(&mut spec, &dropped);
         let configs = std::mem::take(&mut self.extractor_configs);
         (self.router, spec, configs)
     }

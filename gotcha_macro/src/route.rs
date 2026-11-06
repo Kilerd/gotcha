@@ -721,7 +721,11 @@ fn expand_request_handler(args: TokenStream2, input_stream: TokenStream2) -> syn
                     #(#error_statements)*
                     // Explicit declarations and description-only overrides apply in order.
                     #(#response_statements)*
-                    if #drop_default { responses.default = None; }
+                    if #drop_default {
+                        if let Some(dropped) = responses.default.take() {
+                            #gotcha::gotcha_core::registry::mark_dropped_response(&dropped);
+                        }
+                    }
                     assert!(!responses.data.is_empty() || responses.default.is_some(), "OpenAPI operation must declare at least one response");
                     responses
                 },

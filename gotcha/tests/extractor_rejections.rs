@@ -5,7 +5,7 @@
 
 //! Operations document the rejection responses of Gotcha's extractor providers by default.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use gotcha::axum::body::{to_bytes, Body as AxumBody};
 use gotcha::axum::extract::{Form as AxumForm, FromRequest, FromRequestParts, Json as AxumJson, Path as AxumPath, Query as AxumQuery};
@@ -180,6 +180,64 @@ async fn skipped(_query: Query<Filter>, _body: Json<Payload>) -> Json<Payload> {
     Json(Payload { id: 1 })
 }
 
+/// The error type documents only a `default` response, which `drop_default` removes. Its body is
+/// then referenced nowhere and must not stay in `components`.
+#[api(drop_default)]
+async fn dropped_default(_body: Multipart) -> Result<String, gotcha::HttpError> {
+    Ok(String::new())
+}
+
+/// The same dropped default, with a response body of its own.
+#[api(drop_default)]
+async fn dropped_default_json() -> Result<Json<Payload>, gotcha::HttpError> {
+    Ok(Json(Payload { id: 1 }))
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, Schematic)]
+struct Domain {
+    id: u32,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, Schematic)]
+struct Wire {
+    wired: bool,
+}
+
+/// An explicit `200` replaces the inferred `Json<Domain>` entry. `Domain` is unreferenced in the
+/// emitted operation, but 0.5.1 kept it and codegen may depend on it.
+#[api(responses(response(status = 200, body = "Wire")))]
+async fn replaced_success() -> Json<Domain> {
+    Json(Domain { id: 1 })
+}
+
+/// Registered on purpose for client codegen; no response references it.
+#[derive(Schematic)]
+struct WsMessage {
+    text: String,
+}
+
+struct RegisteredForClients;
+
+impl gotcha::axum::response::IntoResponse for RegisteredForClients {
+    fn into_response(self) -> gotcha::axum::response::Response {
+        gotcha::axum::response::IntoResponse::into_response("ok")
+    }
+}
+
+impl Responsible for RegisteredForClients {
+    const STATUSES: gotcha::response::Statuses = gotcha::response::Statuses::of(&[200]);
+
+    fn response() -> gotcha::oas::Responses {
+        let _ = <WsMessage as Schematic>::generate_schema();
+        gotcha::response::response::<String>(200, "text/plain", "status")
+    }
+}
+
+#[api]
+async fn intentionally_registered() -> RegisteredForClients {
+    RegisteredForClients
+}
+
 #[api]
 async fn plain() -> String {
     String::new()
@@ -208,6 +266,13 @@ fn responses<'a>(spec: &'a Value, path: &str) -> &'a serde_json::Map<String, Val
 
 fn statuses<'a>(spec: &'a Value, path: &str) -> Vec<&'a str> {
     responses(spec, path).keys().map(String::as_str).collect()
+}
+
+fn component_names(spec: &Value) -> Vec<&str> {
+    spec["components"]["schemas"]
+        .as_object()
+        .map(|schemas| schemas.keys().map(String::as_str).collect())
+        .unwrap_or_default()
 }
 
 fn error_body_ref(response: &Value) -> &str {
@@ -674,6 +739,108 @@ fn documents_can_opt_out_of_automatic_rejection_responses() {
     }
 
     assert_eq!(statuses(&serde_json::to_value(OptedOut.openapi_document()).unwrap(), "/json"), ["200"]);
+}
+
+#[test]
+fn opting_out_of_extractor_errors_registers_only_referenced_components() {
+    // A `Multipart` body has no inferred schema, and without documented rejections nothing
+    // references the providers' `ErrorBody`.
+    let multipart = serde_json::to_value(Gotcha::new().document_extractor_errors(false).post("/upload", multipart_body).into_openapi()).unwrap();
+    assert!(multipart.get("components").is_none(), "an inferred multipart body references no schema");
+
+    // The JSON request body is the only referenced schema.
+    let json = serde_json::to_value(Gotcha::new().document_extractor_errors(false).post("/json", json_body).into_openapi()).unwrap();
+    assert_eq!(component_names(&json), ["Payload"]);
+
+    // The error type supplies only the `default` response that `drop_default` removes, so no
+    // response references `ErrorBody` once extractor rejections are off.
+    let dropped = serde_json::to_value(Gotcha::new().document_extractor_errors(false).post("/upload", dropped_default).into_openapi()).unwrap();
+    assert!(dropped.get("components").is_none(), "a dropped default response references no schema");
+
+    // Only the success body survives; the dropped default's `ErrorBody` does not.
+    let dropped_json = serde_json::to_value(
+        Gotcha::new()
+            .document_extractor_errors(false)
+            .post("/json", dropped_default_json)
+            .into_openapi(),
+    )
+    .unwrap();
+    assert_eq!(component_names(&dropped_json), ["Payload"]);
+}
+
+#[test]
+fn an_overridden_success_response_keeps_its_inferred_schema() {
+    // The explicit 200 documents `Wire`, but 0.5.1 also kept the inferred `Domain` component,
+    // which generated clients may use. Only gotcha-removed responses are candidates.
+    let spec = serde_json::to_value(Gotcha::new().post("/domain", replaced_success).into_openapi()).unwrap();
+    assert_eq!(component_names(&spec), ["Domain", "Wire"]);
+    assert_eq!(
+        responses(&spec, "/domain")["200"]["content"]["application/json"]["schema"]["$ref"],
+        "#/components/schemas/Wire"
+    );
+}
+
+#[test]
+fn a_schema_registered_on_purpose_is_not_pruned() {
+    // A custom `Responsible` registers `WsMessage` for client codegen without referencing it.
+    let spec = serde_json::to_value(Gotcha::new().post("/ws", intentionally_registered).into_openapi()).unwrap();
+    assert_eq!(component_names(&spec), ["WsMessage"]);
+}
+
+#[test]
+fn a_transform_reference_keeps_a_dropped_defaults_schema() {
+    let spec = serde_json::to_value(
+        Gotcha::new()
+            .document_extractor_errors(false)
+            .post("/json", dropped_default_json)
+            .openapi(|mut spec| {
+                let components = spec.components.get_or_insert(gotcha::oas::Components {
+                    schemas: None,
+                    responses: None,
+                    parameters: None,
+                    examples: None,
+                    request_bodies: None,
+                    headers: None,
+                    security_schemes: None,
+                    links: None,
+                    callbacks: None,
+                });
+                let responses = components.responses.get_or_insert_with(BTreeMap::new);
+                // A sub-schema reference and a percent-encoded component name both reach
+                // `ErrorBody`, so the schema must stay.
+                for (name, reference) in [
+                    ("Problem", "#/components/schemas/ErrorBody/properties/error"),
+                    ("Encoded", "#/components/schemas/Err%6FBody"),
+                ] {
+                    responses.insert(name.to_owned(), gotcha::oas::Referenceable::Reference(gotcha::oas::Reference::new(reference)));
+                }
+                spec
+            })
+            .into_openapi(),
+    )
+    .unwrap();
+    assert_eq!(component_names(&spec), ["ErrorBody", "Payload"]);
+    assert!(spec["components"]["responses"].get("Problem").is_some());
+    assert!(spec["components"]["responses"].get("Encoded").is_some());
+}
+
+#[test]
+fn documented_rejections_keep_the_0_5_1_component_document() {
+    let spec = serde_json::to_value(Gotcha::new().post("/json", json_body).post("/upload", multipart_body).into_openapi()).unwrap();
+    let expected: Value = serde_json::from_str(include_str!("fixtures/multipart_json_rejections.json")).unwrap();
+    assert_eq!(spec, expected);
+}
+
+#[test]
+fn documented_rejections_keep_a_dropped_defaults_body() {
+    let spec = serde_json::to_value(Gotcha::new().post("/upload", dropped_default).into_openapi()).unwrap();
+    assert_eq!(component_names(&spec), ["ErrorBody"]);
+    assert_eq!(
+        responses(&spec, "/upload").get("default"),
+        None,
+        "drop_default still removes the default response"
+    );
+    assert_eq!(error_body_ref(&responses(&spec, "/upload")["400"]), "#/components/schemas/ErrorBody");
 }
 
 #[tokio::test]
