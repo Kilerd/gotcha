@@ -19,4 +19,4 @@ help: the trait `Responsible` is not implemented for `UndocumentedError`
              Cow<'_, [u8]>
              Cow<'_, str>
            and $N others
-   = note: required for `Result<std::string::String, UndocumentedError>` to implement `gotcha::response::ErrorResponse`
+   = note: required for `Result<std::string::String, UndocumentedError>` to implement `gotcha::gotcha_core::responsible::ErrorResponse`

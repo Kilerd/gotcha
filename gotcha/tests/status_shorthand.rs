@@ -8,6 +8,7 @@ use gotcha::axum::{
 use gotcha::{api, Gotcha, Json, Responsible, Schematic, WithStatus};
 use serde::Serialize;
 use serde_json::{json, Value};
+use std::convert::Infallible;
 use tower::ServiceExt;
 
 #[derive(Serialize, Schematic)]
@@ -20,6 +21,11 @@ struct Problem {
     message: String,
 }
 
+#[derive(Serialize, Schematic)]
+struct ValidationProblem {
+    field: String,
+}
+
 /// An error type that documents its body as a runtime status, like an application-wide error.
 struct ApiError;
 
@@ -30,8 +36,33 @@ impl IntoResponse for ApiError {
 }
 
 impl Responsible for ApiError {
+    // `response()` documents a `default` entry; the shorthand reads this to accept any status.
+    const HAS_DEFAULT: bool = true;
+
     fn response() -> gotcha::oas::Responses {
         gotcha::response::default_response::<Problem>("application/json", "error response")
+    }
+}
+
+/// An error type with two fixed statuses and a different body for each.
+struct MultiError;
+
+impl IntoResponse for MultiError {
+    fn into_response(self) -> Response {
+        (StatusCode::NOT_FOUND, Json(Problem { message: "missing".into() })).into_response()
+    }
+}
+
+impl Responsible for MultiError {
+    const STATUSES: gotcha::response::Statuses = gotcha::response::Statuses::of(&[404, 422]);
+
+    fn response() -> gotcha::oas::Responses {
+        let mut responses = gotcha::response::response::<Problem>(404, "application/json", "missing");
+        gotcha::response::merge_responses(
+            &mut responses,
+            gotcha::response::response::<ValidationProblem>(422, "application/json", "invalid"),
+        );
+        responses
     }
 }
 
@@ -128,35 +159,70 @@ async fn mixed_errors_long_form() -> Result<Json<Record>, ApiError> {
     Ok(Json(Record { id: 7 }))
 }
 
-/// Both spellings of one operation, as a JSON value.
-fn operation(shorthand: bool) -> Value {
+#[api(id = "validate", errors(404 = "Missing record"))]
+async fn multi_error_shorthand() -> Result<Json<Record>, MultiError> {
+    Ok(Json(Record { id: 7 }))
+}
+
+#[api(id = "validate", errors(response(status = 404, body = "Problem", description = "Missing record")))]
+async fn multi_error_long_form() -> Result<Json<Record>, MultiError> {
+    Ok(Json(Record { id: 7 }))
+}
+
+// The error list runs first, so the `responses` shorthand may reword a status it declares.
+#[api(id = "conflict", errors(409 = "Duplicate record"), responses(409 = "Already exists"))]
+async fn error_then_response_shorthand() -> Result<Json<Record>, ApiError> {
+    Ok(Json(Record { id: 7 }))
+}
+
+#[api(
+    id = "conflict",
+    errors(response(status = 409, body = "Problem", description = "Duplicate record")),
+    responses(response(status = 409, body = "Problem", description = "Already exists"))
+)]
+async fn error_then_response_long_form() -> Result<Json<Record>, ApiError> {
+    Ok(Json(Record { id: 7 }))
+}
+
+#[api(id = "no_content", responses(204 = "No content"))]
+async fn no_content_shorthand() -> WithStatus<Json<Record>, 204> {
+    WithStatus::new(Json(Record { id: 7 }))
+}
+
+#[api(id = "no_content", responses(response(status = 204, description = "No content")))]
+async fn no_content_long_form() -> WithStatus<Json<Record>, 204> {
+    WithStatus::new(Json(Record { id: 7 }))
+}
+
+/// Both spellings of the `read` operation as a whole document, components included.
+fn document(shorthand: bool) -> Value {
     let document = if shorthand {
         Gotcha::new().get("/items", read_shorthand).into_openapi()
     } else {
         Gotcha::new().get("/items", read_long_form).into_openapi()
     };
-    serde_json::to_value(document).unwrap()["paths"]["/items"]["get"].clone()
+    serde_json::to_value(document).unwrap()
 }
 
 #[test]
 fn a_description_only_override_matches_restating_the_body() {
-    assert_eq!(operation(true), operation(false));
+    // Compare the whole document, components included: the shorthand must emit neither more
+    // nor fewer schemas than the long form.
+    assert_eq!(document(true), document(false));
     assert_eq!(
-        operation(true)["responses"]["200"]["content"]["application/json"]["schema"]["$ref"],
+        document(true)["paths"]["/items"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["$ref"],
         "#/components/schemas/Record"
     );
 
-    let shorthand = Gotcha::new().post("/items", create_shorthand).into_openapi();
-    let long = Gotcha::new().post("/items", create_long_form).into_openapi();
-    let shorthand = serde_json::to_value(shorthand).unwrap();
-    let long = serde_json::to_value(long).unwrap();
-    assert_eq!(shorthand["paths"]["/items"]["post"], long["paths"]["/items"]["post"]);
+    let shorthand = serde_json::to_value(Gotcha::new().post("/items", create_shorthand).into_openapi()).unwrap();
+    let long = serde_json::to_value(Gotcha::new().post("/items", create_long_form).into_openapi()).unwrap();
+    assert_eq!(shorthand, long);
     assert_eq!(shorthand["paths"]["/items"]["post"]["responses"]["201"]["description"], "Record stored");
 
     // A plain `Responsible` success type needs its `STATUSES` list; the rest is identical.
     let shorthand = serde_json::to_value(Gotcha::new().get("/items", plain_shorthand).into_openapi()).unwrap();
     let long = serde_json::to_value(Gotcha::new().get("/items", plain_long_form).into_openapi()).unwrap();
-    assert_eq!(shorthand["paths"]["/items"]["get"], long["paths"]["/items"]["get"]);
+    assert_eq!(shorthand, long);
     assert_eq!(shorthand["paths"]["/items"]["get"]["responses"]["200"]["description"], "The plain record");
 }
 
@@ -164,7 +230,7 @@ fn a_description_only_override_matches_restating_the_body() {
 fn an_error_shorthand_takes_the_body_the_error_type_documents() {
     let shorthand = serde_json::to_value(Gotcha::new().get("/items", lookup_shorthand).into_openapi()).unwrap();
     let long = serde_json::to_value(Gotcha::new().get("/items", lookup_long_form).into_openapi()).unwrap();
-    assert_eq!(shorthand["paths"]["/items"]["get"], long["paths"]["/items"]["get"]);
+    assert_eq!(shorthand, long);
     let response = &shorthand["paths"]["/items"]["get"]["responses"]["404"];
     assert_eq!(response["description"], "Missing record");
     assert_eq!(response["content"]["application/json"]["schema"]["$ref"], "#/components/schemas/Problem");
@@ -173,11 +239,24 @@ fn an_error_shorthand_takes_the_body_the_error_type_documents() {
 }
 
 #[test]
+fn an_error_shorthand_registers_only_the_components_its_entry_references() {
+    let shorthand = serde_json::to_value(Gotcha::new().get("/items", multi_error_shorthand).into_openapi()).unwrap();
+    let long = serde_json::to_value(Gotcha::new().get("/items", multi_error_long_form).into_openapi()).unwrap();
+    // `MultiError::response()` also documents a 422 with `ValidationProblem`; the 404 entry
+    // does not reference it, so the shorthand must not add it to `components.schemas`.
+    assert_eq!(shorthand, long);
+    let schemas = shorthand["components"]["schemas"].as_object().expect("components with schemas");
+    assert!(schemas.contains_key("Problem"), "{schemas:?}");
+    assert!(schemas.contains_key("Record"), "{schemas:?}");
+    assert!(!schemas.contains_key("ValidationProblem"), "{schemas:?}");
+}
+
+#[test]
 fn shorthand_entries_mix_with_explicit_responses() {
     let shorthand = serde_json::to_value(Gotcha::new().get("/items", mixed_shorthand).into_openapi()).unwrap();
     let long = serde_json::to_value(Gotcha::new().get("/items", mixed_long_form).into_openapi()).unwrap();
+    assert_eq!(shorthand, long);
     let operation = &shorthand["paths"]["/items"]["get"];
-    assert_eq!(operation, &long["paths"]["/items"]["get"]);
     assert_eq!(operation["responses"]["200"]["description"], "The stored record");
     assert_eq!(operation["responses"]["409"]["description"], "Duplicate");
     // Neither spelling declares the error branch, so the inferred default stays.
@@ -191,10 +270,35 @@ fn shorthand_entries_mix_with_explicit_responses() {
 fn shorthand_entries_mix_with_explicit_errors() {
     let shorthand = serde_json::to_value(Gotcha::new().get("/items", mixed_errors_shorthand).into_openapi()).unwrap();
     let long = serde_json::to_value(Gotcha::new().get("/items", mixed_errors_long_form).into_openapi()).unwrap();
+    assert_eq!(shorthand, long);
     let operation = &shorthand["paths"]["/items"]["get"];
-    assert_eq!(operation, &long["paths"]["/items"]["get"]);
     assert_eq!(operation["responses"]["404"]["description"], "Missing record");
     assert_eq!(operation["responses"]["409"]["description"], "Duplicate record");
+}
+
+#[test]
+fn a_response_shorthand_may_reword_a_status_the_error_list_declares() {
+    let shorthand = serde_json::to_value(Gotcha::new().get("/items", error_then_response_shorthand).into_openapi()).unwrap();
+    let long = serde_json::to_value(Gotcha::new().get("/items", error_then_response_long_form).into_openapi()).unwrap();
+    assert_eq!(shorthand, long);
+    assert_eq!(shorthand["paths"]["/items"]["get"]["responses"]["409"]["description"], "Already exists");
+}
+
+#[test]
+fn a_bodyless_status_is_reworded_without_gaining_content() {
+    let shorthand = serde_json::to_value(Gotcha::new().get("/items", no_content_shorthand).into_openapi()).unwrap();
+    let long = serde_json::to_value(Gotcha::new().get("/items", no_content_long_form).into_openapi()).unwrap();
+    assert_eq!(shorthand, long);
+    let response = &shorthand["paths"]["/items"]["get"]["responses"]["204"];
+    assert_eq!(response["description"], "No content");
+    assert!(response.get("content").is_none(), "{response:?}");
+}
+
+#[test]
+fn with_status_declares_only_the_statuses_it_documents() {
+    assert!(<WithStatus<Json<Record>, 201> as Responsible>::STATUSES.contains(201));
+    assert!(<WithStatus<Infallible, 204> as Responsible>::STATUSES.contains(204));
+    assert!(<WithStatus<Infallible, 201> as Responsible>::STATUSES.is_empty());
 }
 
 #[tokio::test]

@@ -6,14 +6,12 @@ use axum::{
 };
 
 #[cfg(feature = "openapi")]
-pub use gotcha_core::responsible::{
-    default_response, describe_error_response, describe_response, empty_response, item_response, merge_responses, response, response_with_item, ErrorResponse,
-    Responsible, Statuses,
-};
+pub use gotcha_core::responsible::{default_response, empty_response, item_response, merge_responses, response, response_with_item, Responsible, Statuses};
 
+// Macro support, hidden from the crate's public documentation like `ResultResponse`.
 #[cfg(feature = "openapi")]
 #[doc(hidden)]
-pub use gotcha_core::responsible::ResultResponse;
+pub use gotcha_core::responsible::{describe_error_response, describe_response, ErrorResponse, ResultResponse};
 
 /// Override a response's status both at runtime and in OpenAPI.
 ///
@@ -45,7 +43,7 @@ impl<T, const STATUS: u16> WithStatus<T, STATUS> {
     pub fn into_inner(self) -> T {
         self.0
     }
-    fn has_body() -> bool {
+    const fn has_body() -> bool {
         STATUS >= 200 && !matches!(STATUS, 204 | 205 | 304)
     }
 }
@@ -67,7 +65,14 @@ impl<T: IntoResponse, const STATUS: u16> IntoResponse for WithStatus<T, STATUS> 
 
 #[cfg(feature = "openapi")]
 impl<T: Responsible, const STATUS: u16> Responsible for WithStatus<T, STATUS> {
-    const STATUSES: Statuses = Statuses::of(&[STATUS]);
+    // A bodyless status always documents itself, whatever the inner type says. A body status
+    // moves every inner response to STATUS only when the inner type documents something; an
+    // empty inner contract (`WithStatus<Infallible, 201>`) still documents nothing.
+    const STATUSES: Statuses = if Self::has_body() && T::STATUSES.is_empty() && !T::HAS_DEFAULT {
+        Statuses::NONE
+    } else {
+        Statuses::of(&[STATUS])
+    };
 
     fn response() -> oas::Responses {
         let () = Self::VALID;
@@ -76,5 +81,24 @@ impl<T: Responsible, const STATUS: u16> Responsible for WithStatus<T, STATUS> {
         } else {
             empty_response(STATUS, "no content")
         }
+    }
+}
+
+#[cfg(all(test, feature = "openapi"))]
+mod tests {
+    use super::*;
+    use std::convert::Infallible;
+
+    #[test]
+    fn with_status_reports_only_statuses_it_documents() {
+        // The inner type documents a 200, so the wrapper documents the overridden status.
+        assert!(<WithStatus<String, 201> as Responsible>::STATUSES.contains(201));
+        // A bodyless status documents itself even for an empty inner contract.
+        assert!(<WithStatus<Infallible, 204> as Responsible>::STATUSES.contains(204));
+        // A body status over an empty inner contract documents nothing, so the shorthand that
+        // rewords an inferred status must reject it.
+        assert!(<WithStatus<Infallible, 201> as Responsible>::STATUSES.is_empty());
+        // A runtime-status inner contract emits a default, which `with_status` moves to STATUS.
+        assert!(<WithStatus<(StatusCode, String), 201> as Responsible>::STATUSES.contains(201));
     }
 }

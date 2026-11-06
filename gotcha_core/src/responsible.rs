@@ -2,7 +2,7 @@
 //! `Schematic` alone does not imply a status or media type. Implement [`Responsible`] for
 //! custom HTTP types using [`response`], [`default_response`], and [`empty_response`].
 
-use crate::Schematic;
+use crate::{registry, Schematic};
 use oas::{MediaType, Referenceable, Response, Responses, Schema, SchemaValue};
 use std::collections::{btree_map::Entry, BTreeMap};
 use std::convert::Infallible;
@@ -11,12 +11,19 @@ use std::convert::Infallible;
 pub trait Responsible {
     /// The fixed statuses [`Self::response`] places in `Responses::data`.
     ///
-    /// Responses whose status is only known at runtime live under `default` and are not
-    /// listed. The `#[api(responses(STATUS = "description"))]` shorthand reads this in a
-    /// `const` context to reject an override of a status the return type never infers, so a
-    /// custom implementation that documents fixed statuses must declare them here. The
-    /// default is empty.
+    /// The `#[api(responses(STATUS = "description"))]` shorthand reads this in a `const`
+    /// context to reject an override of a status the return type never infers, so a custom
+    /// implementation that documents fixed statuses must declare them here. The default is
+    /// empty.
     const STATUSES: Statuses = Statuses::NONE;
+
+    /// Whether [`Self::response`] returns a `default` response for statuses known only at
+    /// runtime.
+    ///
+    /// The `#[api(errors(STATUS = "description"))]` shorthand reads this in a `const` context:
+    /// it accepts a status that is not in [`Self::STATUSES`] when the error type has a default
+    /// response to move to that status. The default is `false`.
+    const HAS_DEFAULT: bool = false;
 
     /// The statuses, media types, and bodies this type can produce.
     fn response() -> Responses;
@@ -78,6 +85,18 @@ impl Statuses {
         let offset = (status - 100) as usize;
         self.bits[offset / 64] & (1 << (offset % 64)) != 0
     }
+
+    /// Whether the set is empty.
+    pub const fn is_empty(self) -> bool {
+        let mut index = 0;
+        while index < self.bits.len() {
+            if self.bits[index] != 0 {
+                return false;
+            }
+            index += 1;
+        }
+        true
+    }
 }
 
 /// Macro support for documenting only the `Ok` branch of a `Result`.
@@ -102,10 +121,19 @@ impl<T: Responsible, E> ResultResponse for Result<T, E> {
 /// Using trait resolution also supports type aliases without inspecting their spelling.
 #[doc(hidden)]
 pub trait ErrorResponse {
+    /// The error branch's fixed statuses.
+    const STATUSES: Statuses = Statuses::NONE;
+
+    /// Whether the error branch has a `default` response.
+    const HAS_DEFAULT: bool = false;
+
     fn error_responses() -> Responses;
 }
 
 impl<T, E: Responsible> ErrorResponse for Result<T, E> {
+    const STATUSES: Statuses = E::STATUSES;
+    const HAS_DEFAULT: bool = E::HAS_DEFAULT;
+
     fn error_responses() -> Responses {
         E::response()
     }
@@ -307,6 +335,7 @@ pub fn with_status(responses: Responses, status: u16) -> Responses {
 /// Backs the `#[api(responses(STATUS = "description"))]` shorthand. Panics when the inferred
 /// contract has no response for that status or when that response is a `$ref`; the panic message
 /// says which declaration to use instead.
+#[doc(hidden)]
 pub fn describe_response(responses: &mut Responses, status: u16, description: impl Into<String>) {
     let Some(response) = responses.data.get_mut(&status.to_string()) else {
         panic!("no response is inferred for status {status}; declare it with response(status = {status}, ...)");
@@ -322,7 +351,15 @@ pub fn describe_response(responses: &mut Responses, status: u16, description: im
 /// Backs the `#[api(errors(STATUS = "description"))]` shorthand. The body and content type come
 /// from the error type's fixed response for `status`, or from its `default` response when the
 /// error type has no fixed status. Panics when the error type documents neither.
-pub fn describe_error_response(responses: &mut Responses, error_responses: Responses, status: u16, description: impl Into<String>) {
+///
+/// The response is built through a closure so that, inside a schema collection scope, the
+/// schemas it registers and the chosen entry does not reference can be discarded again. Building
+/// every error response would otherwise register components a `response(...)` declaration with
+/// the same body never emits.
+#[doc(hidden)]
+pub fn describe_error_response(responses: &mut Responses, error_responses: impl FnOnce() -> Responses, status: u16, description: impl Into<String>) {
+    let checkpoint = registry::checkpoint();
+    let error_responses = error_responses();
     let response = error_responses
         .data
         .get(&status.to_string())
@@ -331,6 +368,7 @@ pub fn describe_error_response(responses: &mut Responses, error_responses: Respo
     let Some(mut response) = response else {
         panic!("the error type documents no response for status {status} and no default response");
     };
+    registry::discard_unreferenced(checkpoint, &response);
     let Referenceable::Data(response_data) = &mut response else {
         panic!("the error type's response for status {status} is a reference");
     };
@@ -406,16 +444,22 @@ mod axum_responses {
     }
     binary_response!(axum::body::Bytes, Vec<u8>, &[u8], Box<[u8]>, std::borrow::Cow<'_, [u8]>);
     impl<T: Responsible> Responsible for (axum::http::StatusCode, T) {
+        const HAS_DEFAULT: bool = true;
+
         fn response() -> Responses {
             dynamic_status(T::response())
         }
     }
     impl Responsible for axum::http::StatusCode {
+        const HAS_DEFAULT: bool = true;
+
         fn response() -> Responses {
             dynamic_status(empty_response(200, "runtime status, no content"))
         }
     }
     impl Responsible for axum::response::Response {
+        const HAS_DEFAULT: bool = true;
+
         fn response() -> Responses {
             dynamic_status(empty_response(200, "runtime response; body unspecified"))
         }
@@ -424,6 +468,7 @@ mod axum_responses {
 
 impl<T: Responsible, E: Responsible> Responsible for Result<T, E> {
     const STATUSES: Statuses = T::STATUSES.union(E::STATUSES);
+    const HAS_DEFAULT: bool = T::HAS_DEFAULT || E::HAS_DEFAULT;
 
     fn response() -> Responses {
         let mut responses = T::response();
@@ -465,13 +510,15 @@ mod tests {
     fn describe_error_response_uses_the_error_types_default_response() {
         struct WidgetError;
         impl Responsible for WidgetError {
+            const HAS_DEFAULT: bool = true;
+
             fn response() -> Responses {
                 default_response::<String>("application/json", "error")
             }
         }
 
         let mut responses = response::<String>(200, "application/json", "ok");
-        describe_error_response(&mut responses, WidgetError::response(), 404, "missing");
+        describe_error_response(&mut responses, WidgetError::response, 404, "missing");
         let json = serde_json::to_value(&responses).unwrap();
         assert_eq!(json["404"]["description"], "missing");
         assert_eq!(json["404"]["content"]["application/json"]["schema"]["type"], "string");
@@ -493,7 +540,26 @@ mod tests {
         let set = <Result<String, Failure> as Responsible>::STATUSES;
         assert!(set.contains(200));
         assert!(set.contains(409));
+        assert!(!<Result<String, Failure> as Responsible>::HAS_DEFAULT);
         assert_eq!(<Result<String, Failure> as ResultResponse>::SUCCESS_STATUSES, Statuses::of(&[200]));
+        assert_eq!(<Result<String, Failure> as ErrorResponse>::STATUSES, Statuses::of(&[409]));
+        assert!(!<Result<String, Failure> as ErrorResponse>::HAS_DEFAULT);
+    }
+
+    #[test]
+    fn the_error_branch_reports_its_default_response_to_the_macro() {
+        struct Failure;
+        impl Responsible for Failure {
+            const HAS_DEFAULT: bool = true;
+
+            fn response() -> Responses {
+                default_response::<String>("application/json", "runtime status")
+            }
+        }
+
+        assert!(<Result<String, Failure> as ErrorResponse>::HAS_DEFAULT);
+        assert!(<Result<String, Failure> as Responsible>::HAS_DEFAULT);
+        assert!(<Result<String, Failure> as ErrorResponse>::STATUSES.is_empty());
     }
 
     #[test]
@@ -525,6 +591,9 @@ mod tests {
     fn success_inference_preserves_the_contract_without_consulting_the_error() {
         struct Success;
         impl Responsible for Success {
+            const STATUSES: Statuses = Statuses::of(&[201]);
+            const HAS_DEFAULT: bool = true;
+
             fn response() -> Responses {
                 let mut responses = response::<String>(201, "text/plain", "created");
                 merge_responses(&mut responses, default_response::<String>("text/plain", "runtime status"));

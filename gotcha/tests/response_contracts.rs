@@ -24,6 +24,8 @@ impl IntoResponse for Record {
     }
 }
 impl Responsible for Record {
+    const STATUSES: gotcha::response::Statuses = gotcha::response::Statuses::of(&[200]);
+
     fn response() -> gotcha::oas::Responses {
         gotcha::response::response::<Self>(200, "application/json", "record")
     }

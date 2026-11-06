@@ -205,11 +205,78 @@ struct ResponseDeclarations(Vec<ResponseItem>);
 #[derive(Debug)]
 struct ErrorDeclarations(Vec<ResponseItem>);
 
+/// Add `error` to the errors one expansion reports.
+fn push_darling_error(errors: &mut Option<darling::Error>, error: darling::Error) {
+    match errors.take() {
+        Some(existing) => *errors = Some(darling::Error::multiple(vec![existing, error])),
+        None => *errors = Some(error),
+    }
+}
+
+/// A darling error pointing at `tokens`, matching `syn::Error::new_spanned`.
+fn spanned_error(tokens: impl quote::ToTokens, message: &str) -> darling::Error {
+    darling::Error::from(syn::Error::new_spanned(tokens, message))
+}
+
+impl ResponseDeclarations {
+    /// Parse a `responses(...)` or `errors(...)` list, reporting every malformed entry.
+    ///
+    /// `attribute` names the list in the error for a bare `#[api(errors)]`.
+    fn parse(item: &syn::Meta, attribute: &str) -> darling::Result<Self> {
+        let syn::Meta::List(meta) = item else {
+            return Err(darling::Error::custom(format!("expected {attribute}(...)")).with_span(item));
+        };
+        let mut items = Vec::new();
+        let mut errors = None;
+        for tokens in split_entries(meta.tokens.clone()) {
+            match ResponseItem::parse(tokens) {
+                Ok(entry) => items.push(entry),
+                Err(error) => push_darling_error(&mut errors, error),
+            }
+        }
+        if let Some(errors) = errors {
+            return Err(errors);
+        }
+        let mut statuses = std::collections::BTreeSet::new();
+        let mut duplicates = None;
+        for entry in &items {
+            if !statuses.insert(entry.status()) {
+                push_darling_error(&mut duplicates, darling::Error::custom("duplicate response status").with_span(&entry.span()));
+            }
+        }
+        if let Some(duplicates) = duplicates {
+            return Err(duplicates);
+        }
+        Ok(Self(items))
+    }
+}
+
+impl FromMeta for ResponseDeclarations {
+    fn from_meta(item: &syn::Meta) -> darling::Result<Self> {
+        Self::parse(item, "responses")
+    }
+}
+
 impl FromMeta for ErrorDeclarations {
     fn from_meta(item: &syn::Meta) -> darling::Result<Self> {
-        let ResponseDeclarations(responses) = ResponseDeclarations::from_meta(item)?;
+        let ResponseDeclarations(responses) = ResponseDeclarations::parse(item, "errors")?;
         if responses.is_empty() {
             return Err(darling::Error::custom("errors(...) must declare at least one response").with_span(item));
+        }
+        // The shorthand takes the body the error type documents, and the long form rejects
+        // content on these statuses. Reject the shorthand there too: it has no way to declare
+        // which body it takes, so it cannot be shown to be bodyless.
+        let mut errors = None;
+        for entry in &responses {
+            let ResponseItem::DescriptionOnly { status, source, .. } = entry else {
+                continue;
+            };
+            if *status < 200 || matches!(*status, 204 | 205 | 304) {
+                push_darling_error(&mut errors, spanned_error(source, "this status cannot declare response content"));
+            }
+        }
+        if let Some(errors) = errors {
+            return Err(errors);
         }
         Ok(Self(responses))
     }
@@ -248,49 +315,103 @@ enum ResponseItem {
     DescriptionOnly { status: u16, description: String, source: syn::LitInt },
 }
 
-impl syn::parse::Parse for ResponseItem {
+/// `STATUS = "description"` as written, before validation.
+struct DescriptionOnlyEntry {
+    status: syn::LitInt,
+    description: syn::LitStr,
+}
+
+impl syn::parse::Parse for DescriptionOnlyEntry {
     fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
-        if input.peek(syn::LitInt) {
-            let status: syn::LitInt = input.parse()?;
-            let value = status.base10_parse::<u16>()?;
+        let status = input.parse()?;
+        input.parse::<syn::Token![=]>()?;
+        let description = input.parse()?;
+        if !input.is_empty() {
+            return Err(input.error("expected STATUS = \"description\""));
+        }
+        Ok(Self { status, description })
+    }
+}
+
+/// Split `responses(...)` arguments at top-level commas.
+///
+/// Grouped entries (`response(...)`) arrive as one token, so their commas stay inside them.
+/// Parsing each entry on its own means one malformed entry does not hide the errors in the rest.
+fn split_entries(tokens: TokenStream2) -> Vec<TokenStream2> {
+    let mut entries = Vec::new();
+    let mut current = TokenStream2::new();
+    for token in tokens {
+        match &token {
+            TokenTree::Punct(punct) if punct.as_char() == ',' => entries.push(std::mem::take(&mut current)),
+            _ => current.extend([token]),
+        }
+    }
+    if !current.is_empty() {
+        entries.push(current);
+    }
+    entries
+}
+
+impl ResponseItem {
+    fn status(&self) -> u16 {
+        match self {
+            Self::Explicit(response) => response.status,
+            Self::DescriptionOnly { status, .. } => *status,
+        }
+    }
+
+    fn span(&self) -> Span {
+        match self {
+            Self::Explicit(response) => response.source.span(),
+            Self::DescriptionOnly { source, .. } => source.span(),
+        }
+    }
+
+    /// Parse one list entry.
+    fn parse(tokens: TokenStream2) -> darling::Result<Self> {
+        let shorthand = matches!(
+            tokens.clone().into_iter().next(),
+            Some(TokenTree::Literal(literal)) if syn::parse_str::<syn::LitInt>(&literal.to_string()).is_ok()
+        );
+        if shorthand {
+            let entry: DescriptionOnlyEntry = syn::parse2(tokens).map_err(darling::Error::from)?;
+            let value = entry
+                .status
+                .base10_parse::<u16>()
+                .map_err(|error| darling::Error::from(syn::Error::new(entry.status.span(), error)))?;
             if !(100..=599).contains(&value) {
-                return Err(syn::Error::new(status.span(), "response status must be in 100..=599"));
+                return Err(spanned_error(entry.status, "response status must be in 100..=599"));
             }
-            let _: syn::Token![=] = input.parse()?;
-            let description: syn::LitStr = input.parse()?;
-            return Ok(ResponseItem::DescriptionOnly {
+            return Ok(Self::DescriptionOnly {
                 status: value,
-                description: description.value(),
-                source: status,
+                description: entry.description.value(),
+                source: entry.status,
             });
         }
-        let meta: syn::Meta = input.parse()?;
+        let meta: syn::Meta = syn::parse2(tokens).map_err(darling::Error::from)?;
         let syn::Meta::List(list) = &meta else {
-            return Err(syn::Error::new_spanned(
-                &meta,
-                "expected response(status = ..., body = ...) or STATUS = \"description\"",
-            ));
+            return Err(spanned_error(meta, "expected response(status = ..., body = ...) or STATUS = \"description\""));
         };
         if !list.path.is_ident("response") {
-            return Err(syn::Error::new_spanned(list, "expected response(...)"));
+            return Err(spanned_error(list, "expected response(...)"));
         }
         let response = ResponseFields::from_list(&NestedMeta::parse_meta_list(list.tokens.clone())?).map_err(|error| error.with_span(list))?;
         if !(100..=599).contains(&response.status) {
-            return Err(syn::Error::new_spanned(list, "response status must be in 100..=599"));
+            return Err(spanned_error(list, "response status must be in 100..=599"));
         }
         let body = response.body.as_ref().map(parse_type).transpose()?;
         let item = response.item.as_ref().map(parse_type).transpose()?;
         if item.is_some() && response.content_type.is_none() {
-            return Err(syn::Error::new_spanned(list, "item requires an explicit content_type"));
+            return Err(spanned_error(list, "item requires an explicit content_type"));
         }
         let has_content = body.is_some() || item.is_some();
         if has_content && (response.status < 200 || matches!(response.status, 204 | 205 | 304)) {
-            return Err(syn::Error::new_spanned(list, "this status cannot declare response content"));
+            return Err(spanned_error(list, "this status cannot declare response content"));
         }
         if !has_content && response.content_type.is_some() {
-            return Err(syn::Error::new_spanned(list, "content_type requires a body or item type"));
+            return Err(spanned_error(list, "content_type requires a body or item type"));
         }
-        Ok(ResponseItem::Explicit(Box::new(ResponseMeta {
+        Ok(Self::Explicit(Box::new(ResponseMeta {
             source: meta,
             status: response.status,
             body,
@@ -298,28 +419,6 @@ impl syn::parse::Parse for ResponseItem {
             content_type: response.content_type,
             description: response.description,
         })))
-    }
-}
-
-impl FromMeta for ResponseDeclarations {
-    fn from_meta(item: &syn::Meta) -> darling::Result<Self> {
-        let syn::Meta::List(meta) = item else {
-            return Err(darling::Error::custom("expected responses(...)").with_span(item));
-        };
-        let items = meta
-            .parse_args_with(syn::punctuated::Punctuated::<ResponseItem, syn::Token![,]>::parse_terminated)
-            .map_err(|error| darling::Error::from(error).with_span(meta))?;
-        let mut statuses = std::collections::BTreeSet::new();
-        for item in &items {
-            let (status, span) = match item {
-                ResponseItem::Explicit(response) => (response.status, response.source.span()),
-                ResponseItem::DescriptionOnly { status, source, .. } => (*status, source.span()),
-            };
-            if !statuses.insert(status) {
-                return Err(darling::Error::custom("duplicate response status").with_span(&span));
-            }
-        }
-        Ok(Self(items.into_iter().collect()))
     }
 }
 
@@ -392,6 +491,9 @@ fn expand_request_handler(args: TokenStream2, input_stream: TokenStream2) -> syn
     let response_declarations = meta.responses.unwrap_or_default().0;
     let error_declarations = meta.errors.map(|errors| errors.0);
     let explicit_errors = error_declarations.is_some();
+    // The statuses `errors(...)` will add, in either spelling. A `responses(STATUS = ...)`
+    // entry applied after them may reword any of these.
+    let error_statuses: Vec<u16> = error_declarations.iter().flatten().map(ResponseItem::status).collect();
     let drop_default = meta.drop_default.is_present();
     let group = if let Some(group_name) = meta.group {
         quote! { Some(#group_name) }
@@ -490,7 +592,7 @@ fn expand_request_handler(args: TokenStream2, input_stream: TokenStream2) -> syn
         })
         .collect();
     let error_statements: Vec<_> = error_declarations
-        .into_iter()
+        .iter()
         .flatten()
         .map(|item| match item {
             ResponseItem::Explicit(response) => {
@@ -498,8 +600,12 @@ fn expand_request_handler(args: TokenStream2, input_stream: TokenStream2) -> syn
                 quote!(#gotcha::response::merge_responses(&mut responses, #tokens);)
             }
             ResponseItem::DescriptionOnly { status, description, .. } => quote!({
-                let error_responses = <#ret_type as #gotcha::response::ErrorResponse>::error_responses();
-                #gotcha::response::describe_error_response(&mut responses, error_responses, #status, #description);
+                #gotcha::response::describe_error_response(
+                    &mut responses,
+                    || <#ret_type as #gotcha::response::ErrorResponse>::error_responses(),
+                    #status,
+                    #description,
+                );
             }),
         })
         .collect();
@@ -511,9 +617,15 @@ fn expand_request_handler(args: TokenStream2, input_stream: TokenStream2) -> syn
         }
     });
 
-    // A description-only override names a status the return type must already infer; the set is
-    // a trait constant, so a wrong status fails to compile instead of producing a broken document.
-    let inferred_statuses = if explicit_errors {
+    // A description-only override names a status the return type must already infer, or one the
+    // handler's `errors(...)` list adds first. The sets are trait constants, so a wrong status
+    // fails to compile instead of producing a broken document.
+    let inferred_statuses = if explicit_errors && !error_statuses.is_empty() {
+        quote!(#gotcha::response::Statuses::union(
+            <#ret_type as #gotcha::response::ResultResponse>::SUCCESS_STATUSES,
+            #gotcha::response::Statuses::of(&[#(#error_statuses),*]),
+        ))
+    } else if explicit_errors {
         quote!(<#ret_type as #gotcha::response::ResultResponse>::SUCCESS_STATUSES)
     } else {
         quote!(<#ret_type as #gotcha::Responsible>::STATUSES)
@@ -522,13 +634,45 @@ fn expand_request_handler(args: TokenStream2, input_stream: TokenStream2) -> syn
         .iter()
         .filter_map(|item| {
             let ResponseItem::DescriptionOnly { status, .. } = item else { return None };
-            let message = format!(
-                "responses({status} = \"...\"): the success type does not infer a {status} response; declare it with \
-                 responses(response(status = {status}, body = \"...\", description = ...)) instead"
-            );
+            let message = if explicit_errors {
+                format!(
+                    "responses({status} = \"...\"): neither the success type's Responsible::STATUSES nor this handler's \
+                     errors(...) declares a {status} response; declare it with responses(response(status = {status}, body = \"...\", \
+                     description = ...)) or errors(response(status = {status}, body = \"...\", description = ...)) instead"
+                )
+            } else {
+                format!(
+                    "responses({status} = \"...\"): the success type's Responsible::STATUSES does not declare a {status} \
+                     response; declare it with responses(response(status = {status}, body = \"...\", description = ...)) instead, or list {status} in the success type's STATUSES"
+                )
+            };
             Some(quote! {
                 const _: () = {
                     if !#gotcha::response::Statuses::contains(#inferred_statuses, #status) {
+                        panic!(#message);
+                    }
+                };
+            })
+        })
+        .collect();
+
+    // An error shorthand documents the error type's entry for the status, or its `default`
+    // response moved to it. Without either, `into_openapi` would panic at startup.
+    let error_status_checks: Vec<_> = error_declarations
+        .iter()
+        .flatten()
+        .filter_map(|item| {
+            let ResponseItem::DescriptionOnly { status, .. } = item else { return None };
+            let message = format!(
+                "errors({status} = \"...\"): the error type's Responsible::STATUSES does not declare a {status} response and its \
+                 Responsible::HAS_DEFAULT is false; declare the status with errors(response(status = {status}, body = \"...\", description = ...)) \
+                 instead, or declare it in the error type's Responsible implementation"
+            );
+            Some(quote! {
+                const _: () = {
+                    if !(#gotcha::response::Statuses::contains(<#ret_type as #gotcha::response::ErrorResponse>::STATUSES, #status)
+                        || <#ret_type as #gotcha::response::ErrorResponse>::HAS_DEFAULT)
+                    {
                         panic!(#message);
                     }
                 };
@@ -540,6 +684,7 @@ fn expand_request_handler(args: TokenStream2, input_stream: TokenStream2) -> syn
         #input
 
         #(#status_checks)*
+        #(#error_status_checks)*
 
         #gotcha::inventory::submit! {
             #gotcha::Operable {
@@ -767,22 +912,63 @@ mod tests {
     }
 
     #[test]
-    fn status_shorthand_skips_the_status_checks_the_long_form_keeps() {
-        // A description-only entry has no body, so a bodyless status is fine.
+    fn status_shorthand_keeps_the_content_rules_of_its_attribute() {
+        // A `responses` shorthand rewords an inferred response and adds no body, so a bodyless
+        // status is fine; whether that response is bodyless is the success type's contract.
         assert!(parse(syn::parse_quote!(api(responses(204 = "No content")))).is_ok());
-        // But the status itself still has to be in range and written once.
+        // An `errors` shorthand takes the error type's body, which a bodyless status cannot
+        // carry; the long form rejects content there, so the shorthand rejects the status.
+        for invalid in [
+            syn::parse_quote!(api(errors(199 = "No content"))),
+            syn::parse_quote!(api(errors(204 = "No content"))),
+            syn::parse_quote!(api(errors(205 = "No content"))),
+            syn::parse_quote!(api(errors(304 = "No content"))),
+        ] {
+            let error = parse(invalid).unwrap_err().to_string();
+            assert!(error.contains("this status cannot declare response content"), "{error}");
+        }
+        // The status itself still has to be in range and written once.
         assert!(parse(syn::parse_quote!(api(responses(0 = "bad")))).is_err());
         assert!(parse(syn::parse_quote!(api(responses(700 = "bad")))).is_err());
     }
 
     #[test]
-    fn status_shorthand_tokens_describe_the_inferred_response() {
+    fn status_shorthand_parses_the_status_and_description() {
         let meta = parse(syn::parse_quote!(api(responses(200 = "Stored")))).unwrap();
         let ResponseItem::DescriptionOnly { status, description, .. } = &meta.responses.unwrap().0[0] else {
             unreachable!()
         };
         assert_eq!(*status, 200);
         assert_eq!(description, "Stored");
+    }
+
+    #[test]
+    fn response_declaration_errors_accumulate() {
+        // Two unknown fields in one entry: darling collects them before the span is applied.
+        let error = parse(syn::parse_quote!(api(responses(response(status = 200, bdy = "User", descripton = "Found")))))
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("bdy"), "{error}");
+        assert!(error.contains("descripton"), "{error}");
+
+        // Two entries: each is parsed even when an earlier one is malformed.
+        let error = parse(syn::parse_quote!(api(responses(
+            response(status = 200, bdy = "User"),
+            response(status = 201, descripton = "Created")
+        ))))
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("bdy"), "{error}");
+        assert!(error.contains("descripton"), "{error}");
+    }
+
+    #[test]
+    fn declaration_errors_name_their_own_attribute() {
+        assert!(parse(syn::parse_quote!(api(errors))).unwrap_err().to_string().contains("expected errors(...)"));
+        assert!(parse(syn::parse_quote!(api(responses)))
+            .unwrap_err()
+            .to_string()
+            .contains("expected responses(...)"));
     }
 
     #[test]

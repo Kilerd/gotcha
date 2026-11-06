@@ -1,0 +1,5 @@
+error: this status cannot declare response content
+  --> tests/fail/status_shorthand/errors_bodyless_status.rs:24:14
+   |
+24 | #[api(errors(204 = "No content"))]
+   |              ^^^
