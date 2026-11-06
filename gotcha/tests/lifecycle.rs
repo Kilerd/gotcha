@@ -13,6 +13,8 @@ use std::time::Duration;
 
 use futures_util::{stream, StreamExt};
 use gotcha::axum::body::{Body, Bytes};
+use gotcha::axum::extract::{ConnectInfo, Request};
+use gotcha::axum::middleware::{self, Next};
 use gotcha::axum::response::Response;
 use gotcha::{ConfigWrapper, Gotcha, GotchaApp, GotchaContext, GotchaResult, GotchaRouter, ServerConfig, State, WebSocketUpgrade};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -175,6 +177,330 @@ async fn trait_bind_reports_the_assigned_port_and_serves_requests() {
     let response = within(get(address, "/")).await;
     assert!(response.starts_with("HTTP/1.0 200"), "{response}");
     assert!(response.ends_with("trait-ok"), "{response}");
+    stop.notify_one();
+    within(serving).await.unwrap().unwrap();
+}
+
+/// The same GET, with the client's own address so the server's view can be compared exactly.
+async fn get_with_peer(address: SocketAddr, path: &str) -> (String, SocketAddr) {
+    let mut stream = TcpStream::connect(address).await.unwrap();
+    let peer = stream.local_addr().unwrap();
+    stream
+        .write_all(format!("GET {path} HTTP/1.0\r\nHost: localhost\r\n\r\n").as_bytes())
+        .await
+        .unwrap();
+    let mut response = String::new();
+    stream.read_to_string(&mut response).await.unwrap();
+    (response, peer)
+}
+
+/// Reads the peer address axum attached to the connection. Without one, the extractor rejects
+/// the request with axum's 500 response.
+async fn peer_header(ConnectInfo(peer): ConnectInfo<SocketAddr>, request: Request, next: Next) -> Response {
+    let mut response = next.run(request).await;
+    response.headers_mut().insert("x-peer", peer.to_string().parse().unwrap());
+    response
+}
+
+#[tokio::test]
+async fn builder_bind_serves_connect_info_on_request() {
+    let server = Gotcha::from_context(GotchaContext::new((), config()))
+        .connect_info(true)
+        .app_layer(middleware::from_fn(peer_header))
+        .get("/peer", || async { "peer-ok" })
+        .bind()
+        .await
+        .unwrap();
+    let address = server.local_addr();
+    let (stop, stopped) = oneshot::channel::<()>();
+    let serving = tokio::spawn(server.serve_with_shutdown(async move {
+        let _ = stopped.await;
+    }));
+
+    let (response, peer) = within(get_with_peer(address, "/peer")).await;
+    assert!(response.starts_with("HTTP/1.0 200"), "{response}");
+    assert!(response.ends_with("peer-ok"), "{response}");
+    assert!(
+        response.contains(&format!("x-peer: {peer}")),
+        "the middleware saw the client's own address: {response}"
+    );
+
+    stop.send(()).unwrap();
+    within(serving).await.unwrap().unwrap();
+}
+
+#[tokio::test]
+async fn builder_bind_on_serves_connect_info_on_request() {
+    let server = Gotcha::from_context(GotchaContext::new((), config()))
+        .connect_info(true)
+        .app_layer(middleware::from_fn(peer_header))
+        .get("/peer", || async { "peer-ok" })
+        .bind_on("127.0.0.1:0".parse().unwrap())
+        .await
+        .unwrap();
+    let address = server.local_addr();
+    let (stop, stopped) = oneshot::channel::<()>();
+    let serving = tokio::spawn(server.serve_with_shutdown(async move {
+        let _ = stopped.await;
+    }));
+
+    let (response, peer) = within(get_with_peer(address, "/peer")).await;
+    assert!(response.starts_with("HTTP/1.0 200"), "{response}");
+    assert!(response.contains(&format!("x-peer: {peer}")), "{response}");
+
+    stop.send(()).unwrap();
+    within(serving).await.unwrap().unwrap();
+}
+
+#[tokio::test]
+async fn repeated_connect_info_calls_keep_the_last_value() {
+    let server = Gotcha::from_context(GotchaContext::new((), config()))
+        .connect_info(true)
+        .connect_info(false)
+        .app_layer(middleware::from_fn(peer_header))
+        .get("/peer", || async { "peer-ok" })
+        .bind()
+        .await
+        .unwrap();
+    let address = server.local_addr();
+    let (stop, stopped) = oneshot::channel::<()>();
+    let serving = tokio::spawn(server.serve_with_shutdown(async move {
+        let _ = stopped.await;
+    }));
+
+    let (response, _) = within(get_with_peer(address, "/peer")).await;
+    assert!(response.starts_with("HTTP/1.0 500"), "the last call disabled connect info: {response}");
+
+    stop.send(()).unwrap();
+    within(serving).await.unwrap().unwrap();
+}
+
+#[tokio::test]
+async fn builder_bind_without_connect_info_leaves_the_extension_absent() {
+    let server = Gotcha::from_context(GotchaContext::new((), config()))
+        .app_layer(middleware::from_fn(peer_header))
+        .get("/peer", || async { "peer-ok" })
+        .bind()
+        .await
+        .unwrap();
+    let address = server.local_addr();
+    let (stop, stopped) = oneshot::channel::<()>();
+    let serving = tokio::spawn(server.serve_with_shutdown(async move {
+        let _ = stopped.await;
+    }));
+
+    let (response, _) = within(get_with_peer(address, "/peer")).await;
+    assert!(response.starts_with("HTTP/1.0 500"), "ConnectInfo is absent by default: {response}");
+    assert!(!response.contains("x-peer"), "{response}");
+
+    stop.send(()).unwrap();
+    within(serving).await.unwrap().unwrap();
+}
+
+#[tokio::test]
+async fn builder_run_serves_connect_info_on_request() {
+    let bound = Arc::new(Mutex::new(None));
+    let state_bound = bound.clone();
+    let stop = Arc::new(Notify::new());
+    let signal = stop.clone();
+    let app = Gotcha::from_state_fn(move |config: Arc<ConfigWrapper<()>>| {
+        let address = SocketAddr::new(config.server.host.parse().unwrap(), config.server.port);
+        *state_bound.lock().unwrap() = Some(address);
+        async move { Ok(()) }
+    })
+    .config(config())
+    .connect_info(true)
+    .app_layer(middleware::from_fn(peer_header))
+    .get("/peer", || async { "peer-ok" })
+    .shutdown_signal(async move { signal.notified().await });
+    let serving = tokio::spawn(app.run());
+
+    // The state initializer sees the bound address; `run()` reports it nowhere else before serving.
+    let address = within(async {
+        loop {
+            if let Some(address) = *bound.lock().unwrap() {
+                break address;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await;
+    let (response, peer) = within(get_with_peer(address, "/peer")).await;
+    assert!(response.starts_with("HTTP/1.0 200"), "{response}");
+    assert!(
+        response.contains(&format!("x-peer: {peer}")),
+        "the middleware saw the client's own address: {response}"
+    );
+
+    stop.notify_one();
+    within(serving).await.unwrap().unwrap();
+}
+
+#[tokio::test]
+async fn connect_info_serving_still_drains_in_flight_requests() {
+    let entered = Arc::new(Notify::new());
+    let release = Arc::new(Notify::new());
+    let handler_entered = entered.clone();
+    let handler_release = release.clone();
+    let server = Gotcha::from_context(GotchaContext::new((), config()))
+        .connect_info(true)
+        .app_layer(middleware::from_fn(peer_header))
+        .get("/slow", move || {
+            let entered = handler_entered.clone();
+            let release = handler_release.clone();
+            async move {
+                entered.notify_one();
+                release.notified().await;
+                "released"
+            }
+        })
+        .bind()
+        .await
+        .unwrap();
+    let address = server.local_addr();
+    let (stop, stopped) = oneshot::channel::<()>();
+    let serving = tokio::spawn(server.serve_with_shutdown(async move {
+        let _ = stopped.await;
+    }));
+
+    let client = tokio::spawn(get_with_peer(address, "/slow"));
+    within(entered.notified()).await;
+    stop.send(()).unwrap();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert!(!serving.is_finished(), "shutdown must wait for the in-flight request");
+
+    release.notify_one();
+    let (response, peer) = within(client).await.unwrap();
+    assert!(response.starts_with("HTTP/1.0 200"), "the request finished during the drain: {response}");
+    assert!(response.contains(&format!("x-peer: {peer}")), "{response}");
+    within(serving).await.unwrap().unwrap();
+}
+
+/// The trait application used by the connect-info tests. It reports the address it was bound to
+/// from `state`, and stops on `stop`.
+struct ConnectInfoApp {
+    bound: Arc<Mutex<Option<SocketAddr>>>,
+    stop: Arc<Notify>,
+}
+
+impl ConnectInfoApp {
+    fn new() -> Self {
+        Self {
+            bound: Arc::default(),
+            stop: Arc::default(),
+        }
+    }
+}
+
+impl GotchaApp for ConnectInfoApp {
+    type State = ();
+    type Config = ();
+
+    fn logger(&self) -> GotchaResult<()> {
+        Ok(())
+    }
+
+    async fn config(&self) -> GotchaResult<ConfigWrapper<()>> {
+        Ok(config())
+    }
+
+    async fn state(&self, config: &ConfigWrapper<()>) -> GotchaResult<()> {
+        *self.bound.lock().unwrap() = Some(SocketAddr::new(config.server.host.parse().unwrap(), config.server.port));
+        Ok(())
+    }
+
+    fn connect_info(&self) -> bool {
+        true
+    }
+
+    fn routes(&self, router: GotchaRouter<GotchaContext<(), ()>>) -> GotchaRouter<GotchaContext<(), ()>> {
+        router.get("/peer", || async { "peer-ok" }).layer(middleware::from_fn(peer_header))
+    }
+
+    async fn shutdown_signal(&self) {
+        self.stop.notified().await;
+    }
+}
+
+#[tokio::test]
+async fn connect_info_serving_force_closes_at_the_http_drain_deadline() {
+    let entered = Arc::new(Notify::new());
+    let handler_entered = entered.clone();
+    let server = Gotcha::from_context(GotchaContext::new((), config()))
+        .connect_info(true)
+        .app_layer(middleware::from_fn(peer_header))
+        .get("/hang", move || {
+            let entered = handler_entered.clone();
+            async move {
+                entered.notify_one();
+                std::future::pending::<()>().await;
+                "unreachable"
+            }
+        })
+        .http_shutdown_timeout(Duration::from_millis(100))
+        .bind()
+        .await
+        .unwrap();
+    let address = server.local_addr();
+    let (stop, stopped) = oneshot::channel::<()>();
+    let serving = tokio::spawn(server.serve_with_shutdown(async move {
+        let _ = stopped.await;
+    }));
+
+    let mut client = within(open(address, "/hang")).await;
+    within(entered.notified()).await;
+    let started = std::time::Instant::now();
+    stop.send(()).unwrap();
+    within(serving).await.unwrap().unwrap();
+    let elapsed = started.elapsed();
+    // The handler ignores the shutdown token, so only the drain deadline can stop serving, and
+    // the deadline must not cut the connection before it is reached.
+    assert!(elapsed >= Duration::from_millis(90), "the drain deadline must be honored: {elapsed:?}");
+    assert!(elapsed < Duration::from_secs(2), "serve must return at the drain deadline: {elapsed:?}");
+
+    let mut rest = Vec::new();
+    let closed = tokio::time::timeout(Duration::from_secs(2), client.read_to_end(&mut rest)).await;
+    assert!(closed.is_ok(), "the hanging connection must be force-closed at the drain deadline");
+}
+
+#[tokio::test]
+async fn trait_bind_serves_connect_info_when_enabled() {
+    let server = ConnectInfoApp::new().bind().await.unwrap();
+    let address = server.local_addr();
+    let (stop, stopped) = oneshot::channel::<()>();
+    let serving = tokio::spawn(server.serve_with_shutdown(async move {
+        let _ = stopped.await;
+    }));
+
+    let (response, peer) = within(get_with_peer(address, "/peer")).await;
+    assert!(response.starts_with("HTTP/1.0 200"), "{response}");
+    assert!(response.contains(&format!("x-peer: {peer}")), "{response}");
+
+    stop.send(()).unwrap();
+    within(serving).await.unwrap().unwrap();
+}
+
+#[tokio::test]
+async fn trait_run_serves_connect_info_when_enabled() {
+    let app = ConnectInfoApp::new();
+    let bound = app.bound.clone();
+    let stop = app.stop.clone();
+    let serving = tokio::spawn(app.run());
+
+    // The trait `state()` runs after binding and sees the effective address.
+    let address = within(async {
+        loop {
+            if let Some(address) = *bound.lock().unwrap() {
+                break address;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await;
+    let (response, peer) = within(get_with_peer(address, "/peer")).await;
+    assert!(response.starts_with("HTTP/1.0 200"), "{response}");
+    assert!(response.contains(&format!("x-peer: {peer}")), "{response}");
+
     stop.notify_one();
     within(serving).await.unwrap().unwrap();
 }

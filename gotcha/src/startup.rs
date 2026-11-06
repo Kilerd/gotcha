@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
 use std::time::Duration;
 
-use axum::serve::Listener;
+use axum::serve::{Listener, ListenerExt};
 use axum::Router;
 use slab::Slab;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
@@ -62,6 +62,11 @@ pub(crate) trait Application: Send {
     fn http_shutdown_timeout(&self) -> Duration {
         DEFAULT_HTTP_SHUTDOWN_TIMEOUT
     }
+    /// Whether requests are served with `ConnectInfo<SocketAddr>` attached. The default, off,
+    /// leaves the extension absent.
+    fn connect_info(&self) -> bool {
+        false
+    }
     /// Run application cleanup after HTTP and task draining. The default does nothing.
     fn on_shutdown(&mut self, _context: &GotchaContext<Self::State, Self::Config>) -> impl Future<Output = ()> + Send {
         async {}
@@ -83,6 +88,7 @@ pub(crate) struct PreparedServer {
     tasks: Vec<crate::task::ScheduledTask>,
     task_shutdown_timeout: std::time::Duration,
     http_shutdown_timeout: Duration,
+    connect_info: bool,
 }
 
 impl PreparedServer {
@@ -96,40 +102,37 @@ impl PreparedServer {
     /// no longer tracks after a WebSocket upgrade. At the deadline all remaining sockets are shut
     /// down, and their handlers get a short grace period to exit before shutdown continues.
     pub(crate) async fn serve(self, signal: impl Future<Output = ()> + Send, extra_shutdown: impl Future<Output = ()> + Send) -> GotchaResult<()> {
-        let shutdown = self.shutdown.clone();
-        let local_addr = self.local_addr;
-        let http_shutdown_timeout = self.http_shutdown_timeout;
+        let PreparedServer {
+            listener,
+            local_addr,
+            router,
+            shutdown,
+            tasks,
+            task_shutdown_timeout,
+            http_shutdown_timeout,
+            connect_info,
+        } = self;
         tracing::info!("Server listening on http://{local_addr}");
         // If the serving future is dropped, stop HTTP acceptance and abort owned scheduled tasks.
         // Connections keep the existing cancellation semantics: graceful shutdown is signalled,
         // but force-closing happens only at the HTTP drain deadline.
         let _shutdown_on_drop = shutdown.clone().drop_guard();
-        let tasks = crate::RunningTasks::start(self.tasks, shutdown.clone());
-        let task_shutdown_timeout = self.task_shutdown_timeout;
+        let tasks = crate::RunningTasks::start(tasks, shutdown.clone());
         let tracker = ConnectionTracker::default();
-        let listener = TrackingListener::new(self.listener, tracker.clone());
-        let server = axum::serve(listener, self.router)
-            .with_graceful_shutdown(shutdown.clone().cancelled_owned())
-            .into_future();
-        tokio::pin!(server);
+        let listener = TrackingListener::new(listener, tracker.clone());
+        let graceful_shutdown = shutdown.clone().cancelled_owned();
         let serving = async {
-            let result = tokio::select! {
-                biased;
-                // A handler or task that holds the context token can also request shutdown.
-                _ = shutdown.cancelled() => {
-                    drain_http(&mut server, http_shutdown_timeout, &tracker).await
-                }
-                _ = signal => {
-                    // Cancel before draining so handlers observe shutdown at the same moment the
-                    // listener stops accepting, and before any request has to finish.
-                    shutdown.cancel();
-                    drain_http(&mut server, http_shutdown_timeout, &tracker).await
-                }
-                _ = extra_shutdown => {
-                    shutdown.cancel();
-                    drain_http(&mut server, http_shutdown_timeout, &tracker).await
-                }
-                result = &mut server => result,
+            let result = if connect_info {
+                // `TapIo` is the listener shape axum implements `Connected` for, which lets the
+                // make service lift the peer address into `ConnectInfo<SocketAddr>`. The closure
+                // does nothing; tracking stays in `TrackingListener`.
+                let server = axum::serve(listener.tap_io(|_| {}), router.into_make_service_with_connect_info::<SocketAddr>())
+                    .with_graceful_shutdown(graceful_shutdown)
+                    .into_future();
+                serve_until_shutdown(server, &shutdown, signal, extra_shutdown, http_shutdown_timeout, &tracker).await
+            } else {
+                let server = axum::serve(listener, router).with_graceful_shutdown(graceful_shutdown).into_future();
+                serve_until_shutdown(server, &shutdown, signal, extra_shutdown, http_shutdown_timeout, &tracker).await
             };
             shutdown.cancel();
             result.map_err(GotchaError::Io)
@@ -141,6 +144,37 @@ impl PreparedServer {
         // Start the task deadline when shutdown is requested, independently of HTTP draining.
         let (result, ()) = tokio::join!(serving, drain_tasks);
         result
+    }
+}
+
+/// Poll the HTTP server alongside the shutdown sources, then drain connections when any of them
+/// resolves. The caller has already cancelled the token in the signal and extra-shutdown cases.
+async fn serve_until_shutdown<F, S, X>(
+    server: F, shutdown: &CancellationToken, signal: S, extra_shutdown: X, http_shutdown_timeout: Duration, tracker: &ConnectionTracker,
+) -> io::Result<()>
+where
+    F: Future<Output = io::Result<()>>,
+    S: Future<Output = ()>,
+    X: Future<Output = ()>,
+{
+    tokio::pin!(server);
+    tokio::select! {
+        biased;
+        // A handler or task that holds the context token can also request shutdown.
+        _ = shutdown.cancelled() => {
+            drain_http(&mut server, http_shutdown_timeout, tracker).await
+        }
+        _ = signal => {
+            // Cancel before draining so handlers observe shutdown at the same moment the
+            // listener stops accepting, and before any request has to finish.
+            shutdown.cancel();
+            drain_http(&mut server, http_shutdown_timeout, tracker).await
+        }
+        _ = extra_shutdown => {
+            shutdown.cancel();
+            drain_http(&mut server, http_shutdown_timeout, tracker).await
+        }
+        result = &mut server => result,
     }
 }
 
@@ -221,6 +255,7 @@ pub(crate) async fn prepare_with_context<A: Application>(
         tasks,
         task_shutdown_timeout: app.task_shutdown_timeout(),
         http_shutdown_timeout: app.http_shutdown_timeout(),
+        connect_info: app.connect_info(),
     };
     // Preparation succeeded; the server owns the token and cancels it when shutdown starts.
     cancel_on_failure.disarm();
@@ -659,6 +694,10 @@ where
         A::http_shutdown_timeout(self)
     }
 
+    fn connect_info(&self) -> bool {
+        A::connect_info(self)
+    }
+
     async fn on_shutdown(&mut self, context: &GotchaContext<A::State, A::Config>) {
         A::on_shutdown(self, context).await;
     }
@@ -711,6 +750,10 @@ where
 
     fn http_shutdown_timeout(&self) -> Duration {
         A::http_shutdown_timeout(&self.0)
+    }
+
+    fn connect_info(&self) -> bool {
+        A::connect_info(&self.0)
     }
 
     async fn on_shutdown(&mut self, context: &GotchaContext<A::State, A::Config>) {

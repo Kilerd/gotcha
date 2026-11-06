@@ -299,6 +299,16 @@ pub trait GotchaApp: Sized + Send + Sync {
         crate::startup::DEFAULT_HTTP_SHUTDOWN_TIMEOUT
     }
 
+    /// Attach [`ConnectInfo<SocketAddr>`](axum::extract::ConnectInfo) to every request served by
+    /// [`Self::run`] or [`Self::bind`]. Defaults to `false`, leaving the extension absent.
+    ///
+    /// [`Gotcha::connect_info`] is the builder equivalent. It only affects the framework's own
+    /// serving path: serving a router from [`Self::build_router`] yourself still needs
+    /// `into_make_service_with_connect_info`.
+    fn connect_info(&self) -> bool {
+        false
+    }
+
     /// Run application cleanup after serving stops: after HTTP draining and task shutdown.
     ///
     /// Use this for ordered teardown of resources that outlive requests (feeds, terminals,

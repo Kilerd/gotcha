@@ -10,7 +10,7 @@
 use std::any::TypeId;
 use std::collections::BTreeMap;
 
-use axum::extract::{Extension, Form, Json, Path, Query, Request, State};
+use axum::extract::{ConnectInfo, Extension, Form, Json, Path, Query, Request, State};
 use axum::http::StatusCode;
 use either::Either;
 use oas::{MediaType, Parameter, ParameterIn, RequestBody, Schema};
@@ -419,6 +419,8 @@ impl<T: Schematic> ParameterProvider for Query<T> {
 impl<T> ParameterProvider for State<T> {}
 
 impl<T> ParameterProvider for Extension<T> {}
+
+impl<T> ParameterProvider for ConnectInfo<T> {}
 
 /// The whole header map is untyped, so there is nothing to document — but a handler must still be
 /// able to take it. Individual headers are documented with `gotcha::Header<T>`.

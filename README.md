@@ -196,8 +196,8 @@ server.serve().await?;
 
 `BoundServer::serve_with_shutdown(future)` actually replaces the application signal for one
 server: the configured `shutdown_signal` is not polled, so Ctrl-C and SIGTERM do not stop it,
-while cleanup hooks still run. The trait API offers `bind()`, `http_shutdown_timeout()`, and
-`on_shutdown(&context)` as well.
+while cleanup hooks still run. The trait API offers `bind()`, `http_shutdown_timeout()`,
+`connect_info()`, and `on_shutdown(&context)` as well.
 
 Override the HTTP drain period with builder `.http_shutdown_timeout(duration)` or trait
 `http_shutdown_timeout(&self)`; see the [migration guide](https://github.com/Kilerd/gotcha/blob/main/MIGRATION.md#04--05-bound-servers-and-shutdown-lifecycle).
@@ -266,10 +266,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 - `finish_router` mounts services built from the application state (`try_finish_router` when that
   can fail), and `app_layer` adds middleware that covers every endpoint. `extractor_configs` sets
   every extractor's rejection response from one shared `ExtractorConfigs`.
+- `connect_info(bool)` enables or disables attaching `ConnectInfo<SocketAddr>` on the
+  `run()`, `listen()`, and `bind()` paths: with `true`, handlers and middleware read the peer
+  address; with `false`, the default, a `ConnectInfo` extractor rejects with 500. The last call
+  wins.
 - `into_router(context)` assembles the router for a context you build, without loading
-  configuration or binding: use it in tests or to serve the application from your own listener,
-  for example with `into_make_service_with_connect_info` when middleware reads `ConnectInfo`.
-  `into_openapi()` exports the document.
+  configuration or binding: use it in tests or to serve the application from your own listener.
+  Serving it with middleware that reads `ConnectInfo` needs
+  `into_make_service_with_connect_info`, since the builder setting only covers the builder's own
+  serving path. `into_openapi()` exports the document.
 - `with_default_logger()` installs a `RUST_LOG`-filtered `tracing` subscriber at startup, and
   `gotcha::default_logger()` installs the same one where you serve an `into_router` router. The
   builder installs none unless asked, so applications that set up their own logging keep it.

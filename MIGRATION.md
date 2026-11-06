@@ -509,6 +509,7 @@ warnings needs `#[allow(deprecated)]` until it migrates. The table maps each met
 | `metrics_endpoint()` | `.metrics(endpoint)` |
 | `shutdown_signal()` | `.shutdown_signal(future)` |
 | `http_shutdown_timeout()`, `task_shutdown_timeout()` | `.http_shutdown_timeout(duration)`, `.task_shutdown_timeout(duration)` |
+| `connect_info()` | `.connect_info(bool)` |
 | `on_shutdown(&context)` | `.on_shutdown(\|context\| async move { .. })` |
 | `run()`, `bind()` | `.run()`, `.bind()` |
 
