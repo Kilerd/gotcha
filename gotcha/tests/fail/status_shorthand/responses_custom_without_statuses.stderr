@@ -1,4 +1,4 @@
-error[E0080]: evaluation panicked: responses(200 = "..."): the success type's Responsible::STATUSES does not declare a 200 response; declare it with responses(response(status = 200, body = "...", description = ...)) instead, or list 200 in the success type's STATUSES
+error[E0080]: evaluation panicked: responses(200 = "..."): the success type's Responsible::STATUSES does not declare a 200 response; declare it with responses(response(status = 200, body = "...", description = ...)) instead, or declare STATUSES on the type that produces the response (for WithStatus<T, N>, on T)
   --> tests/fail/status_shorthand/responses_custom_without_statuses.rs:21:1
    |
 21 | #[api(responses(200 = "The record"))]

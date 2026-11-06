@@ -333,6 +333,21 @@ impl syn::parse::Parse for DescriptionOnlyEntry {
     }
 }
 
+/// Flatten the invisible groups a `macro_rules!` fragment substitution arrives in.
+///
+/// A `$status:expr`, `$status:literal` or `$description:expr` argument is wrapped in a
+/// `None`-delimited group; the parser must see the literal inside it to recognize the shorthand.
+/// Parenthesized and bracketed groups are left alone: they carry grammar.
+fn unwrap_invisible_groups(tokens: TokenStream2) -> TokenStream2 {
+    tokens
+        .into_iter()
+        .flat_map(|token| match token {
+            TokenTree::Group(group) if group.delimiter() == proc_macro2::Delimiter::None => unwrap_invisible_groups(group.stream()),
+            token => token.into(),
+        })
+        .collect()
+}
+
 /// Split `responses(...)` arguments at top-level commas.
 ///
 /// Grouped entries (`response(...)`) arrive as one token, so their commas stay inside them.
@@ -369,6 +384,7 @@ impl ResponseItem {
 
     /// Parse one list entry.
     fn parse(tokens: TokenStream2) -> darling::Result<Self> {
+        let tokens = unwrap_invisible_groups(tokens);
         let shorthand = matches!(
             tokens.clone().into_iter().next(),
             Some(TokenTree::Literal(literal)) if syn::parse_str::<syn::LitInt>(&literal.to_string()).is_ok()
@@ -638,12 +654,14 @@ fn expand_request_handler(args: TokenStream2, input_stream: TokenStream2) -> syn
                 format!(
                     "responses({status} = \"...\"): neither the success type's Responsible::STATUSES nor this handler's \
                      errors(...) declares a {status} response; declare it with responses(response(status = {status}, body = \"...\", \
-                     description = ...)) or errors(response(status = {status}, body = \"...\", description = ...)) instead"
+                     description = ...)) or errors(response(status = {status}, body = \"...\", description = ...)) instead, or declare \
+                     STATUSES on the type that produces the response (for WithStatus<T, N>, on T)"
                 )
             } else {
                 format!(
                     "responses({status} = \"...\"): the success type's Responsible::STATUSES does not declare a {status} \
-                     response; declare it with responses(response(status = {status}, body = \"...\", description = ...)) instead, or list {status} in the success type's STATUSES"
+                     response; declare it with responses(response(status = {status}, body = \"...\", description = ...)) instead, or declare \
+                     STATUSES on the type that produces the response (for WithStatus<T, N>, on T)"
                 )
             };
             Some(quote! {

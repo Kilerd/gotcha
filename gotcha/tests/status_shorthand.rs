@@ -194,6 +194,48 @@ async fn no_content_long_form() -> WithStatus<Json<Record>, 204> {
     WithStatus::new(Json(Record { id: 7 }))
 }
 
+// `macro_rules!` passes substituted fragments inside invisible (`None`-delimited) groups, which
+// the shorthand parser has to look through.
+macro_rules! expr_status {
+    ($status:expr, $description:expr) => {
+        #[api(id = "fragment_expr", responses($status = $description))]
+        async fn expr_status_handler() -> Json<Record> {
+            Json(Record { id: 7 })
+        }
+    };
+}
+expr_status!(200, "Stored");
+
+macro_rules! literal_response_status {
+    ($status:literal, $description:expr) => {
+        #[api(id = "fragment_literal_response", responses($status = $description))]
+        async fn literal_response_status_handler() -> WithStatus<Json<Record>, 201> {
+            WithStatus::new(Json(Record { id: 7 }))
+        }
+    };
+}
+literal_response_status!(201, "Created");
+
+macro_rules! literal_status {
+    ($status:literal, $description:expr) => {
+        #[api(id = "fragment_literal", errors($status = $description))]
+        async fn literal_status_handler() -> Result<Json<Record>, ApiError> {
+            Ok(Json(Record { id: 7 }))
+        }
+    };
+}
+literal_status!(404, "Missing record");
+
+macro_rules! expr_description {
+    ($status:expr, $description:expr) => {
+        #[api(id = "fragment_description", errors($status = $description))]
+        async fn expr_description_handler() -> Result<Json<Record>, ApiError> {
+            Ok(Json(Record { id: 7 }))
+        }
+    };
+}
+expr_description!(409, "Duplicate record");
+
 /// Both spellings of the `read` operation as a whole document, components included.
 fn document(shorthand: bool) -> Value {
     let document = if shorthand {
@@ -299,6 +341,26 @@ fn with_status_declares_only_the_statuses_it_documents() {
     assert!(<WithStatus<Json<Record>, 201> as Responsible>::STATUSES.contains(201));
     assert!(<WithStatus<Infallible, 204> as Responsible>::STATUSES.contains(204));
     assert!(<WithStatus<Infallible, 201> as Responsible>::STATUSES.is_empty());
+    // A runtime status around an empty inner contract documents nothing either.
+    assert!(!<(StatusCode, Infallible) as Responsible>::HAS_DEFAULT);
+    assert!(<WithStatus<(StatusCode, Infallible), 201> as Responsible>::STATUSES.is_empty());
+}
+
+#[test]
+fn macro_fragments_expand_the_shorthand() {
+    let document = serde_json::to_value(
+        Gotcha::new()
+            .get("/expr", expr_status_handler)
+            .get("/literal-response", literal_response_status_handler)
+            .get("/literal", literal_status_handler)
+            .get("/description", expr_description_handler)
+            .into_openapi(),
+    )
+    .unwrap();
+    assert_eq!(document["paths"]["/expr"]["get"]["responses"]["200"]["description"], "Stored");
+    assert_eq!(document["paths"]["/literal-response"]["get"]["responses"]["201"]["description"], "Created");
+    assert_eq!(document["paths"]["/literal"]["get"]["responses"]["404"]["description"], "Missing record");
+    assert_eq!(document["paths"]["/description"]["get"]["responses"]["409"]["description"], "Duplicate record");
 }
 
 #[tokio::test]

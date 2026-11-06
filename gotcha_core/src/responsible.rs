@@ -444,7 +444,9 @@ mod axum_responses {
     }
     binary_response!(axum::body::Bytes, Vec<u8>, &[u8], Box<[u8]>, std::borrow::Cow<'_, [u8]>);
     impl<T: Responsible> Responsible for (axum::http::StatusCode, T) {
-        const HAS_DEFAULT: bool = true;
+        // `dynamic_status` moves everything to `default`, so this documents no fixed status,
+        // and it documents nothing at all when the inner type documents nothing.
+        const HAS_DEFAULT: bool = !T::STATUSES.is_empty() || T::HAS_DEFAULT;
 
         fn response() -> Responses {
             dynamic_status(T::response())
@@ -544,6 +546,14 @@ mod tests {
         assert_eq!(<Result<String, Failure> as ResultResponse>::SUCCESS_STATUSES, Statuses::of(&[200]));
         assert_eq!(<Result<String, Failure> as ErrorResponse>::STATUSES, Statuses::of(&[409]));
         assert!(!<Result<String, Failure> as ErrorResponse>::HAS_DEFAULT);
+    }
+
+    #[cfg(feature = "axum")]
+    #[test]
+    fn a_dynamic_status_documents_a_default_only_when_the_inner_type_does() {
+        assert!(<(axum::http::StatusCode, String) as Responsible>::HAS_DEFAULT);
+        assert!(<(axum::http::StatusCode, Infallible) as Responsible>::STATUSES.is_empty());
+        assert!(!<(axum::http::StatusCode, Infallible) as Responsible>::HAS_DEFAULT);
     }
 
     #[test]
