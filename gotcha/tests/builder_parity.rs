@@ -3,7 +3,9 @@
 //! the other, and check that the two behave the same. MIGRATION.md lists where using the two still
 //! differs. The `droppen_*` tests port the shape of a large trait application to the builder: a
 //! custom configuration loader, state built from the configuration, an embedded router with extra
-//! services and layers, and its own listener with connect info.
+//! services and layers, and middleware that reads the peer address. The builder serves that with
+//! `.connect_info(true)`; the last test keeps the escape hatch of serving the assembled router on a
+//! listener of the application's own.
 //!
 //! | `GotchaApp`                                  | `Gotcha`                                       | test                                   |
 //! | -------------------------------------------- | ---------------------------------------------- | -------------------------------------- |
@@ -24,6 +26,7 @@
 //! | `tasks()`                                    | `try_tasks`, `tasks`                           | `startup_stages_match`, `failing_stages_match`, `a_failing_registrar_stops_later_registrars`, `shutdown_lifecycles_match` |
 //! | `shutdown_signal()`                          | `shutdown_signal`                              | `shutdown_lifecycles_match`            |
 //! | `http_shutdown_timeout()`                    | `http_shutdown_timeout`                        | `shutdown_lifecycles_match`            |
+//! | `connect_info()`                             | `connect_info(bool)`                           | `lifecycle.rs`                         |
 //! | `task_shutdown_timeout()`                    | `task_shutdown_timeout`                        | `shutdown_lifecycles_match`            |
 //! | `on_shutdown()`                              | `on_shutdown`                                  | `shutdown_lifecycles_match`            |
 //! | `run()`, `bind()`                            | `run`, `bind`                                  | `shutdown_lifecycles_match`            |
@@ -820,6 +823,9 @@ mod droppen {
         let cleaned = Arc::new(AtomicBool::new(false));
         let hook = cleaned.clone();
         let server = application(path)
+            // The peer guard reads `ConnectInfo`, which the builder attaches when asked.
+            .connect_info(true)
+            .app_layer(middleware::from_fn(require_peer))
             .on_shutdown(move |_| async move { hook.store(true, Ordering::SeqCst) })
             .bind()
             .await
@@ -834,6 +840,7 @@ mod droppen {
         let response = within(http_get(address, "/api/session", AUTH)).await;
         assert!(response.starts_with("HTTP/1.0 200"), "{response}");
         assert!(response.contains("x-served-by: droppen"), "{response}");
+        assert!(response.contains("x-peer: 127.0.0.1"), "the builder served connect info: {response}");
         assert!(
             response.ends_with(&format!("http://127.0.0.1:{}/box #0", address.port())),
             "state saw the bound port: {response}"
@@ -878,9 +885,8 @@ mod droppen {
     /// The application's own `prepare()`: install the logger, load the configuration, build the
     /// state before binding (so it sees the configured port), bind, and serve the assembled router
     /// with connect info, which its peer guard reads, after replacing the API's fallback with the
-    /// embedded assets. `bind().serve()` serves without connect info on either API, so the guard
-    /// there would answer 500: an application whose middleware reads `ConnectInfo` serves the
-    /// router itself.
+    /// embedded assets. The builder can now provide connect info itself with `.connect_info(true)`;
+    /// serving the router yourself remains the escape hatch and must keep working.
     #[tokio::test]
     async fn droppen_shaped_server_binds_its_own_listener() {
         let (_dir, path) = settings();
@@ -926,5 +932,59 @@ mod droppen {
             let document = serde_json::to_value(api(path).into_openapi()).unwrap();
             assert!(document["paths"]["/api/session"]["get"].is_object(), "{document}");
         }
+    }
+}
+
+/// `#[api]` handlers can take `ConnectInfo<SocketAddr>`: the extractor names no operation
+/// parameters, like `State`, so it compiles and documents nothing.
+#[cfg(feature = "openapi")]
+mod connect_info_api {
+    use super::*;
+    use gotcha::axum::extract::ConnectInfo;
+
+    #[gotcha::api]
+    async fn peer(ConnectInfo(peer): ConnectInfo<SocketAddr>) -> String {
+        peer.to_string()
+    }
+
+    fn app() -> Gotcha<(), ()> {
+        Gotcha::from_context(GotchaContext::new(
+            (),
+            ConfigWrapper {
+                app: (),
+                server: ServerConfig {
+                    host: "127.0.0.1".into(),
+                    port: 0,
+                },
+            },
+        ))
+        .get("/peer", peer)
+    }
+
+    #[tokio::test]
+    async fn api_handler_serves_connect_info_and_documents_no_parameters() {
+        let document = serde_json::to_value(app().with_openapi().into_openapi()).unwrap();
+        let operation = &document["paths"]["/peer"]["get"];
+        assert!(operation.is_object(), "{document}");
+        let parameters = operation.get("parameters").and_then(|parameters| parameters.as_array());
+        assert!(parameters.map_or(true, Vec::is_empty), "ConnectInfo must document no parameters: {operation}");
+
+        let server = app().connect_info(true).bind().await.unwrap();
+        let address = server.local_addr();
+        let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
+        let serving = tokio::spawn(server.serve_with_shutdown(async move {
+            let _ = stopped.await;
+        }));
+
+        let mut stream = TcpStream::connect(address).await.unwrap();
+        let expected = stream.local_addr().unwrap();
+        stream.write_all(b"GET /peer HTTP/1.0\r\nHost: localhost\r\n\r\n").await.unwrap();
+        let mut response = String::new();
+        stream.read_to_string(&mut response).await.unwrap();
+        assert!(response.starts_with("HTTP/1.0 200"), "{response}");
+        assert!(response.ends_with(&expected.to_string()), "the handler saw the peer address: {response}");
+
+        stop.send(()).unwrap();
+        within(serving).await.unwrap().unwrap();
     }
 }

@@ -194,6 +194,7 @@ where
     shutdown_signal: Option<std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>>,
     shutdown_hooks: Vec<ShutdownHook<S, C>>,
     http_shutdown_timeout: std::time::Duration,
+    connect_info: bool,
     state: StateSource<S, C>,
     config: Configuration<C>,
     tasks: Vec<TaskRegistrar<S, C>>,
@@ -403,6 +404,7 @@ where
             shutdown_signal: None,
             shutdown_hooks: Vec::new(),
             http_shutdown_timeout: startup::DEFAULT_HTTP_SHUTDOWN_TIMEOUT,
+            connect_info: false,
             state,
             config,
             tasks: Vec::new(),
@@ -1402,6 +1404,34 @@ where
         )
     }
 
+    /// Whether to serve requests with [`ConnectInfo<SocketAddr>`](axum::extract::ConnectInfo)
+    /// attached, defaulting to `false`. The last call wins.
+    ///
+    /// With `true`, [`run`](Self::run), [`listen`](Self::listen), and [`bind`](Self::bind), with
+    /// their `_on` variants, attach the peer address of each connection, so handlers and
+    /// middleware can extract it. With `false` the extension is absent, and a `ConnectInfo`
+    /// extractor rejects the request with a 500. The flag can come from configuration, like any
+    /// other builder setting.
+    ///
+    /// This only affects the framework's own serving path. [`into_router`](Self::into_router)
+    /// still returns a plain router: when you serve it yourself, use
+    /// `into_make_service_with_connect_info()` as before.
+    ///
+    /// ```no_run
+    /// use gotcha::axum::extract::ConnectInfo;
+    /// use gotcha::Gotcha;
+    /// use std::net::SocketAddr;
+    ///
+    /// let app = Gotcha::new()
+    ///     .connect_info(true)
+    ///     .get("/peer", |ConnectInfo(peer): ConnectInfo<SocketAddr>| async move { peer.to_string() });
+    /// # let _ = app;
+    /// ```
+    pub fn connect_info(mut self, enabled: bool) -> Self {
+        self.connect_info = enabled;
+        self
+    }
+
     /// Start the server and listen on the configured address
     ///
     /// # Example
@@ -1497,6 +1527,10 @@ where
 
     fn http_shutdown_timeout(&self) -> std::time::Duration {
         self.http_shutdown_timeout
+    }
+
+    fn connect_info(&self) -> bool {
+        self.connect_info
     }
 
     async fn on_shutdown(&mut self, context: &GotchaContext<S, C>) {
