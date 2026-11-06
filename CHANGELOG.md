@@ -3,6 +3,26 @@
 All notable changes to Gotcha are documented in this file, in the format of [Keep a
 Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+
+- `#[api]` accepts a description-only shorthand in `responses(...)` and `errors(...)`:
+  `responses(200 = "Stored")` keeps the body and content type the success type infers for that
+  status, and `errors(404 = "Not found")` takes the body and media type the error type documents
+  (its fixed entry, or its `default` response). Each shorthand emits the same document as its
+  long-form equivalent, components included, and the two forms mix in one list and apply in
+  written order.
+  `Responsible` gained `STATUSES` (the fixed statuses `response()` returns in `data`) and
+  `HAS_DEFAULT` (whether `response()` returns a `default` entry) so the checks work in a
+  `const` context: `responses(N = ...)` rejects a status neither the success type nor the
+  handler's `errors(...)` list declares, and `errors(N = ...)` rejects one the error type
+  documents neither as a fixed status nor as a default response. The `errors` shorthand also
+  rejects contentless statuses (`1xx`, `204`, `205`, `304`), matching the long form's content
+  rule. A custom `Responsible` implementation lists its fixed statuses in `STATUSES` and sets
+  `HAS_DEFAULT` when it documents a default response.
+  ([#211](https://github.com/Kilerd/gotcha/pull/211))
+
 ## [0.5.0] - 2026-11-05
 
 `gotcha`, `gotcha_core` and `gotcha_macro` are released together. To upgrade from 0.4.1, read [the

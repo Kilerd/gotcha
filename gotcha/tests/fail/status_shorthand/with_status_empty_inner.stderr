@@ -1,0 +1,5 @@
+error[E0080]: evaluation panicked: responses(201 = "..."): the success type's Responsible::STATUSES does not declare a 201 response; declare it with responses(response(status = 201, body = "...", description = ...)) instead, or declare STATUSES on the type that produces the response (for WithStatus<T, N>, on T)
+ --> tests/fail/status_shorthand/with_status_empty_inner.rs:7:1
+  |
+7 | #[api(responses(201 = "Created"))]
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `_` failed here

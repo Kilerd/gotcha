@@ -222,6 +222,8 @@ impl crate::Schematic for HttpError {
 /// `HttpError` carries a runtime status, so it documents as an OpenAPI `default` response.
 #[cfg(feature = "openapi")]
 impl crate::Responsible for HttpError {
+    const HAS_DEFAULT: bool = true;
+
     fn response() -> crate::oas::Responses {
         crate::response::default_response::<ErrorBody>("application/json", "error response")
     }

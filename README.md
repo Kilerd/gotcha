@@ -675,6 +675,43 @@ Each endpoint declares its complete error set; the same enum can be shared by en
 different errors. `body` describes the actual wire data, which may be separate from the error enum.
 `errors(...)` also supports return type aliases such as `ApiResult<T>`.
 
+An error type that implements `Responsible` can supply the body for a status, so the description
+alone is enough: `errors(404 = "User not found")`. The shorthand takes the body and media type
+from the error type's entry for that status, or from its `default` response when the status is only
+known at runtime. The compile-time checks read `Responsible::STATUSES` (the fixed statuses
+`response()` returns) and `Responsible::HAS_DEFAULT` (whether `response()` also returns a
+`default` entry), so a custom implementation declares those:
+
+```rust
+# #[cfg(feature = "openapi")]
+# mod error_response {
+use gotcha::{oas::Responses, response::default_response, Responsible, Schematic};
+
+#[derive(Schematic)]
+struct Problem {
+    message: String,
+}
+
+struct ApiError;
+
+// `response()` documents a runtime status, so `errors(STATUS = ...)` may move it to any status.
+impl Responsible for ApiError {
+    const HAS_DEFAULT: bool = true;
+
+    fn response() -> Responses {
+        default_response::<Problem>("application/json", "error response")
+    }
+}
+# }
+```
+
+A `Responsible` implementation that documents fixed statuses lists them in `STATUSES` instead;
+without either declaration, a status the macro cannot verify is a compile error. This form
+requires `E: Responsible`; the explicit `response(...)` form keeps working for error types
+without one. A status that cannot carry content (`1xx`, `204`, `205`, `304`) is a compile error
+in both `errors` spellings: the shorthand cannot state that the error type's entry is bodyless,
+so declare a bodyless error status with `errors(response(status = ..., description = ...))`.
+
 #### Extractor rejection responses
 
 Operations also document the rejections of Gotcha's extractor providers, on by default. An
@@ -811,6 +848,13 @@ async fn read_item(Path(id): Path<u32>) -> Result<Json<String>, HttpError> {
 
 Use `responses(...)` to add or override individual statuses while keeping response inference;
 `drop_default` explicitly removes an inferred default. Declarations only affect documentation.
+`responses(STATUS = "description")` restates only the description of a response the success type
+already infers, keeping its body and content type: `responses(200 = "The stored record")`.
+The status must be one the success type documents in `Responsible::STATUSES`, or one this
+handler's `errors(...)` list declares (the error list is applied first); anything else is a
+compile error. A custom response type declares its fixed statuses through
+`Responsible::STATUSES`. Shorthand and `response(...)` entries mix freely and apply in written
+order.
 See [the migration guide](https://github.com/Kilerd/gotcha/blob/main/MIGRATION.md#04--05-http-response-contracts) for media types and
 inference/override rules.
 

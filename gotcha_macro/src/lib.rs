@@ -55,6 +55,13 @@ pub(crate) mod utils;
 ///   `text/event-stream`, requires an explicit `content_type`, and is independent of `body`. For
 ///   `text/event-stream` it must describe the parsed event envelope (`data` plus the optional
 ///   `event`, `id`, and `retry` fields), not only JSON carried inside `data`.
+/// - `responses(200 = "Stored")` - the shorthand form changes only the description of the
+///   response the success type already infers for that status. The body and content type stay as
+///   inferred, and the status must be one the success type documents: `Responsible::STATUSES`
+///   carries that list, so a custom implementation must declare it. With `errors(...)` present,
+///   a status that list declares also qualifies, because errors are applied first. Overriding
+///   any other status is a compile error. Shorthand and `response(...)` entries mix freely in
+///   one list and apply in written order.
 /// - `request_body(content_type = "multipart/form-data", body = "UploadForm", description = "Upload", required = true)` -
 ///   Declare the request body instead of inferring it from extractor parameters. `body` is a
 ///   required Rust type string; `content_type` defaults to `application/json` (matching
@@ -72,6 +79,14 @@ pub(crate) mod utils;
 ///   least one declaration and only infers `T: Responsible`; `E` does not need `Responsible`.
 ///   Uses the same fields as `responses`. Error alternatives merge with the inferred success
 ///   contract; `responses(...)` overrides matching statuses afterward.
+/// - `errors(404 = "Not found")` - the shorthand form declares that status with the body and
+///   content type `E` documents: its own entry for the status, or its `default` response when
+///   the status is only known at runtime. The macro reads `Responsible::STATUSES` and
+///   `Responsible::HAS_DEFAULT` in a `const` context; a status the error type documents neither
+///   way is a compile error, as is a status that cannot carry content (`1xx`, `204`, `205`,
+///   `304`). This form requires `E: Responsible`; the long `response(...)` form keeps working
+///   for error types without one. Shorthand and long-form entries mix freely and apply in
+///   written order.
 /// - `drop_default` - Remove the inferred `default` response. At least one response must remain.
 /// - `skip_response` - Do not infer responses from the return type. The nonempty `responses(...)`
 ///   list describes the return-type part of the contract, and the return type is never placed in

@@ -185,9 +185,12 @@ fn reference(name: &str) -> String {
     format!("#/components/schemas/{name}")
 }
 
+/// Prefix of the reference a type carries before [`collect`] assigns its component name.
+const TEMPORARY_REFERENCE_PREFIX: &str = "gotcha:rust-type:";
+
 fn temporary_reference(identity: &str) -> String {
     // Outside the component namespace until finalized; never emitted in the assembled spec.
-    format!("gotcha:rust-type:{identity}")
+    format!("{TEMPORARY_REFERENCE_PREFIX}{identity}")
 }
 
 /// Collect schemas, finalize names, and rewrite references in both `f`'s result and components.
@@ -217,6 +220,68 @@ pub fn collect<R: SchemaReferences>(f: impl FnOnce() -> R) -> (R, BTreeMap<Strin
         })
         .collect();
     (result, schemas)
+}
+
+/// The identities the active collection scope held at one point.
+pub(crate) struct Checkpoint(Option<BTreeSet<String>>);
+
+/// Remember the schemas the active collection scope already holds.
+///
+/// Outside a collection scope schemas are built inline and there is nothing to roll back.
+pub(crate) fn checkpoint() -> Checkpoint {
+    Checkpoint(ACTIVE.with(|active| active.borrow().as_ref().map(|registry| registry.entries.keys().cloned().collect())))
+}
+
+/// Drop every schema registered since `checkpoint` that `value` does not reference, directly or
+/// through another schema.
+///
+/// A crate that builds more responses than it documents (the `#[api(errors(STATUS = "..."))]`
+/// shorthand builds the error type's whole contract and keeps one entry) uses this to avoid
+/// registering components the emitted document never references. Entries that existed at the
+/// checkpoint stay: something else in the document may already use them.
+pub(crate) fn discard_unreferenced(checkpoint: Checkpoint, value: &impl serde::Serialize) {
+    let Some(existing) = checkpoint.0 else {
+        return;
+    };
+    let Ok(value) = serde_json::to_value(value) else {
+        return;
+    };
+    let mut pending = Vec::new();
+    identities_in(&value, &mut pending);
+    ACTIVE.with(|active| {
+        let mut active = active.borrow_mut();
+        let Some(registry) = active.as_mut() else {
+            return;
+        };
+        let mut reachable = BTreeSet::new();
+        while let Some(identity) = pending.pop() {
+            if !reachable.insert(identity.clone()) {
+                continue;
+            }
+            let Some(schema) = registry.entries.get(&identity).and_then(|entry| entry.schema.as_ref()) else {
+                continue;
+            };
+            let schema = serde_json::to_value(schema).expect("schema is serializable");
+            identities_in(&schema, &mut pending);
+        }
+        registry
+            .entries
+            .retain(|identity, _| existing.contains(identity) || reachable.contains(identity));
+    });
+}
+
+/// Collect the type identities `value` refers to through temporary references.
+fn identities_in(value: &serde_json::Value, into: &mut Vec<String>) {
+    match value {
+        serde_json::Value::String(reference) => {
+            if let Some(identity) = reference.strip_prefix(TEMPORARY_REFERENCE_PREFIX) {
+                into.push(identity.to_owned());
+            }
+        }
+        serde_json::Value::Array(items) => items.iter().for_each(|item| identities_in(item, into)),
+        serde_json::Value::Object(fields) => fields.values().for_each(|field| identities_in(field, into)),
+        _ => {}
+    }
 }
 
 impl Registry {

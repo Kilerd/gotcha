@@ -17,6 +17,8 @@ struct ApiError {
 }
 
 impl Responsible for ApiError {
+    const HAS_DEFAULT: bool = true;
+
     fn response() -> gotcha::oas::Responses {
         gotcha::response::default_response::<Self>("application/json", Self::doc().unwrap())
     }
