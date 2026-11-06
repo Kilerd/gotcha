@@ -3,7 +3,7 @@ name = "gotcha"
 description = "Enhanced web framework built on top of Axum with OpenAPI, metrics, and configuration management"
 edition = "2021"
 rust-version = "1.89"
-version = "0.5.0"
+version = "0.5.1"
 license = "MIT"
 repository = "https://github.com/Kilerd/gotcha/"
 keywords = ["web", "framework", "axum", "openapi"]
@@ -46,11 +46,11 @@ task = ["dep:cron"]
 
 [dependencies]
 async-trait = "0.1.60"
-gotcha_macro = { version = "0.5.0", path = "../gotcha_macro" }
+gotcha_macro = { version = "0.5.1", path = "../gotcha_macro" }
 # Always compiled: `Schematic` is the source of `Valid`'s wire-name mapping even when document
 # generation (`openapi`) is off. That feature only adds the axum-facing schema glue. The data-type
 # impls are forwarded by this crate's own default features.
-gotcha_core = { version = "0.5.0", path = "../gotcha_core", default-features = false }
+gotcha_core = { version = "0.5.1", path = "../gotcha_core", default-features = false }
 serde = {version = "1", features = ["derive"]}
 # `rt` owns background tasks; macros, signals and `time` drive server shutdown and interval tasks.
 tokio = {version = "1", features = ["rt", "macros", "signal", "time"]}
