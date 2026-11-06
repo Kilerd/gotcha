@@ -684,7 +684,8 @@ fn expand_request_handler(args: TokenStream2, input_stream: TokenStream2) -> syn
             let message = format!(
                 "errors({status} = \"...\"): the error type's Responsible::STATUSES does not declare a {status} response and its \
                  Responsible::HAS_DEFAULT is false; declare the status with errors(response(status = {status}, body = \"...\", description = ...)) \
-                 instead, or declare it in the error type's Responsible implementation"
+                 instead, or, if the type that produces the response already documents that status or a default response, declare that in \
+                 STATUSES or HAS_DEFAULT (for (StatusCode, T) and WithStatus<T, N>, on T)"
             );
             Some(quote! {
                 const _: () = {
